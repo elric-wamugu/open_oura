@@ -4,6 +4,8 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <meta name="color-scheme" content="light dark" />
+  <!-- apply the saved theme before first paint (no flash of the wrong theme) -->
+  <script>(function(){try{var t=localStorage.getItem('oura-theme');if(t==='dark'||t==='light')document.documentElement.setAttribute('data-theme',t);}catch(e){}})();</script>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='13' fill='%230d9488'/%3E%3Ccircle cx='16' cy='16' r='6' fill='none' stroke='%23ffffff' stroke-width='4' opacity='.55'/%3E%3C/svg%3E" />
   <title>open_oura</title>
   <link rel="stylesheet" href="/styles.css" />
@@ -29,11 +31,19 @@
           <span class="ic" style="--i:url(/icons/drop.svg)"></span>
           <span>Blood</span>
         </a>
+        <button id="theme-btn" class="action icon-only" title="Toggle light / dark theme" aria-label="Toggle theme">
+          <span class="ic" style="--i:url(/icons/theme.svg)"></span>
+        </button>
         <button id="profile-btn" class="action icon-only" title="Edit your details" aria-label="Edit profile">
           <span class="ic" style="--i:url(/icons/user.svg)"></span>
         </button>
       </div>
     </header>
+
+    <div id="sync-progress" class="sync-progress" hidden aria-live="polite">
+      <div class="sync-progress-track"><span id="sync-progress-bar"></span></div>
+      <div id="sync-progress-text" class="sync-progress-text"></div>
+    </div>
 
     <p id="digest" class="digest skeleton skeleton-text">&nbsp;</p>
 
@@ -113,5 +123,22 @@
   <div id="page" class="page" hidden></div>
 
   <script src="/app.js"></script>
+  <!-- light/dark toggle: flips data-theme and persists the choice -->
+  <script>
+    (function () {
+      var root = document.documentElement, KEY = "oura-theme";
+      var btn = document.getElementById("theme-btn");
+      function sysDark() { return window.matchMedia && matchMedia("(prefers-color-scheme: dark)").matches; }
+      function current() { return root.getAttribute("data-theme") || (sysDark() ? "dark" : "light"); }
+      function label(t) { if (btn) btn.setAttribute("aria-label", t === "dark" ? "Switch to light theme" : "Switch to dark theme"); }
+      label(current());
+      if (btn) btn.addEventListener("click", function () {
+        var t = current() === "dark" ? "light" : "dark";
+        root.setAttribute("data-theme", t);
+        try { localStorage.setItem(KEY, t); } catch (e) {}
+        label(t);
+      });
+    })();
+  </script>
 </body>
 </html>

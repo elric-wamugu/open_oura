@@ -328,6 +328,28 @@ body {
 /* movement ridge (shared by card + detail) */
 .day-ridge { display: block; width: 100%; height: 40px; margin: 4px 0 2px; overflow: visible; }
 .day-ridge path { fill: color-mix(in oklab, var(--accent) 16%, transparent); stroke: color-mix(in oklab, var(--accent) 55%, transparent); stroke-width: 1; vector-effect: non-scaling-stroke; }
+/* hour axis under the day-card ridge (12AM/3AM/…/12AM); keep the edge labels in-bounds */
+.ridge-axis { height: 14px; margin-top: 2px; }
+.ridge-axis span:first-child { transform: none; }
+.ridge-axis span:last-child { transform: translateX(-100%); }
+/* on narrow screens, drop the 3-hour ticks and keep every 6 hours (12AM/6AM/12PM/6PM/12AM) */
+@media (max-width: 560px) { .ridge-axis span:nth-child(even) { display: none; } }
+
+/* live sync progress — a determinate linear bar under the app bar */
+.sync-progress { margin: 0 0 var(--s4); }
+.sync-progress-track {
+  height: 4px; border-radius: var(--radius-pill); overflow: hidden;
+  background: var(--surface-2); box-shadow: inset 0 0 0 1px var(--line-soft);
+}
+#sync-progress-bar {
+  display: block; height: 100%; width: 0; border-radius: var(--radius-pill);
+  background: var(--accent); transition: width 0.25s ease;
+}
+#sync-progress-bar.done { background: var(--good); }
+.sync-progress-text {
+  margin-top: 6px; font-size: 12px; color: var(--muted);
+  font-family: var(--mono); font-variant-numeric: tabular-nums;
+}
 .day-sessions { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 11px; }
 .day-chip {
   display: inline-flex; align-items: center; gap: 5px;
@@ -748,3 +770,99 @@ body.page-open { overflow: hidden; }
 /* capabilities + battery tweaks */
 .adv-body .caps { max-width: 400px; margin-top: -2px; }
 .dh-stat.low .v { color: var(--warn); }
+
+/* ═══════════════════════════════════════════════════════════════════════════
+   Material Design 3 layer — elevation, MD3 shape scale, tonal state layers,
+   filled/tonal buttons, and a persisted light/dark toggle. Appended so it
+   cascades over the base "quiet data" theme; delete this block to revert.
+   ═══════════════════════════════════════════════════════════════════════════ */
+
+:root {
+  /* MD3 shape scale */
+  --radius: 16px;        /* large card */
+  --radius-sm: 12px;     /* medium: inputs, small cards */
+  --radius-lg: 24px;     /* extra-large: dialogs */
+  --radius-pill: 999px;  /* buttons, chips, segmented */
+  /* primary role */
+  --on-accent: #ffffff;
+  /* elevation (light): ambient + key light, per MD3 tonal-ish softness */
+  --elev-1: 0 1px 2px rgba(16, 24, 32, 0.06), 0 1px 3px rgba(16, 24, 32, 0.10);
+  --elev-2: 0 2px 6px rgba(16, 24, 32, 0.10), 0 1px 3px rgba(16, 24, 32, 0.08);
+  --elev-3: 0 8px 22px rgba(16, 24, 32, 0.14), 0 3px 8px rgba(16, 24, 32, 0.10);
+  --shadow: var(--elev-1);
+  --hover-fill: color-mix(in oklab, var(--accent) 9%, transparent);
+}
+:root[data-theme="dark"] {
+  --on-accent: #04211d;
+  --elev-1: 0 1px 2px rgba(0, 0, 0, 0.50), 0 1px 3px rgba(0, 0, 0, 0.40);
+  --elev-2: 0 3px 8px rgba(0, 0, 0, 0.55), 0 1px 3px rgba(0, 0, 0, 0.40);
+  --elev-3: 0 12px 26px rgba(0, 0, 0, 0.62), 0 4px 10px rgba(0, 0, 0, 0.50);
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --on-accent: #04211d;
+    --elev-1: 0 1px 2px rgba(0, 0, 0, 0.50), 0 1px 3px rgba(0, 0, 0, 0.40);
+    --elev-2: 0 3px 8px rgba(0, 0, 0, 0.55), 0 1px 3px rgba(0, 0, 0, 0.40);
+    --elev-3: 0 12px 26px rgba(0, 0, 0, 0.62), 0 4px 10px rgba(0, 0, 0, 0.50);
+  }
+}
+
+/* Elevated surfaces (cards get shadow instead of relying only on a hairline) */
+.panel { border-radius: var(--radius); box-shadow: var(--elev-1); border-color: var(--line-soft); }
+.tile, .stat-strip { box-shadow: var(--elev-1); border-color: var(--line-soft); }
+.tile { transition: box-shadow 0.18s ease, transform 0.18s ease, border-color 0.18s ease; }
+.tile:hover { box-shadow: var(--elev-2); border-color: var(--line); transform: translateY(-1px); }
+
+/* Top app bar — a floating elevated surface rather than a hairline rule */
+.top {
+  background: var(--surface);
+  box-shadow: var(--elev-1);
+  border-bottom: 0;
+  border-radius: var(--radius-sm);
+  padding: 10px 14px;
+}
+
+/* Buttons — MD3 shapes with translucent state layers */
+.batt { border-radius: var(--radius-pill); }
+.action {
+  border-radius: var(--radius-pill);
+  transition: background 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease;
+}
+.action:hover { background: var(--hover-fill); box-shadow: var(--elev-1); }
+.action:active { background: color-mix(in oklab, var(--accent) 15%, transparent); }
+.action.icon-only { padding: 8px; }
+/* filled primary (was near-black → now primary/on-primary) */
+.btn-primary {
+  background: var(--accent); color: var(--on-accent);
+  border-radius: var(--radius-pill); box-shadow: var(--elev-1);
+  transition: box-shadow 0.15s ease, filter 0.15s ease, transform 0.1s ease;
+}
+.btn-primary:hover { box-shadow: var(--elev-2); filter: brightness(1.06); }
+/* text button — primary label + state layer */
+.btn-text { border-radius: var(--radius-pill); color: var(--accent); }
+.btn-text:hover { background: var(--hover-fill); color: var(--accent); }
+.more-toggle, .key-btn, .rpt-back { border-radius: var(--radius-pill); }
+.more-toggle:hover, .key-btn:hover { background: var(--hover-fill); }
+
+/* Chips — MD3 pill assist/filter chips */
+.day-chip, .pill { border-radius: var(--radius-pill); }
+
+/* Segmented control (report tabs) */
+.rpt-tabs, .rpt-tab { border-radius: var(--radius-pill); }
+.rpt-tab.on { box-shadow: var(--elev-1); }
+
+/* Dialogs — MD3 extra-large radius, solid surface, high elevation */
+.dialog {
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  border-color: var(--line-soft);
+  box-shadow: var(--elev-3);
+  -webkit-backdrop-filter: none; backdrop-filter: none;
+}
+
+/* Text fields — filled, primary focus ring */
+.field input, .field select, .key-field, .key-textarea { border-radius: var(--radius-sm); }
+.field input:focus, .field select:focus { border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent-soft); }
+
+/* Toasts — rounded, elevated */
+.toast { border-radius: var(--radius-sm); background: var(--surface); box-shadow: var(--elev-3); -webkit-backdrop-filter: none; backdrop-filter: none; }

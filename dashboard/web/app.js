@@ -238,7 +238,22 @@ function ridgeSvg(profile) {
   const peak = Math.max(0.5, ...prof);
   const pts = prof.map((v, i) => [(i / (prof.length - 1)) * 100, RIDGE_H - Math.min(1, v / peak) * RIDGE_H]);
   const d = `${smoothPath(pts)} L100 ${RIDGE_H} L0 ${RIDGE_H} Z`;
-  return `<svg class="day-ridge" viewBox="0 0 100 ${RIDGE_H}" preserveAspectRatio="none"><path d="${d}"/></svg>`;
+  // faint 6-hour anchors — buckets span 00:00 → 24:00
+  let grid = "";
+  for (let hr = 6; hr < 24; hr += 6) {
+    const x = (hr / 24) * 100;
+    grid += `<line x1="${x}" y1="0" x2="${x}" y2="${RIDGE_H}" stroke="var(--line-soft)" stroke-width="1" vector-effect="non-scaling-stroke"/>`;
+  }
+  const svg = `<svg class="day-ridge" viewBox="0 0 100 ${RIDGE_H}" preserveAspectRatio="none">${grid}<path d="${d}"/></svg>`;
+  // 3-hour ticks in 12-hour AM/PM time (12AM → 12PM → 12AM)
+  const fmtHr = (h) => {
+    const m = ((h % 24) + 24) % 24;
+    return `${m % 12 === 0 ? 12 : m % 12}${m < 12 ? "AM" : "PM"}`;
+  };
+  const axis = `<div class="met-axis ridge-axis">` +
+    [0, 3, 6, 9, 12, 15, 18, 21, 24].map((h) => `<span style="left:${(h / 24 * 100).toFixed(1)}%">${fmtHr(h)}</span>`).join("") +
+    `</div>`;
+  return svg + axis;
 }
 
 // the combined day card: a clickable Sleep region (→ sleep detail) above a clickable
@@ -1321,28 +1336,74 @@ function syncHint(msg) {
   return "Sync failed: " + msg;
 }
 
+// KB (as reported by `oura sync`) → a compact human string.
+function fmtKb(kb) {
+  kb = Math.max(0, +kb || 0);
+  return kb >= 1024 ? (kb / 1024).toFixed(1) + " MB" : Math.round(kb) + " KB";
+}
+
 async function doSync() {
   const btn = $("sync-btn");
   if (btn.classList.contains("syncing")) return;
   btn.classList.add("syncing");
   $("sync-label").textContent = "Syncing";
   btn.title = "Connecting to the ring over Bluetooth…";
+  const box = $("sync-progress"), bar = $("sync-progress-bar"), ptext = $("sync-progress-text");
+  if (box) { box.hidden = false; bar.classList.remove("done"); bar.style.width = "0%"; ptext.textContent = "Connecting to the ring…"; }
+
+  // /api/sync streams SSE frames: {kind:"progress",events,kb_left} · {kind:"retry"} · {kind:"done",ok,message}
+  let total = null, ok = false, message = "";
   try {
-    const j = await (await postDash("/api/sync")).json();
-    if (j.ok) {
-      $("sync-label").textContent = "Synced";
-      toast(j.message && !/^synced$/i.test(j.message) ? j.message : "Ring synced.", "ok");
-      await load();
-    } else {
-      $("sync-label").textContent = "Failed";
-      toast(syncHint(j.message), "error");
+    const resp = await fetch("/api/sync", { method: "POST", headers: { ...DASH_HEADERS } });
+    if (!resp.ok || !resp.body) throw new Error("bad response");
+    const reader = resp.body.getReader();
+    const dec = new TextDecoder();
+    let buf = "";
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      let i;
+      while ((i = buf.indexOf("\n\n")) >= 0) {
+        const line = buf.slice(0, i).replace(/^data:\s?/, "").trim();
+        buf = buf.slice(i + 2);
+        if (!line) continue;
+        let m; try { m = JSON.parse(line); } catch { continue; }
+        if (m.kind === "progress") {
+          if (total == null) total = Math.max(m.kb_left || 0, 0.001); // first line ≈ total to drain
+          const pct = Math.max(0, Math.min(100, ((total - (m.kb_left || 0)) / total) * 100));
+          if (bar) bar.style.width = pct.toFixed(1) + "%";
+          $("sync-label").textContent = "Syncing " + Math.round(pct) + "%";
+          if (ptext) ptext.textContent = `${(m.events || 0).toLocaleString()} events · ${fmtKb(m.kb_left)} left on ring`;
+        } else if (m.kind === "retry") {
+          total = null;
+          if (bar) bar.style.width = "0%";
+          if (ptext) ptext.textContent = "Ring not found — retrying…";
+        } else if (m.kind === "done") {
+          ok = !!m.ok; message = m.message || "";
+        }
+      }
     }
   } catch (e) {
+    ok = false; message = "";
+  }
+
+  if (ok) {
+    if (bar) { bar.style.width = "100%"; bar.classList.add("done"); }
+    if (ptext) ptext.textContent = "Sync complete.";
+    $("sync-label").textContent = "Synced";
+    toast(message && !/^ring synced\.?$/i.test(message) && !/^synced$/i.test(message) ? message : "Ring synced.", "ok");
+    await load();
+  } else {
     $("sync-label").textContent = "Failed";
-    toast("Couldn't reach the local dashboard server.", "error");
+    toast(message ? syncHint(message) : "Couldn't reach the local dashboard server.", "error");
   }
   btn.classList.remove("syncing");
-  setTimeout(() => { $("sync-label").textContent = "Sync"; btn.title = "Sync the ring over Bluetooth"; }, 3000);
+  setTimeout(() => {
+    $("sync-label").textContent = "Sync";
+    btn.title = "Sync the ring over Bluetooth";
+    if (box) box.hidden = true;
+  }, ok ? 1400 : 3000);
 }
 
 // ── load ────────────────────────────────────────────────────
