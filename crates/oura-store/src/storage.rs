@@ -69,6 +69,12 @@ impl Store {
     /// Open (creating if needed) a database at `path` and ensure the schema.
     pub fn open<P: AsRef<Path>>(path: P) -> Result<Self> {
         let conn = Connection::open(path)?;
+        // WAL + synchronous=NORMAL fsync once per checkpoint instead of once per
+        // INSERT. A sync draining tens of thousands of events under the default
+        // (rollback journal + synchronous=FULL) pays an fsync per new row — minutes
+        // of disk time; here it's seconds. WAL also lets the dashboard read the DB
+        // while a sync is writing, without blocking.
+        conn.execute_batch("PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL;")?;
         conn.execute_batch(SCHEMA)?;
         Ok(Self { conn })
     }
