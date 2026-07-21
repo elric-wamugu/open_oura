@@ -14,7 +14,7 @@ use std::time::SystemTime;
 
 use anyhow::{anyhow, Context, Result};
 use serde_json::{json, Value};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{TcpListener, TcpStream};
 
 use oura_summary::{feature_modes_path, profile_path, ModelInputs, ModelOutputs, ModelRunner};
@@ -337,6 +337,23 @@ fn header<'a>(req: &'a str, name: &str) -> Option<&'a str> {
     })
 }
 
+/// Extra `Host` values allowed past the loopback guard, from
+/// `OURA_DASH_ALLOWED_HOSTS` (comma-separated, exact match). Empty by default, so
+/// the dashboard stays loopback-only unless you opt in. Intended for *private*
+/// remote access (e.g. a Tailscale MagicDNS name); never point a public tunnel at
+/// it — there's no login and it exposes health data and the ring key.
+fn extra_allowed_hosts() -> &'static [String] {
+    static HOSTS: OnceLock<Vec<String>> = OnceLock::new();
+    HOSTS.get_or_init(|| {
+        std::env::var("OURA_DASH_ALLOWED_HOSTS")
+            .unwrap_or_default()
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect()
+    })
+}
+
 async fn write_resp(sock: &mut TcpStream, status: &str, ctype: &str, body: &[u8]) -> Result<()> {
     let head = format!(
         "HTTP/1.1 {status}\r\nContent-Type: {ctype}\r\nContent-Length: {}\r\nCache-Control: no-store\r\nConnection: close\r\n\r\n",
@@ -400,10 +417,17 @@ async fn handle(
     let query = target.split_once('?').map(|(_, q)| q).unwrap_or("");
     let body = req.split_once("\r\n\r\n").map(|(_, b)| b).unwrap_or("");
 
-    // Loopback-only (DNS-rebind guard).
-    let host_ok = header(&req, "host")
-        .is_some_and(|h| h == format!("127.0.0.1:{port}") || h == format!("localhost:{port}"));
+    // Loopback-only by default (DNS-rebind guard). OURA_DASH_ALLOWED_HOSTS opts extra
+    // Host values in — for *private* remote access only (Tailscale, not a public tunnel).
+    let host = header(&req, "host").unwrap_or("");
+    let host_ok = host == format!("127.0.0.1:{port}")
+        || host == format!("localhost:{port}")
+        || extra_allowed_hosts().iter().any(|a| a == host);
     if !host_ok {
+        eprintln!(
+            "dashboard: rejected Host {host:?} — add it to OURA_DASH_ALLOWED_HOSTS to \
+             permit private remote access"
+        );
         return write_resp(&mut sock, "403 Forbidden", "text/plain", b"forbidden").await;
     }
     // vendored SVG icons (Phosphor), served from disk
@@ -612,18 +636,7 @@ async fn handle(
                 }
             }
         }
-        ("POST", "/api/sync") => {
-            let res = tokio::task::spawn_blocking(move || {
-                run_sync(&db, &name, address.as_deref(), key_file.as_deref())
-            })
-            .await
-            .map_err(|e| anyhow!(e))?;
-            let v = match res {
-                Ok(msg) => json!({ "ok": true, "message": msg }),
-                Err(e) => json!({ "ok": false, "message": e.to_string() }),
-            };
-            json_resp(&mut sock, &v).await
-        }
+        ("POST", "/api/sync") => stream_sync(&mut sock, db, name, address, key_file).await,
         ("POST", "/api/feature") => {
             let req =
                 serde_json::from_str::<Value>(body.trim_end_matches('\0')).unwrap_or(Value::Null);
@@ -651,63 +664,158 @@ async fn handle(
     }
 }
 
-/// Drain the ring by invoking our own binary's `sync` subcommand (reuses all the
-/// BLE + cursor logic). Returns the last stdout line on success.
+/// Stream a ring sync to the browser as Server-Sent Events. Spawns our own `sync`
+/// subcommand (same BLE + cursor logic as the CLI) and forwards each progress line
+/// — `… N events so far, ~X KB left on ring` — as a `progress` frame so the
+/// dashboard can render a live bar, then a final `done` frame with the summary.
 ///
-/// BLE scanning on macOS is flaky: the ring advertises only periodically (and not at
-/// all for a few seconds after a disconnect), so a single short scan often misses a
-/// ring that is right there. We use a longer scan window and retry the transient
-/// "no matching ring" miss a couple of times before giving up.
-fn run_sync(
-    db: &Path,
-    name: &str,
-    address: Option<&str>,
-    key_file: Option<&Path>,
-) -> Result<String> {
+/// BLE scanning on macOS is flaky: the ring advertises only periodically (and not
+/// at all for a few seconds after a disconnect), so a single short scan often
+/// misses a ring that is right there. We use a longer scan window and retry the
+/// transient "no matching ring" miss a couple of times before giving up.
+async fn stream_sync(
+    sock: &mut TcpStream,
+    db: PathBuf,
+    name: String,
+    address: Option<String>,
+    key_file: Option<PathBuf>,
+) -> Result<()> {
+    sock.write_all(
+        b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\
+          Cache-Control: no-store\r\nConnection: close\r\n\r\n",
+    )
+    .await?;
+
     let exe = std::env::current_exe().context("locating oura binary")?;
-    let mut last = String::from("sync failed");
-    for attempt in 0..3 {
-        let mut c = Command::new(&exe);
+    let mut ok = false;
+    let mut message = String::from("sync failed");
+
+    for attempt in 0..3u32 {
+        let mut c = tokio::process::Command::new(&exe);
         c.arg("--db")
-            .arg(db)
+            .arg(&db)
             .arg("--name")
-            .arg(name)
+            .arg(&name)
             .arg("--scan-timeout")
             .arg("40"); // global flag; wider than the 25 s default
-        if let Some(address) = address {
-            c.arg("--address").arg(address);
+        if let Some(a) = &address {
+            c.arg("--address").arg(a);
         }
-        if let Some(k) = key_file {
+        if let Some(k) = &key_file {
             c.arg("--key-file").arg(k);
         }
-        c.arg("sync");
-        let out = c.output().context("running `oura sync`")?;
-        if out.status.success() {
-            let stdout = String::from_utf8_lossy(&out.stdout);
-            return Ok(stdout.lines().last().unwrap_or("synced").trim().to_string());
+        c.arg("sync").stdout(Stdio::piped()).stderr(Stdio::piped());
+
+        let mut child = match c.spawn() {
+            Ok(child) => child,
+            Err(e) => {
+                message = e.to_string();
+                break;
+            }
+        };
+        // Drain stderr concurrently so a chatty log can't dead-lock the pipe.
+        let stderr = child.stderr.take();
+        let err_task = tokio::spawn(async move {
+            let mut s = String::new();
+            if let Some(e) = stderr {
+                let _ = BufReader::new(e).read_to_string(&mut s).await;
+            }
+            s
+        });
+
+        let stdout = child.stdout.take().expect("piped stdout");
+        let mut lines = BufReader::new(stdout).lines();
+        let mut summary = String::new();
+        while let Ok(Some(line)) = lines.next_line().await {
+            if let Some((events, kb_left)) = parse_progress(&line) {
+                let frame = format!(
+                    "data: {}\n\n",
+                    json!({ "kind": "progress", "events": events, "kb_left": kb_left })
+                );
+                if sock.write_all(frame.as_bytes()).await.is_err() {
+                    let _ = child.wait().await; // browser hung up
+                    return Ok(());
+                }
+            } else if line.starts_with("Done:") {
+                summary = line.trim().to_string();
+            }
         }
-        let stderr = String::from_utf8_lossy(&out.stderr);
-        last = stderr
-            .lines()
-            .last()
-            .unwrap_or("sync failed")
-            .trim()
-            .to_string();
+        let status = child.wait().await.ok();
+        let errs = err_task.await.unwrap_or_default();
+        if status.map(|s| s.success()).unwrap_or(false) {
+            ok = true;
+            message = if summary.is_empty() { "Ring synced.".into() } else { summary };
+            break;
+        }
+        message = errs.lines().last().unwrap_or("sync failed").trim().to_string();
         // only a scan miss is worth retrying; a real error (auth, etc.) is not
         let transient = {
-            let l = last.to_lowercase();
+            let l = message.to_lowercase();
             l.contains("no matching")
                 || l.contains("not found")
                 || l.contains("no device")
                 || l.contains("timed out")
                 || l.contains("timeout")
         };
-        if !transient || attempt == 2 {
-            break;
+        if transient && attempt < 2 {
+            let _ = sock
+                .write_all(
+                    format!("data: {}\n\n", json!({ "kind": "retry", "attempt": attempt + 1 }))
+                        .as_bytes(),
+                )
+                .await;
+            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+            continue;
         }
-        std::thread::sleep(std::time::Duration::from_secs(2));
+        break;
     }
-    Err(anyhow!("{last}"))
+
+    let _ = sock
+        .write_all(
+            format!("data: {}\n\n", json!({ "kind": "done", "ok": ok, "message": message }))
+                .as_bytes(),
+        )
+        .await;
+    Ok(())
+}
+
+/// Parse a sync progress line — `  … 255 events so far, ~3024.1 KB left on ring` —
+/// into `(events, kb_left)`. Non-progress lines return `None`.
+fn parse_progress(line: &str) -> Option<(u64, f64)> {
+    let ev = line.find(" events so far")?;
+    let events: u64 = line[..ev]
+        .rsplit(|ch: char| !ch.is_ascii_digit())
+        .find(|s| !s.is_empty())?
+        .parse()
+        .ok()?;
+    let rest = &line[line.find('~')? + 1..];
+    let kb: f64 = rest[..rest.find(" KB")?].trim().parse().ok()?;
+    Some((events, kb))
+}
+
+#[cfg(test)]
+mod sync_tests {
+    use super::parse_progress;
+
+    #[test]
+    fn parses_progress_and_ignores_others() {
+        assert_eq!(
+            parse_progress("  … 255 events so far, ~3024.1 KB left on ring"),
+            Some((255, 3024.1))
+        );
+        assert_eq!(
+            parse_progress("  … 2971 events so far, ~0.0 KB left on ring"),
+            Some((2971, 0.0))
+        );
+        assert_eq!(
+            parse_progress("Done: 2971 events received, 2716 new rows, next cursor 1553158."),
+            None
+        );
+        assert_eq!(
+            parse_progress("Syncing events for XXXXXXXXXXXXXX from cursor 1279314 ..."),
+            None
+        );
+    }
 }
 
 /// Toggle an on-ring feature via our `feature-mode` subcommand (BLE, auth-gated).
