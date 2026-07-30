@@ -7,6 +7,59 @@ Tested live against a Ring 3 Horizon and a Ring 5 (pairing, auth, and event sync
 confirmed on both). Designed for Ring 3/4/5, which share the same GATT layout,
 packet framing, and authentication flow.
 
+## Fork: dashboard improvements (`dashboard-improvements` branch)
+
+This fork extends the web dashboard so more of it works **without Oura's
+proprietary PyTorch models** (which aren't bundled), plus performance, UX, and
+correctness work. Validated on a Ring 3 Heritage (`BLB_03`).
+
+### Changes (new capabilities)
+
+- **Native sleep staging** — when no SleepNet output is available, the hypnogram
+  is assembled from the ring's own `sleep_phase_data` events (logged as a burst
+  a couple of hours after wake, matched to each night by wake time). Unblocks the
+  sleep-stages view, sleep efficiency, the overnight polysomnograph, and sleep
+  architecture — no model needed.
+- **Native blood oxygen** — rings that emit `spo2_event` (summarized SpO₂ %)
+  rather than the `spo2_r_pi_event` R-ratio now render Blood Oxygen from those
+  percentages directly.
+- **Streaming sync progress** — `POST /api/sync` streams Server-Sent Events; the
+  header shows a live determinate progress bar ("N events · X KB left on ring")
+  instead of a spinner.
+- **Private remote access** — `OURA_DASH_ALLOWED_HOSTS` opts extra `Host` values
+  past the loopback guard, for reaching the dashboard over **Tailscale** (default
+  stays loopback-only; never expose it publicly — no auth, health data + ring key).
+- **Material Design 3 theme** with a persisted light/dark toggle.
+- **Live battery** — captured at each sync and shown with its age (`98% · 2h`),
+  instead of a stale value scraped from old `debug_data` events.
+
+### Improvements
+
+- **Sync speed** — SQLite WAL + `synchronous=NORMAL`: fsync per checkpoint, not per
+  INSERT (~20× faster on a large drain; the dashboard can also read while syncing).
+- **Timestamp accuracy** — the activity/sleep timeline is anchored by mapping the
+  ring's counter (`ds`) back from each boot-epoch's newest event at ~10 ds/sec.
+  Sleep and activity now land at the right hours (e.g. sleep `23:03–09:09`, not a
+  compressed afternoon window). See the note on the ring having no real clock below.
+- **Activity ridge** now uses a 12-hour AM/PM hour axis (`12AM · 3AM … 12AM`,
+  thinned to every 6 h on narrow screens) instead of a raw `0–24` scale.
+- **Honest gating** — Cardiovascular age says "needs Oura's CVA model, which isn't
+  bundled" instead of the misleading "enable cva_ppg"; the SpO₂ subtitle no longer
+  claims R-ratio calibration when the data is a direct percentage.
+
+### Still needs the proprietary model
+
+**Cardiovascular / vascular age (CVA)** is a learned neural net on raw PPG — there
+is no formula substitute, so it stays gated until you supply Oura's model + a torch
+venv. The raw `cva_raw_ppg_data` is captured regardless.
+
+> **Note — the ring has no reliable clock.** It emits no `time_sync`/`rtc_beacon`
+> anchor and its `ds` counter pauses when the ring is off/dead. Timestamps are
+> accurate for continuously-worn stretches; history spanning a power loss or a day
+> off the wrist can still compress. Wear it continuously and sync often for the best
+> results. (A per-sync-batch `captured_unix` anchor was tried and reverted — it
+> compressed every buffered overnight sleep into the morning sync window.)
+
 ## What you can recover
 
 Straight from the ring, with no Oura account: device info, battery, live heart rate
