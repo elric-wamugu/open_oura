@@ -487,7 +487,7 @@ fn smooth_stages(vals: &[i64], win: usize) -> Vec<i64> {
             }
             (1..=4)
                 .max_by_key(|&k| counts[k as usize])
-                .unwrap_or(vals[i]) as i64
+                .unwrap_or(vals[i])
         })
         .collect()
 }
@@ -565,6 +565,50 @@ fn make_digest(hrv: &VitalStat, rhr: &VitalStat) -> String {
         s = "Synced. Not enough history yet for trends.".into();
     }
     s
+}
+
+/// Assemble a night's hypnogram from the ring's OWN `sleep_phase_data` events —
+/// the on-device fallback when no SleepNet model output is available. The ring
+/// finishes staging a night and logs the hypnogram as a burst a couple of hours
+/// *after* wake, so we take the phases from just after the night's `end_ds`. Codes:
+/// 1=deep 2=light 3=rem 4=wake (matching the model). They tile the sleep window
+/// uniformly, exactly like the model's `stages`.
+fn stages_from_phase_data(
+    events: &[(i64, u8, String, i64)],
+    event_epochs: &[usize],
+    epoch_idx: usize,
+    end_ds: i64,
+) -> Vec<i64> {
+    // 5 h after wake clears the ~2 h logging delay but stays short of the next night.
+    const POST_WAKE_DS: i64 = 5 * 3600 * 10;
+    let mut burst: Vec<(i64, &str)> = Vec::new();
+    for (i, (ds, tag, jstr, _)) in events.iter().enumerate() {
+        if event_epochs[i] == epoch_idx
+            && *ds > end_ds
+            && *ds <= end_ds + POST_WAKE_DS
+            && oura_protocol::events::event_name(*tag) == "sleep_phase_data"
+        {
+            burst.push((*ds, jstr.as_str()));
+        }
+    }
+    burst.sort_by_key(|&(ds, _)| ds);
+    let mut stages = Vec::new();
+    for (_, jstr) in burst {
+        if let Ok(v) = serde_json::from_str::<Value>(jstr) {
+            if let Some(arr) = v["phases"].as_array() {
+                for p in arr {
+                    match p.as_str() {
+                        Some("deep") => stages.push(1),
+                        Some("light") => stages.push(2),
+                        Some("rem") => stages.push(3),
+                        Some("awake") => stages.push(4),
+                        _ => {}
+                    }
+                }
+            }
+        }
+    }
+    stages
 }
 
 /// Assemble the full dashboard summary as a JSON value. The torch models are
@@ -745,6 +789,16 @@ pub fn build_summary(db: &Path, tz: i64, runner: &dyn ModelRunner) -> Result<Val
                     );
                 }
             }
+            "spo2_event" => {
+                // Rings that emit summarized SpO2 % directly (no R-ratio to calibrate).
+                if let Some(a) = v["spo2_percent"].as_array() {
+                    nights[idx].spo2.extend(
+                        a.iter()
+                            .filter_map(|x| x.as_f64())
+                            .filter(|&x| (70.0..=100.0).contains(&x)),
+                    );
+                }
+            }
             "motion_event" => {
                 // seconds of motion in this window — a restlessness signal aligned to
                 // the night, feeds the polysomnograph's movement lane.
@@ -816,8 +870,12 @@ pub fn build_summary(db: &Path, tz: i64, runner: &dyn ModelRunner) -> Result<Val
             .or_else(|| hyps.get(&nt.start_ds.to_string()));
         let raw_stages: Vec<i64> = hyp
             .and_then(|h| h["stages"].as_array())
-            .map(|s| s.iter().filter_map(|x| x.as_i64()).collect())
-            .unwrap_or_default();
+            .map(|s| s.iter().filter_map(|x| x.as_i64()).collect::<Vec<i64>>())
+            .filter(|v| !v.is_empty())
+            // No SleepNet output → fall back to the ring's own on-device hypnogram.
+            .unwrap_or_else(|| {
+                stages_from_phase_data(&events, &event_epochs, nt.epoch_idx, nt.end_ds)
+            });
         // smooth once (≈2.5 min window) — used for the displayed hypnogram AND the
         // derived metrics, so the two always agree.
         let full_stages = smooth_stages(&raw_stages, 5);
@@ -829,6 +887,35 @@ pub fn build_summary(db: &Path, tz: i64, runner: &dyn ModelRunner) -> Result<Val
             autonomic_by_stage(&nt.hrv_t, &nt.hr_t, &full_stages, nt.start_ds, nt.end_ds);
         let start_unix = unix_in_epoch(nt.start_ds, nt.epoch_idx);
         let end_unix = unix_in_epoch(nt.end_ds, nt.epoch_idx);
+        // Stage distribution + efficiency: from the model when present, else derived
+        // from the (on-device) hypnogram so they always match the displayed stages.
+        let (deep_pct, light_pct, rem_pct, wake_pct, efficiency) = match hyp {
+            Some(h) => (
+                h["deep_pct"].clone(),
+                h["light_pct"].clone(),
+                h["rem_pct"].clone(),
+                h["wake_pct"].clone(),
+                h["efficiency_pct"].clone(),
+            ),
+            None => {
+                let n = full_stages.len();
+                let pct = |code: i64| {
+                    if n == 0 {
+                        Value::Null
+                    } else {
+                        let c = full_stages.iter().filter(|&&x| x == code).count();
+                        json!((c as f64 / n as f64 * 100.0).round())
+                    }
+                };
+                let eff = if n == 0 {
+                    Value::Null
+                } else {
+                    let asleep = full_stages.iter().filter(|&&c| (1..=3).contains(&c)).count();
+                    json!((asleep as f64 / n as f64 * 100.0).round())
+                };
+                (pct(1), pct(2), pct(3), pct(4), eff)
+            }
+        };
         nights_json.push(json!({
             "date": date_label(start_unix, tz),
             "ymd": ymd_label(start_unix, tz),
@@ -840,11 +927,11 @@ pub fn build_summary(db: &Path, tz: i64, runner: &dyn ModelRunner) -> Result<Val
             "rhr": nt.hr.iter().cloned().fold(f64::INFINITY, f64::min).is_finite().then(|| nt.hr.iter().cloned().fold(f64::INFINITY, f64::min).round()),
             "skin_temp": nightly_skin_temp(&nt.temp).map(|x| (x * 10.0).round() / 10.0),
             "spo2_mean": mean(&nt.spo2).map(|x| x.round()),
-            "deep_pct": hyp.map(|h| h["deep_pct"].clone()),
-            "light_pct": hyp.map(|h| h["light_pct"].clone()),
-            "rem_pct": hyp.map(|h| h["rem_pct"].clone()),
-            "wake_pct": hyp.map(|h| h["wake_pct"].clone()),
-            "efficiency": hyp.map(|h| h["efficiency_pct"].clone()),
+            "deep_pct": deep_pct,
+            "light_pct": light_pct,
+            "rem_pct": rem_pct,
+            "wake_pct": wake_pct,
+            "efficiency": efficiency,
             "stages": stage_cells,
             // full-resolution hypnogram + aligned raw signals for the detail page's
             // stacked polysomnograph (empty arrays stay out of the way when absent).
@@ -1034,7 +1121,7 @@ pub fn build_summary(db: &Path, tz: i64, runner: &dyn ModelRunner) -> Result<Val
             ),
             "daytime_hr"
         ),
-        feat("SpO2", cap_on("spo2", has("spo2_r_pi_event")), "spo2"),
+        feat("SpO2", cap_on("spo2", has("spo2_r_pi_event") || has("spo2_event")), "spo2"),
         feat(
             "Exercise HR",
             cap_on("exercise_hr", has("ehr_trace_event")),
@@ -1058,7 +1145,7 @@ pub fn build_summary(db: &Path, tz: i64, runner: &dyn ModelRunner) -> Result<Val
     let mut sc: std::collections::BTreeMap<&str, i64> = Default::default();
     for (_ds, tag, _j, _) in &events {
         let cat = match name_of(*tag) {
-            "spo2_r_pi_event" => Some("Blood oxygen"),
+            "spo2_r_pi_event" | "spo2_event" => Some("Blood oxygen"),
             "ibi_and_amplitude_event" | "green_ibi_quality_event" => Some("Heart beats"),
             "ehr_trace_event" | "ehr_acm_intensity_event" => Some("Exercise HR"),
             "motion_event" | "sleep_acm_period" => Some("Motion"),
@@ -1101,7 +1188,7 @@ pub fn build_summary(db: &Path, tz: i64, runner: &dyn ModelRunner) -> Result<Val
             has("cva_raw_ppg_data"),
             "enable cva_ppg"
         ),
-        insight("SpO2", has("spo2_r_pi_event"), "enable spo2"),
+        insight("SpO2", has("spo2_r_pi_event") || has("spo2_event"), "enable spo2"),
         insight("Activity sessions", true, ""),
         insight("HRV / resting HR", true, ""),
         insight(

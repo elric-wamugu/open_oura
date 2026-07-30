@@ -332,7 +332,7 @@ function renderCardio(d) {
   // VO₂max is model-free (from demographics), so it shows even without the CVA model.
   const vo2Kv = vo2 != null ? el("div", "kv", `<div class="k">VO₂max estimate</div><div class="v">${vo2} ml/kg/min</div>`) : null;
   if (!cv || cv.vascular_age == null) {
-    box.append(el("div", "error", "Cardiovascular age needs the cva_ppg feature on. Enable it, then sync overnight."));
+    box.append(el("div", "error", "Cardiovascular age needs Oura's CVA model, which isn't bundled. The raw PPG is captured — scoring it requires that model."));
     if (vo2Kv) { const kvs = el("div", "kvs"); kvs.append(vo2Kv); box.append(kvs); }
     return;
   }
@@ -356,7 +356,7 @@ function renderSpo2(d) {
   // SpO2 gauge scale: clamp the reading into [SPO2_MIN, 100] and map to 0–100% fill.
   const SPO2_MIN = 85, SPO2_HEALTHY = 95;
   box.append(el("div", "big-metric", `<span class="n">${n0.spo2_mean}</span><span class="u">% avg, last night</span>`));
-  box.append(el("div", "sub", "Calibrated from the ring's R-ratio (Oura's own curve)."));
+  box.append(el("div", "sub", "From the ring's own overnight blood-oxygen readings."));
   const pct = Math.max(0, Math.min(100, ((n0.spo2_mean - SPO2_MIN) / (100 - SPO2_MIN)) * 100));
   const g = el("div", "gauge");
   const fill = el("i");
