@@ -567,63 +567,6 @@ fn make_digest(hrv: &VitalStat, rhr: &VitalStat) -> String {
     s
 }
 
-/// Map a ring `ds` (deciseconds) to wall-clock unix seconds via a boot epoch's
-/// sync-session anchors — `(ds, captured_unix)` pairs, ds-ascending and unix
-/// non-decreasing. Interpolates linearly between anchors (so the real elapsed
-/// wall-clock between two syncs sets the rate); past either end it extrapolates at
-/// the ring's nominal 10 ds/sec.
-fn ds_to_unix(a: &[(i64, i64)], ds: i64) -> f64 {
-    match a.len() {
-        0 => ds as f64 / 10.0,
-        1 => a[0].1 as f64 + (ds - a[0].0) as f64 / 10.0,
-        _ => match a.binary_search_by_key(&ds, |&(d, _)| d) {
-            Ok(i) => a[i].1 as f64,
-            Err(0) => {
-                let ((d0, u0), (d1, u1)) = (a[0], a[1]);
-                let slope = (u1 - u0) as f64 / (d1 - d0).max(1) as f64;
-                u0 as f64 + (ds - d0) as f64 * slope
-            }
-            Err(p) if p >= a.len() => {
-                let (dn, un) = a[a.len() - 1];
-                un as f64 + (ds - dn) as f64 / 10.0
-            }
-            Err(p) => {
-                let ((d0, u0), (d1, u1)) = (a[p - 1], a[p]);
-                let f = (ds - d0) as f64 / (d1 - d0).max(1) as f64;
-                u0 as f64 + f * (u1 - u0) as f64
-            }
-        },
-    }
-}
-
-#[cfg(test)]
-mod anchor_tests {
-    use super::ds_to_unix;
-
-    #[test]
-    fn interpolates_and_extrapolates() {
-        // Two syncs 900 s apart, but the ring's counter advanced 27000 ds (30 s-worth
-        // at a true 10/s → so it ran ~3× fast). Anchoring on captured_unix corrects it.
-        let a = [(100_000, 1_000_000), (127_000, 1_000_900)];
-        assert_eq!(ds_to_unix(&a, 100_000), 1_000_000.0); // exact anchor
-        assert_eq!(ds_to_unix(&a, 127_000), 1_000_900.0); // exact anchor
-        // midpoint by ds → midpoint in wall-clock (not the counter's inflated delta)
-        assert!((ds_to_unix(&a, 113_500) - 1_000_450.0).abs() < 1e-6);
-        // extrapolate before the first anchor at the first segment's real slope
-        // (900 s / 27000 ds = 1/30 s per ds): 3000 ds earlier → 100 s earlier.
-        assert!((ds_to_unix(&a, 97_000) - 999_900.0).abs() < 1e-6);
-        // extrapolate past the last anchor at the nominal 10 ds/s: +300 ds → +30 s.
-        assert!((ds_to_unix(&a, 127_300) - 1_000_930.0).abs() < 1e-6);
-    }
-
-    #[test]
-    fn single_anchor_uses_nominal_rate() {
-        let a = [(500, 2_000_000)];
-        assert_eq!(ds_to_unix(&a, 500), 2_000_000.0);
-        assert_eq!(ds_to_unix(&a, 600), 2_000_010.0); // +100 ds → +10 s
-    }
-}
-
 /// Assemble the full dashboard summary as a JSON value. The torch models are
 /// supplied by `runner` (Python subprocess on desktop, `.ptl` on-device).
 pub fn build_summary(db: &Path, tz: i64, runner: &dyn ModelRunner) -> Result<Value> {
@@ -648,18 +591,22 @@ pub fn build_summary(db: &Path, tz: i64, runner: &dyn ModelRunner) -> Result<Val
             db.display()
         ));
     }
-    // `ring_timestamp` (ds) is a per-boot deciseconds counter, but it is NOT a reliable
-    // wall clock: it pauses while the ring is off/dead, drifts across charging, and
-    // resets to ~0 on a reboot. The one trustworthy time source is `captured_unix` —
-    // this machine's clock at sync time. So we anchor on that. First split events into
-    // boot "epochs" (a reboot resets ds toward zero) by walking in sync order and
-    // cutting on a large backward ds jump.
+    // `ring_timestamp` (ds) is a per-boot deciseconds counter. During continuous wear
+    // it advances at ~10/sec of real time, so the newest event ≈ "now" (its sync's
+    // capture time) and everything else sits (newest_ds − ds)/10 seconds earlier —
+    // regardless of when it was *synced*. That last point matters: a night's sleep is
+    // buffered and drained the next morning, yet its ds deltas are still real-time, so
+    // anchoring on the counter (not the sync time) places it back overnight where it
+    // belongs. We split into boot "epochs" (a reboot resets ds toward ~0) and anchor
+    // each on its newest event's capture time.
+    //
+    // Caveat: across an off-period *within* an epoch (ring dead, ds paused but no
+    // reboot) events before the gap compress — unavoidable without a real ring clock;
+    // only continuous-wear stretches are accurate, which is the case that matters.
     struct Epoch {
         min_ds: i64,
         max_ds: i64,
-        /// (ds, captured_unix) anchors from sync sessions — ds-ascending, unix
-        /// non-decreasing — that pin the counter to wall-clock time.
-        anchors: Vec<(i64, i64)>,
+        anchor_unix: i64,
     }
     // A real reboot drops ds by millions; 6 h of slack absorbs minor out-of-order
     // framing within an epoch without ever splitting one.
@@ -672,68 +619,29 @@ pub fn build_summary(db: &Path, tz: i64, runner: &dyn ModelRunner) -> Result<Val
     order.sort_unstable();
     let mut epochs: Vec<Epoch> = Vec::new();
     let mut event_epochs = vec![0usize; events.len()];
-    for (_cu, event_idx, ds) in order {
+    for (cu, event_idx, ds) in order {
         if let Some(i) = epochs.len().checked_sub(1) {
             if ds >= epochs[i].max_ds - EPOCH_RESET_SLACK_DS {
                 event_epochs[event_idx] = i;
-                epochs[i].max_ds = epochs[i].max_ds.max(ds);
+                if ds >= epochs[i].max_ds {
+                    epochs[i].max_ds = ds;
+                    epochs[i].anchor_unix = cu; // newest event → its capture time
+                }
                 epochs[i].min_ds = epochs[i].min_ds.min(ds);
                 continue;
             }
         }
         event_epochs[event_idx] = epochs.len();
-        epochs.push(Epoch { min_ds: ds, max_ds: ds, anchors: Vec::new() });
+        epochs.push(Epoch { min_ds: ds, max_ds: ds, anchor_unix: cu });
     }
-
-    // Build each epoch's wall-clock anchors from its sync sessions. A "session" is a
-    // run of events captured within SESSION_GAP_S of one another (one `sync` run); its
-    // newest event (max ds) is pinned to its capture time. `unix_in_epoch` then maps
-    // ds→wall-clock by interpolating linearly between session anchors, so the real
-    // elapsed wall-clock between two syncs — not the ring's drifting counter — sets the
-    // rate across that span. That stops a battery death or a day off the wrist from
-    // smearing events onto the wrong hours.
-    const SESSION_GAP_S: i64 = 300;
-    {
-        let mut by_epoch: Vec<Vec<(i64, i64)>> = vec![Vec::new(); epochs.len()];
-        for (idx, (ds, _, _, cu)) in events.iter().enumerate() {
-            by_epoch[event_epochs[idx]].push((*cu, *ds)); // (captured_unix, ds)
-        }
-        for (ep, mut pts) in by_epoch.into_iter().enumerate() {
-            pts.sort_unstable(); // by capture time, then ds
-            let mut anchors: Vec<(i64, i64)> = Vec::new(); // (ds, unix)
-            let (mut sess_cu, mut sess_max_ds) = (i64::MIN, i64::MIN);
-            for (cu, ds) in pts {
-                if sess_max_ds > i64::MIN && cu - sess_cu > SESSION_GAP_S {
-                    anchors.push((sess_max_ds, sess_cu));
-                    sess_max_ds = i64::MIN;
-                }
-                sess_cu = cu;
-                sess_max_ds = sess_max_ds.max(ds);
-            }
-            if sess_max_ds > i64::MIN {
-                anchors.push((sess_max_ds, sess_cu));
-            }
-            // Keep ds strictly ascending and unix non-decreasing (a monotone envelope,
-            // so the piecewise map is well defined).
-            anchors.sort_unstable();
-            anchors.dedup_by_key(|&mut (ds, _)| ds);
-            let mut mono: Vec<(i64, i64)> = Vec::with_capacity(anchors.len());
-            for (ds, unix) in anchors {
-                match mono.last() {
-                    Some(&(_, u)) if unix < u => {}
-                    _ => mono.push((ds, unix)),
-                }
-            }
-            epochs[ep].anchors = mono;
-        }
-    }
-
-    // ds → wall-clock unix for an event's boot epoch (see `ds_to_unix`).
+    // ds → wall-clock: pin the epoch's newest event to its capture time, step back at
+    // the ring's nominal 10 ds/sec.
     let unix_in_epoch = |ds: i64, epoch_idx: usize| -> f64 {
-        ds_to_unix(&epochs[epoch_idx].anchors, ds)
+        let e = &epochs[epoch_idx];
+        e.anchor_unix as f64 - (e.max_ds - ds) as f64 / 10.0
     };
     // Wall-clock "now" reference (newest sync).
-    let anchor_unix = events.iter().map(|(_, _, _, cu)| *cu).max().unwrap_or(0);
+    let anchor_unix = epochs.iter().map(|e| e.anchor_unix).max().unwrap_or(0);
 
     let mut beds: Vec<(i64, i64, usize)> = Vec::new();
     let mut present_recent = std::collections::HashSet::new();
