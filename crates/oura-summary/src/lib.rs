@@ -1203,16 +1203,26 @@ pub fn build_summary(db: &Path, tz: i64, runner: &dyn ModelRunner) -> Result<Val
         ),
         insight("Stress / resilience", false, "needs cloud scores"),
     ]);
-    let mut battery: Option<(i64, i64)> = None;
+    // Battery. The debug_data stream carries historical `battery_pct` snapshots the
+    // ring logged at some past time — so prefer the live reading `sync` captures (kind
+    // "battery_percent", timestamped) and keep debug_data only as a fallback (and for
+    // voltage, which the live read doesn't provide).
+    let mut dbg_batt: Option<(i64, i64)> = None;
     for (_ds, tag, jstr, _) in &events {
         if name_of(*tag) == "debug_data" && jstr.contains("battery_pct") {
             if let Ok(v) = serde_json::from_str::<Value>(jstr) {
                 if let Some(p) = v["battery_pct"].as_i64() {
-                    battery = Some((p, v["voltage_mv"].as_i64().unwrap_or(0)));
+                    dbg_batt = Some((p, v["voltage_mv"].as_i64().unwrap_or(0)));
                 }
             }
         }
     }
+    let live_batt = dev
+        .as_ref()
+        .and_then(|d| store.latest_reading(&d.0, "battery_percent").ok().flatten());
+    let battery_pct = live_batt.map(|(v, _)| v.round() as i64).or(dbg_batt.map(|b| b.0));
+    let battery_as_of = live_batt.map(|(_, t)| t);
+    let battery_v = dbg_batt.map(|b| (b.1 as f64 / 1000.0 * 100.0).round() / 100.0);
 
     let last_sync = dev.as_ref().map(|d| d.6).filter(|&t| t > 0);
     let synced_unix = last_sync.map(|t| t as f64);
@@ -1233,8 +1243,9 @@ pub fn build_summary(db: &Path, tz: i64, runner: &dyn ModelRunner) -> Result<Val
         "days_of_data": ((epochs.iter().map(|e| (e.max_ds - e.min_ds) as f64).sum::<f64>() / 10.0 / 86400.0) * 10.0).round() / 10.0,
         "total_events": events.len(),
         "nights": nights.len(),
-        "battery_pct": battery.map(|b| b.0),
-        "battery_v": battery.map(|b| (b.1 as f64 / 1000.0 * 100.0).round() / 100.0),
+        "battery_pct": battery_pct,
+        "battery_v": battery_v,
+        "battery_as_of": battery_as_of,
         "measuring": measuring,
         "streams": streams,
         "event_counts": event_counts,

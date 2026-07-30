@@ -211,6 +211,20 @@ impl Store {
         self.insert_reading(serial, "battery_percent", battery.percent as f64, "%")
     }
 
+    /// The newest reading of `kind` for a device: `(value, captured_unix)`.
+    pub fn latest_reading(&self, serial: &str, kind: &str) -> Result<Option<(f64, i64)>> {
+        let row = self
+            .conn
+            .query_row(
+                "SELECT value, captured_unix FROM readings \
+                 WHERE serial = ?1 AND kind = ?2 ORDER BY captured_unix DESC, id DESC LIMIT 1",
+                params![serial, kind],
+                |r| Ok((r.get::<_, f64>(0)?, r.get::<_, i64>(1)?)),
+            )
+            .optional()?;
+        Ok(row)
+    }
+
     /// Re-decode every stored event body with the current decoders, updating
     /// `decoded_json`. Returns `(rows_with_decode, total_rows)`. Lets new decoders
     /// be applied to events captured before they existed — no re-sync needed.
@@ -326,5 +340,19 @@ mod tests {
 
         let counts = store.event_counts("S1").unwrap();
         assert_eq!(counts, vec![("debug_event".to_string(), 1)]);
+    }
+
+    #[test]
+    fn latest_reading_returns_newest() {
+        let store = Store::open_in_memory().unwrap();
+        assert!(store.latest_reading("S1", "battery_percent").unwrap().is_none());
+        store.insert_reading("S1", "battery_percent", 80.0, "%").unwrap();
+        store.insert_reading("S1", "battery_percent", 9.0, "%").unwrap();
+        // Even inserted within the same second, the last write (higher id) wins.
+        let (v, _t) = store.latest_reading("S1", "battery_percent").unwrap().unwrap();
+        assert_eq!(v, 9.0);
+        // Scoped by device and kind.
+        assert!(store.latest_reading("S2", "battery_percent").unwrap().is_none());
+        assert!(store.latest_reading("S1", "spo2").unwrap().is_none());
     }
 }

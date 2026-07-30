@@ -824,6 +824,12 @@ async fn cmd_sync(cli: &Cli, key: &Option<[u8; 16]>, sync_time: bool) -> Result<
     let store = Store::open(&cli.db)?;
     store.upsert_device(&serial, None, info.as_ref())?;
 
+    // Capture the live battery at sync time so the dashboard shows the real current
+    // charge (timestamped), not a stale `battery_pct` from an old debug_data event.
+    if let Ok(b) = client.battery().await {
+        let _ = store.insert_battery(&serial, &b);
+    }
+
     let cursor = store.cursor(&serial)?;
     println!("Syncing events for {serial} from cursor {cursor} ...");
 
