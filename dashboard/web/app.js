@@ -1262,20 +1262,23 @@ function renderActions(d) {
   const dev = d.device || {};
   const b = $("batt");
   if (dev.battery_pct != null) {
-    b.innerHTML = icon("battery-high") + `<span>${dev.battery_pct}%</span>`;
+    // Battery is captured at sync time, not live. Show a compact age *visibly* (a
+    // hover-only title is invisible on phones), so the value reads as "last known".
+    // No timestamp = an older debug-history value ("~").
+    const s = dev.battery_as_of != null
+      ? Math.max(0, Math.floor(Date.now() / 1000) - dev.battery_as_of)
+      : null;
+    const short = s == null ? "~"
+      : s < 60 ? "now" : s < 3600 ? Math.round(s / 60) + "m"
+      : s < 86400 ? Math.round(s / 3600) + "h" : Math.round(s / 86400) + "d";
+    b.innerHTML = icon("battery-high")
+      + `<span>${dev.battery_pct}%</span>`
+      + `<span class="batt-age">· ${short}</span>`;
     b.classList.toggle("low", dev.battery_pct < 20);
     b.hidden = false;
-    // Battery is captured at sync time, not live — say when, so a stale value reads
-    // as "last known" rather than "current". No timestamp = older debug-history value.
-    const ago = dev.battery_as_of
-      ? (() => {
-          const s = Math.max(0, Math.floor(Date.now() / 1000) - dev.battery_as_of);
-          return s < 90 ? "just now" : s < 3600 ? Math.round(s / 60) + "m ago"
-            : s < 86400 ? Math.round(s / 3600) + "h ago" : Math.round(s / 86400) + "d ago";
-        })()
-      : null;
-    const asOf = ago ? ` · as of ${ago}` : " · from event history (approx)";
-    b.title = `Ring battery ${dev.battery_pct}%${dev.battery_v ? " · " + dev.battery_v + " V" : ""}${asOf}. Sync to refresh.`;
+    const longAgo = s == null ? "from event history (approx)"
+      : s < 60 ? "as of just now" : `as of ${short} ago`;
+    b.title = `Ring battery ${dev.battery_pct}%${dev.battery_v ? " · " + dev.battery_v + " V" : ""} · ${longAgo}. Not live — sync to refresh.`;
   } else {
     b.hidden = true;
   }

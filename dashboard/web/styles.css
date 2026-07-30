@@ -168,6 +168,8 @@ body {
 }
 .batt .ic { font-size: 15px; }
 .batt.low { color: var(--warn); }
+.batt { white-space: nowrap; }
+.batt-age { color: var(--faint); font-size: 11px; margin-left: -3px; flex: none; white-space: nowrap; }
 .action {
   display: inline-flex; align-items: center; gap: 7px;
   font-family: var(--sans); font-size: 13px; font-weight: 520;
