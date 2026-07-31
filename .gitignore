@@ -9,6 +9,10 @@ __pycache__/
 # Local SQLite databases may contain device serials and personal ring data.
 *.db
 *.db-journal
+# WAL mode (oura-store opens the DB with journal_mode=WAL) keeps unflushed pages
+# in these sidecars — same personal data as the .db itself.
+*.db-wal
+*.db-shm
 *.sqlite
 
 # Local BLE captures may include serials, MAC-derived identifiers, or auth data.
