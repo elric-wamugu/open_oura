@@ -42,6 +42,7 @@ metric there once and both clients receive it in the JSON.
 | **Unified day (night + activity)** | `renderDay`, `dayCard` | `TodayCard` | `nights[]`, `activity*` | — |
 | **Full-page sleep report** (polysomnograph + clinical metrics + interpretation) | `openDayPage`→`sleepReport`, `polysomnograph`, `hypnoSvg` | `DayReportView`→`SleepReport`, `Polysomnograph` (Reports.swift) | `nights[].{stages_full,series,metrics}`, `sleep_debt` | SleepNet |
 | **Full-page activity report** (24h MET profile + intensity metrics) | `openDayPage`→`activityReport`, `metProfileSvg` | `DayReportView`→`ActivityReport`, `MetProfile` (Reports.swift) | `activity_profile`, `activity_daily`, `activity` | AAD |
+| **Movement-chart scrubber** (per-bucket steps + MET) | `metProfileChart` hover crosshair | `MetProfile` drag scrubber | `activity_steps` | — |
 | Stage breakdown | `stageBar` | `StageBreakdown` | `nights[].{deep,light,rem,wake}_pct` | SleepNet |
 | **Autonomic recovery by stage** (mean HR/HRV in deep/light/REM) | `sleepReport` autonomic grid | `SleepReport` `autonomicGrid` | `nights[].autonomic` | SleepNet (needs hypnogram) |
 | **Cardiovascular age** | `renderVascular` (own panel) | Cardio section | `cardio` | CVA (web: Python · iOS: `CvaModel`) |
@@ -93,6 +94,20 @@ The count of dropped periods is published as `device.short_periods_excluded` and
 both clients, so the night count always reconciles with the ring's own period count rather
 than being quietly short. This lives in the **shared brain**, so both clients inherit it —
 don't re-filter per client.
+
+## Per-bucket steps are estimated, not counted
+
+`activity_steps` gives 96 × 15-min step counts per day, on the same bucket grid as
+`activity_profile`. It is accumulated from the **same per-minute `step_rate`** that feeds
+the `activity_daily` total (0 / 105 / 150 steps per minute by MET band), so the buckets
+always add up to the day bar its round-to-100 — a hover readout can never disagree with the
+headline number.
+
+They are **estimates from movement intensity, not counted steps**, which is why they land on
+multiples of 105. The ring does emit `real_step_event_feature_1`/`_2`, but those are
+undecoded raw feature vectors (`_status: part1_raw`, 14 fields) — model inputs, not counts —
+so they can't be used yet. Both clients therefore caption the chart to say so; if the real
+step features are ever decoded, that caption and this section should go.
 
 ## Sleep metrics: two code paths, one algorithm — keep them in sync
 

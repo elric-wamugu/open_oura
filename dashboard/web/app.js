@@ -686,13 +686,18 @@ function sleepReport(d, ymd) {
   return root;
 }
 
+// shared geometry so the hover dot lands exactly on the plotted line
+const MET_H = 120, MET_PAD = 6;
+const metPeak = (p) => Math.max(1, ...p);
+const metYOf = (v, peak, h = MET_H) => MET_PAD + (1 - Math.min(1, v / peak)) * (h - 2 * MET_PAD);
+
 // 24h movement (MET-above-rest) area chart with hour axis + active-zone shading
 function metProfileSvg(prof, w, h) {
   const p = (prof || []).map((x) => x || 0);
   if (p.length < 2) return "";
-  const peak = Math.max(1, ...p), pad = 6;
+  const peak = metPeak(p);
   const xOf = (i) => (i / (p.length - 1)) * w;
-  const yOf = (v) => pad + (1 - Math.min(1, v / peak)) * (h - 2 * pad);
+  const yOf = (v) => metYOf(v, peak, h);
   const pts = p.map((v, i) => [xOf(i), yOf(v)]);
   const line = smoothPath(pts);
   let grid = "";
@@ -700,6 +705,58 @@ function metProfileSvg(prof, w, h) {
   return `<svg class="met-svg" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none">${grid}` +
     `<path d="${line} L${w} ${h} L0 ${h} Z" fill="var(--accent)" opacity="0.14"/>` +
     `<path d="${line}" fill="none" stroke="var(--accent)" stroke-width="1.4" vector-effect="non-scaling-stroke"/></svg>`;
+}
+
+// The movement chart with a hover crosshair, the polysomnograph's idea applied to the
+// day: reading a 96-bucket sparkline by eye is guesswork, so the hovered 15-min bucket
+// reports its own step count and intensity. Header shows day totals until you hover.
+function metProfileChart(prof, stepsProf, dayTotalSteps) {
+  const wrap = el("div", "met-wrap");
+  const p = (prof || []).map((x) => x || 0);
+  const steps = stepsProf || [];
+
+  const head = el("div", "met-head");
+  const peakMet = p.length ? Math.max(...p) : 0;
+  const dayLine = `${Math.round(dayTotalSteps || 0).toLocaleString()} steps · peak ${peakMet.toFixed(1)} MET`;
+  head.textContent = dayLine;
+  wrap.append(head);
+
+  const plot = el("div", "met-plot");
+  plot.innerHTML = metProfileSvg(p, 1000, MET_H);
+  const cursor = el("div", "met-cursor"); cursor.hidden = true;
+  const dot = el("div", "met-dot"); dot.hidden = true;
+  plot.append(cursor, dot);
+  wrap.append(plot);
+
+  const axis = el("div", "met-axis");
+  axis.innerHTML = [0, 6, 12, 18, 24].map((h) => `<span style="left:${(h / 24 * 100).toFixed(1)}%">${String(h).padStart(2, "0")}</span>`).join("");
+  wrap.append(axis);
+
+  if (p.length < 2) return wrap;
+
+  // Multiples of 105/min fall out of the MET→step-rate heuristic; say so rather than let
+  // a precise-looking "525 steps" read as a counted figure.
+  wrap.append(el("p", "met-note", "Steps are estimated from movement intensity per 15-minute bucket, so they land on coarse multiples. The day total is the dependable number."));
+
+  const bucketMin = 1440 / p.length;
+  const peak = metPeak(p);
+  plot.addEventListener("pointermove", (e) => {
+    const r = plot.getBoundingClientRect();
+    const f = Math.max(0, Math.min(1, (e.clientX - r.left) / r.width));
+    const i = Math.round(f * (p.length - 1));
+    const t0 = Math.round(i * bucketMin), t1 = Math.round((i + 1) * bucketMin);
+    const s = steps[i] || 0;
+    cursor.hidden = false; dot.hidden = false;
+    cursor.style.left = `${(i / (p.length - 1)) * 100}%`;
+    dot.style.left = `${(i / (p.length - 1)) * 100}%`;
+    dot.style.top = `${metYOf(p[i], peak)}px`;
+    head.textContent = `${hhmm(t0)}–${hhmm(t1 % 1440)} · ${s ? Math.round(s).toLocaleString() + " steps" : "no steps"} · ${p[i].toFixed(2)} MET`;
+  });
+  plot.addEventListener("pointerleave", () => {
+    cursor.hidden = true; dot.hidden = true;
+    head.textContent = dayLine;
+  });
+  return wrap;
 }
 
 function activityReport(d, ymd) {
@@ -716,12 +773,9 @@ function activityReport(d, ymd) {
     (ds && ds.distance_m != null ? ss("Distance", (ds.distance_m / 1000).toFixed(1) + " km") : "");
   root.append(strip);
 
-  // 24h movement profile
+  // 24h movement profile — hover a bucket for its steps + intensity
   root.append(el("p", "subhead", "Movement across the day"));
-  const met = el("div", "met-wrap");
-  met.innerHTML = metProfileSvg(prof, 1000, 120) +
-    `<div class="met-axis">${[0, 6, 12, 18, 24].map((h) => `<span style="left:${(h / 24 * 100).toFixed(1)}%">${String(h).padStart(2, "0")}</span>`).join("")}</div>`;
-  root.append(met);
+  root.append(metProfileChart(prof, (d.activity_steps || {})[ymd], ds && ds.steps));
 
   // intensity-derived metrics (buckets are 15-min MET-above-rest)
   const bucketMin = 24 * 60 / (prof.length || 96);

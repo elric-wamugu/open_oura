@@ -989,6 +989,10 @@ pub fn build_summary(db: &Path, tz: i64, runner: &dyn ModelRunner) -> Result<Val
 
     let mut prof_sum: std::collections::BTreeMap<String, [f64; 96]> = Default::default();
     let mut prof_cnt: std::collections::BTreeMap<String, [u32; 96]> = Default::default();
+    // Steps per 15-min bucket, accumulated from the SAME per-minute `step_rate` that feeds
+    // the daily total below — so the buckets always add up to the day (bar its round-to-100)
+    // and a hover readout can't disagree with the headline number.
+    let mut prof_steps: std::collections::BTreeMap<String, [f64; 96]> = Default::default();
     let mut daily: std::collections::BTreeMap<String, (f64, f64)> = Default::default();
     let mut met_min: std::collections::BTreeMap<i64, f64> = Default::default();
     let weight = demo.weight_kg;
@@ -1028,6 +1032,7 @@ pub fn build_summary(db: &Path, tz: i64, runner: &dyn ModelRunner) -> Result<Val
                     } else {
                         0.0
                     };
+                    prof_steps.entry(key.clone()).or_insert([0.0; 96])[bucket] += step_rate;
                     let e = daily.entry(key).or_insert((0.0, 0.0));
                     e.0 += (mv - 1.0).max(0.0) * weight / 60.0;
                     e.1 += step_rate;
@@ -1095,6 +1100,16 @@ pub fn build_summary(db: &Path, tz: i64, runner: &dyn ModelRunner) -> Result<Val
                     }
                 })
                 .collect();
+            (k.clone(), json!(arr))
+        })
+        .collect::<serde_json::Map<_, _>>()
+        .into();
+    // Same 96 buckets as activity_profile, but steps rather than MET-above-rest, so a
+    // hover on the movement chart can answer "how many steps at 12pm".
+    let activity_steps: Value = prof_steps
+        .iter()
+        .map(|(k, steps)| {
+            let arr: Vec<f64> = steps.iter().map(|s| s.round()).collect();
             (k.clone(), json!(arr))
         })
         .collect::<serde_json::Map<_, _>>()
@@ -1279,6 +1294,7 @@ pub fn build_summary(db: &Path, tz: i64, runner: &dyn ModelRunner) -> Result<Val
         "fitness": { "vo2max": (vo2max * 10.0).round() / 10.0 },
         "activity": activity,
         "activity_profile": activity_profile,
+        "activity_steps": activity_steps,
         "activity_daily": activity_daily,
         "vitals": { "hrv": trend(&hrv_stat), "rhr": trend(&rhr_stat) },
     }))

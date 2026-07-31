@@ -588,7 +588,7 @@ struct ActivityReport: View {
         }
 
         Rule("movement across the day")
-        MetProfile(prof: prof)
+        MetProfile(prof: prof, steps: s.activity_steps[day] ?? [], dayTotalSteps: st?.steps)
 
         let bucketMin = prof.isEmpty ? 15.0 : 24.0 * 60.0 / Double(prof.count)
         let activeMin = Double(prof.filter { $0 >= 3 }.count) * bucketMin
@@ -613,35 +613,89 @@ struct ActivityReport: View {
     }
 }
 
-// 24h MET-above-rest area with hour axis (0..24)
+// 24h MET-above-rest area with hour axis (0..24) and a touch scrubber: drag across the
+// chart to read one 15-min bucket's steps and intensity, the same affordance the
+// polysomnograph gives the night. Header shows day totals until you touch.
 private struct MetProfile: View {
     let prof: [Double]
+    var steps: [Double] = []
+    var dayTotalSteps: Double? = nil
+    @State private var cursorF: Double? = nil
+
+    private static let plotH: CGFloat = 120
+    private var peak: Double { max(1, prof.max() ?? 1) }
+    private var bucketMin: Double { prof.isEmpty ? 15 : 24 * 60 / Double(prof.count) }
+
+    private func bucket(_ f: Double) -> Int {
+        min(max(Int((f * Double(prof.count - 1)).rounded()), 0), prof.count - 1)
+    }
+    private func yOf(_ v: Double, _ h: CGFloat) -> CGFloat {
+        6 + (1 - CGFloat(min(1, v / peak))) * (h - 12)
+    }
+
+    private var headline: String {
+        guard let f = cursorF, prof.count > 1 else {
+            return "\(Int(dayTotalSteps ?? 0)) steps · peak \(String(format: "%.1f", prof.max() ?? 0)) MET"
+        }
+        let i = bucket(f)
+        let t0 = Int((Double(i) * bucketMin).rounded())
+        let t1 = Int((Double(i + 1) * bucketMin).rounded()) % 1440
+        let s = i < steps.count ? steps[i] : 0
+        let stepTxt = s > 0 ? "\(Int(s)) steps" : "no steps"
+        return String(format: "%02d:%02d–%02d:%02d · %@ · %.2f MET",
+                      t0 / 60, t0 % 60, t1 / 60, t1 % 60, stepTxt, prof[i])
+    }
+
     var body: some View {
-        VStack(spacing: 4) {
-            Canvas { ctx, size in
-                guard prof.count > 1 else { return }
-                let peak = max(1, prof.max() ?? 1)
-                for h in stride(from: 0, through: 24, by: 6) {
-                    let x = size.width * CGFloat(h) / 24
-                    ctx.stroke(Path { $0.move(to: CGPoint(x: x, y: 0)); $0.addLine(to: CGPoint(x: x, y: size.height)) },
-                               with: .color(Obs.trace.opacity(0.2)), lineWidth: 0.5)
+        VStack(alignment: .leading, spacing: 4) {
+            Text(headline).font(Obs.mono(11)).foregroundStyle(Obs.ink2).monospacedDigit()
+            GeometryReader { g in
+                ZStack(alignment: .topLeading) {
+                    Canvas { ctx, size in
+                        guard prof.count > 1 else { return }
+                        for h in stride(from: 0, through: 24, by: 6) {
+                            let x = size.width * CGFloat(h) / 24
+                            ctx.stroke(Path { $0.move(to: CGPoint(x: x, y: 0)); $0.addLine(to: CGPoint(x: x, y: size.height)) },
+                                       with: .color(Obs.trace.opacity(0.2)), lineWidth: 0.5)
+                        }
+                        func pt(_ i: Int) -> CGPoint {
+                            CGPoint(x: size.width * CGFloat(i) / CGFloat(prof.count - 1),
+                                    y: yOf(prof[i], size.height))
+                        }
+                        var line = Path(); line.move(to: pt(0)); for i in 1..<prof.count { line.addLine(to: pt(i)) }
+                        var area = line; area.addLine(to: CGPoint(x: size.width, y: size.height)); area.addLine(to: CGPoint(x: 0, y: size.height)); area.closeSubpath()
+                        ctx.fill(area, with: .color(Obs.teal.opacity(0.14)))
+                        ctx.stroke(line, with: .color(Obs.teal), lineWidth: 1.3)
+                    }
+                    if let f = cursorF, prof.count > 1 {
+                        let i = bucket(f)
+                        let x = g.size.width * CGFloat(i) / CGFloat(prof.count - 1)
+                        Rectangle().fill(Obs.teal.opacity(0.85))
+                            .frame(width: 1, height: Self.plotH)
+                            .offset(x: x)
+                            .allowsHitTesting(false)
+                        Circle().fill(Obs.teal).frame(width: 7, height: 7)
+                            .offset(x: x - 3.5, y: yOf(prof[i], Self.plotH) - 3.5)
+                            .allowsHitTesting(false)
+                    }
                 }
-                func pt(_ i: Int) -> CGPoint {
-                    CGPoint(x: size.width * CGFloat(i) / CGFloat(prof.count - 1),
-                            y: 6 + (1 - CGFloat(min(1, prof[i] / peak))) * (size.height - 12))
-                }
-                var line = Path(); line.move(to: pt(0)); for i in 1..<prof.count { line.addLine(to: pt(i)) }
-                var area = line; area.addLine(to: CGPoint(x: size.width, y: size.height)); area.addLine(to: CGPoint(x: 0, y: size.height)); area.closeSubpath()
-                ctx.fill(area, with: .color(Obs.teal.opacity(0.14)))
-                ctx.stroke(line, with: .color(Obs.teal), lineWidth: 1.3)
+                .contentShape(Rectangle())
+                .gesture(DragGesture(minimumDistance: 0)
+                    .onChanged { d in cursorF = Double(max(0, min(1, d.location.x / g.size.width))) }
+                    .onEnded { _ in cursorF = nil })
             }
-            .frame(height: 120)
+            .frame(height: Self.plotH)
             GeometryReader { g in
                 ForEach([0, 6, 12, 18, 24], id: \.self) { h in
                     Text(String(format: "%02d", h)).font(Obs.mono(9)).foregroundStyle(Obs.ink2)
                         .position(x: g.size.width * CGFloat(h) / 24, y: 6)
                 }
             }.frame(height: 12)
+            // multiples of 105/min fall out of the MET→step-rate heuristic; don't let a
+            // precise-looking "525 steps" read as a counted figure
+            Text("Steps are estimated from movement intensity per 15-minute bucket, so they land on coarse multiples. The day total is the dependable number.")
+                .font(Obs.mono(9)).foregroundStyle(Obs.ink2).opacity(0.75)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 }

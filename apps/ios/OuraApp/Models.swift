@@ -60,6 +60,7 @@ struct Summary: Decodable {
     var nights: [NightRow] = []
     var vitals = Vitals()
     var activity_profile: [String: [Double]] = [:]   // date → 96 × 15-min mean MET-above-rest
+    var activity_steps: [String: [Double]] = [:]      // date → 96 × 15-min steps (same buckets)
     var activity_daily: [String: DailyStat] = [:]     // date → steps / active-kcal / total-kcal
     var profile: Profile?
     var cardio: Cardio?
@@ -70,7 +71,7 @@ struct Summary: Decodable {
     // `workouts`/`modelErrors` are filled on-device (not in the FFI JSON), so keep them
     // out of decoding.
     enum CodingKeys: String, CodingKey {
-        case digest, device, nights, vitals, activity_profile, activity_daily, profile, cardio, fitness, error
+        case digest, device, nights, vitals, activity_profile, activity_steps, activity_daily, profile, cardio, fitness, error
     }
     /// recent days (newest first) that have a movement profile.
     var activeDays: [String] { activity_profile.keys.sorted(by: >) }

@@ -488,6 +488,21 @@ body.page-open { overflow: hidden; }
 /* activity movement profile */
 .met-wrap { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 12px 16px; box-shadow: var(--sheen), var(--shadow); }
 .met-svg { display: block; width: 100%; height: 120px; overflow: visible; }
+.met-head {
+  font-family: var(--mono); font-variant-numeric: tabular-nums; font-size: 12px;
+  color: var(--muted); margin-bottom: 8px; min-height: 16px;
+}
+.met-plot { position: relative; cursor: crosshair; touch-action: none; }
+.met-cursor {
+  position: absolute; top: 0; bottom: 0; width: 1px; pointer-events: none;
+  background: color-mix(in oklab, var(--accent) 70%, transparent);
+}
+.met-dot {
+  position: absolute; width: 7px; height: 7px; border-radius: 50%; pointer-events: none;
+  transform: translate(-50%, -50%); background: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in oklab, var(--accent) 22%, transparent);
+}
+.met-note { margin: 10px 0 0; font-size: 11px; line-height: 1.5; color: var(--faint); }
 .met-axis { position: relative; height: 16px; margin-top: 4px; }
 .met-axis span { position: absolute; transform: translateX(-50%); font-family: var(--mono); font-size: 10px; color: var(--faint); }
 
