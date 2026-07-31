@@ -142,6 +142,9 @@ const relAge = (diff) => {
   return { short: "in line", long: "in line with" };
 };
 
+// Overnight SpO2 at or above this reads as normal; below it is worth a second look.
+const SPO2_HEALTHY = 95;
+
 function renderTiles(d) {
   const box = $("tiles");
   box.innerHTML = "";
@@ -155,15 +158,16 @@ function renderTiles(d) {
     ref: 85, refLabel: "target", good: "up",
     status: eff == null ? null : eff >= 85 ? { label: "Normal", kind: "ok" } : eff >= 75 ? { label: "Fair", kind: "neutral" } : { label: "Low", kind: "warn" },
   }));
-  const cv = d.cardio;
-  if (cv && cv.vascular_age != null) {
-    const diff = cv.vascular_age - cv.chronological_age;
-    box.append(metricCard("Vascular age", cv.vascular_age, " yr", {
-      ref: cv.chronological_age, refLabel: "your age", good: "down",
-      status: diff < -0.5 ? { label: "Younger", kind: "ok" } : diff > 0.5 ? { label: "Older", kind: "warn" } : { label: "In line", kind: "neutral" },
+  // Blood oxygen holds the fourth tile: it comes straight off the ring's own
+  // spo2_event data, so unlike vascular age it has a number on most nights.
+  const spo2 = ((d.nights || []).find((n) => n.spo2_mean != null) || {}).spo2_mean;
+  if (spo2 != null) {
+    box.append(metricCard("Blood oxygen", spo2, "%", {
+      ref: SPO2_HEALTHY, refLabel: "healthy", good: "up",
+      status: spo2 >= SPO2_HEALTHY ? { label: "Normal", kind: "ok" } : spo2 >= 90 ? { label: "Low", kind: "neutral" } : { label: "Low", kind: "warn" },
     }));
   } else {
-    box.append(metricCard("Vascular age", "—", "", { sub: "needs cva_ppg on" }));
+    box.append(metricCard("Blood oxygen", "—", "", { sub: "needs spo2 on overnight" }));
   }
 }
 
@@ -324,16 +328,27 @@ function renderDay(d) {
   }
 }
 
+// Cardiovascular keeps only what this machine can actually compute without Oura's
+// models: the Jackson non-exercise VO₂max estimate. Vascular age moved to its own
+// panel next door, since it's a separate (and currently gated) story.
 function renderCardio(d) {
   const box = $("cardio");
-  const cv = d.cardio;
   const vo2 = d.fitness?.vo2max;
   box.innerHTML = "";
-  // VO₂max is model-free (from demographics), so it shows even without the CVA model.
-  const vo2Kv = vo2 != null ? el("div", "kv", `<div class="k">VO₂max estimate</div><div class="v">${vo2} ml/kg/min</div>`) : null;
+  if (vo2 == null) {
+    box.append(el("div", "error", "VO₂max needs your age, sex and weight — add them in profile details."));
+    return;
+  }
+  box.append(el("div", "big-metric", `<span class="n">${vo2}</span><span class="u">ml/kg/min VO₂max</span>`));
+  box.append(el("div", "sub", "Jackson non-exercise estimate from your age, sex and weight. No ring model needed."));
+}
+
+function renderVascular(d) {
+  const box = $("vascular");
+  const cv = d.cardio;
+  box.innerHTML = "";
   if (!cv || cv.vascular_age == null) {
     box.append(el("div", "error", "Cardiovascular age needs Oura's CVA model, which isn't bundled. The raw PPG is captured — scoring it requires that model."));
-    if (vo2Kv) { const kvs = el("div", "kvs"); kvs.append(vo2Kv); box.append(kvs); }
     return;
   }
   box.append(el("div", "big-metric", `<span class="n">${cv.vascular_age}</span><span class="u">years vascular age</span>`));
@@ -341,29 +356,7 @@ function renderCardio(d) {
   const kvs = el("div", "kvs");
   kvs.append(el("div", "kv", `<div class="k">Pulse-wave velocity</div><div class="v">${cv.pwv_ms != null ? cv.pwv_ms + " m/s" : "—"}</div>`));
   kvs.append(el("div", "kv", `<div class="k">Segments analysed</div><div class="v">${num(cv.segments)}</div>`));
-  if (vo2Kv) kvs.append(vo2Kv);
   box.append(kvs);
-}
-
-function renderSpo2(d) {
-  const box = $("spo2");
-  box.innerHTML = "";
-  const n0 = (d.nights || []).find((n) => n.spo2_mean != null);
-  if (!n0) {
-    box.append(el("div", "error", "Blood oxygen needs the spo2 feature on overnight."));
-    return;
-  }
-  // SpO2 gauge scale: clamp the reading into [SPO2_MIN, 100] and map to 0–100% fill.
-  const SPO2_MIN = 85, SPO2_HEALTHY = 95;
-  box.append(el("div", "big-metric", `<span class="n">${n0.spo2_mean}</span><span class="u">% avg, last night</span>`));
-  box.append(el("div", "sub", "From the ring's own overnight blood-oxygen readings."));
-  const pct = Math.max(0, Math.min(100, ((n0.spo2_mean - SPO2_MIN) / (100 - SPO2_MIN)) * 100));
-  const g = el("div", "gauge");
-  const fill = el("i");
-  fill.style.width = pct + "%";
-  g.append(fill);
-  box.append(g);
-  box.append(el("div", "scale", `<span>${SPO2_MIN}</span><span>healthy ≥ ${SPO2_HEALTHY}</span><span>100</span>`));
 }
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -1459,7 +1452,7 @@ async function load() {
   renderTiles(d);
   renderDay(d);
   renderCardio(d);
-  renderSpo2(d);
+  renderVascular(d);
   renderDevice(d);
   document.querySelectorAll(".panel").forEach((p, i) => {
     p.classList.add("reveal");

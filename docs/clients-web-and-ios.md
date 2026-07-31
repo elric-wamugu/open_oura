@@ -153,6 +153,13 @@ which is why Oura's own app has no per-night HRV trend either.
   with ring data, does not go through `oura-summary`, and is not mirrored on iOS. When
   extraction is built, `blood.rs`'s marker model is the reusable brain.
 
+- **Vitals-tile ordering**: on web, the fourth key-vitals tile is **blood oxygen** (a real
+  number off the ring's own `spo2_event` data) and **vascular age** has its own panel beside
+  Cardiovascular, where its "needs Oura's CVA model" state has room to explain itself. iOS
+  arranges the same two differently — blood O₂ is a `VitalCell` in the vitals strip and
+  vascular age sits inside the `cardiovascular` section — so there was no 1:1 swap to mirror.
+  Same data, same honesty about the CVA gate; only the layout differs.
+
 When you close one of these gaps, update this section.
 
 ## Ring clock resets → epoch-aware time mapping (all three code paths)

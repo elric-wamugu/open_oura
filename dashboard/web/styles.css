@@ -385,7 +385,7 @@ body {
 @media (max-width: 760px) { .breakdown { flex-wrap: wrap; gap: 10px 14px; } }
 
 /* ── cardio ─────────────────────────────────────────────── */
-.cardio-body, .spo2-body { min-height: 150px; }
+.cardio-body, .vascular-body { min-height: 150px; }
 .big-metric {
   display: flex; align-items: baseline; gap: 8px;
   font-family: var(--mono); font-variant-numeric: tabular-nums;
