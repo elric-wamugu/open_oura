@@ -316,11 +316,33 @@ struct RootView: View {
                             .obsCard()
                         }
 
-                        // fitness — anthropometric VO₂max estimate (model-free, from demographics)
-                        if let vo = s.fitness?.vo2max {
+                        // Fitness leads with resting HR: it's the only signal here the ring
+                        // measures and that responds to training. VO₂max is a regression on
+                        // age/sex/weight, so it sits below, labelled as a baseline.
+                        if s.vitals.rhr.latest != nil || s.fitness?.vo2max != nil {
                             ObsTag("fitness", icon: "bolt.heart.fill")
-                            ObsStat(label: "vo₂max estimate", value: String(format: "%.1f ml/kg/min", vo), accent: Obs.teal)
-                                .obsCard()
+                            VStack(spacing: 12) {
+                                if let rhr = s.vitals.rhr.latest {
+                                    ObsStat(label: "resting hr", value: String(format: "%.0f bpm", rhr), accent: Obs.teal)
+                                    if let base = s.vitals.rhr.baseline {
+                                        let d = rhr - base
+                                        ObsStat(label: "vs baseline",
+                                                value: String(format: "%.1f bpm %@ (%.1f)", abs(d), d <= 0 ? "below" : "above", base))
+                                    }
+                                    Text("Measured overnight, and it falls as conditioning improves — the fitness signal here that responds to training.")
+                                        .font(Obs.mono(10)).foregroundStyle(Obs.ink2)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                }
+                                if let vo = s.fitness?.vo2max {
+                                    ObsStat(label: "vo₂max · demographic baseline", value: String(format: "%.1f ml/kg/min", vo))
+                                    Text("A Jackson non-exercise estimate from age, sex and weight alone — no ring data reaches it, so it shifts only when you age or change weight, never with training.")
+                                        .font(Obs.mono(9)).foregroundStyle(Obs.ink2).opacity(0.75)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                }
+                            }
+                            .obsCard()
                         }
 
                         // browse every day → per-day detail (sleep + activity)

@@ -595,10 +595,25 @@ struct ActivityReport: View {
         let lightMin = Double(prof.filter { $0 >= 1.5 && $0 < 3 }.count) * bucketMin
         let peak = prof.max() ?? 0
         let cols = [GridItem(.flexible()), GridItem(.flexible()), GridItem(.flexible())]
+        let peakHr = st?.peak_hr
         LazyVGrid(columns: cols, alignment: .leading, spacing: 18) {
             Readout(value: "\(Int(activeMin)) min", caption: "active")
             Readout(value: "\(Int(lightMin)) min", caption: "lightly active")
             Readout(value: String(format: "%.1f MET", peak), caption: "peak intensity")
+            Readout(value: peakHr.map { "\(Int($0)) bpm" } ?? "—", caption: "peak hr")
+        }
+        // a single high beat is a PPG artefact, so this is the best 30s sustained rate;
+        // say how far it sits from a real ceiling
+        if let p = peakHr {
+            let hrMax = s.fitness?.hr_max_predicted
+            let pct = hrMax.map { Int((p / $0 * 100).rounded()) }
+            Text(pct.map { pc in
+                "Peak HR is the highest 30-second sustained rate of the day — \(pc)% of the \(Int(hrMax ?? 0)) bpm predicted for your age. "
+                + peakHrVerdict(pc)
+            } ?? "Peak HR is the highest 30-second sustained rate of the day, from the ring's quality-checked beats.")
+                .font(Obs.mono(10)).foregroundStyle(Obs.ink2)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
         }
 
         let ws = s.workoutsOn(day)
@@ -611,6 +626,14 @@ struct ActivityReport: View {
             }
         }
     }
+}
+
+/// How close the day's best sustained rate came to being a usable maximum. Kept identical
+/// to the web `peakHrVerdict` in app.js.
+func peakHrVerdict(_ pct: Int) -> String {
+    if pct >= 95 { return "That's close enough to a true maximum to be worth trusting as one." }
+    if pct >= 85 { return "That's a hard effort, but still short of a true maximum, which needs roughly 95%." }
+    return "That's the hardest sustained stretch of the day rather than anything near your ceiling."
 }
 
 // 24h MET-above-rest area with hour axis (0..24) and a touch scrubber: drag across the

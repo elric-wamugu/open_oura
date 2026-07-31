@@ -46,7 +46,9 @@ metric there once and both clients receive it in the JSON.
 | Stage breakdown | `stageBar` | `StageBreakdown` | `nights[].{deep,light,rem,wake}_pct` | SleepNet |
 | **Autonomic recovery by stage** (mean HR/HRV in deep/light/REM) | `sleepReport` autonomic grid | `SleepReport` `autonomicGrid` | `nights[].autonomic` | SleepNet (needs hypnogram) |
 | **Cardiovascular age** | `renderVascular` (own panel) | Cardio section | `cardio` | CVA (web: Python · iOS: `CvaModel`) |
-| **VO₂max estimate** | `renderCardio` | Fitness section | `fitness.vo2max` | — (Jackson, model-free) |
+| **Fitness = resting-HR trend** (headline) | `renderCardio` | Fitness section | `vitals.rhr` | — |
+| **VO₂max estimate** (demoted baseline) | `renderCardio` kv | Fitness section | `fitness.vo2max` | — (Jackson, model-free) |
+| **Peak sustained HR** (daily) | `activityReport` metric + note | `ActivityReport` readout + note | `activity_daily[].peak_hr`, `fitness.hr_max_predicted` | — |
 | Movement ridge | `ridgeSvg` | `MovementRidge` | `activity_profile` | — (MET, model-free) |
 | **Activity sessions / workouts** | `openActDetail` (session) | workouts section | `activity` | AAD (web: Python · iOS: `ActivityModel`) |
 | Steps / active calories / **distance** | activity report stats | activity day stats | `activity_daily` (incl. `distance_m`) | — |
@@ -108,6 +110,32 @@ multiples of 105. The ring does emit `real_step_event_feature_1`/`_2`, but those
 undecoded raw feature vectors (`_status: part1_raw`, 14 fields) — model inputs, not counts —
 so they can't be used yet. Both clients therefore caption the chart to say so; if the real
 step features are ever decoded, that caption and this section should go.
+
+## Which fitness number responds to training (and which doesn't)
+
+`fitness.vo2max` is a Jackson non-exercise regression on **age, sex and weight only** — no
+ring data reaches it, so it moves when you age or change weight and never with conditioning.
+It is therefore presented as a labelled baseline, not the headline. **Resting HR
+(`vitals.rhr`) leads the cardiovascular panel in both clients**: it is measured overnight
+from the ring's own beat intervals and does fall as conditioning improves.
+
+An HR-ratio VO₂max (Uth–Sørensen–Overgaard, `15.3 × HRmax/HRrest`) was investigated and
+**deliberately not built**. With an age-predicted HRmax it reduces to a constant divided by
+resting HR — no information beyond the RHR already shown, plus false precision. A *measured*
+HRmax would fix that, which is what `activity_daily[].peak_hr` exists to surface:
+
+- It is the largest **30-second rolling median** of the quality-gated beat series
+  (`green_ibi_quality_event`, which carries a per-beat quality flag — the ungated
+  `ibi_and_amplitude_event` is full of 30-bpm/2000-ms artefacts). A raw daily max would just
+  report the worst artefact. Requires ≥10 beats in the window.
+- Both clients print it against `fitness.hr_max_predicted` (Tanaka, `208 − 0.7·age`) with a
+  shared three-tier verdict — `peakHrVerdict` in **both** `app.js` and `Reports.swift`; keep
+  the thresholds (95% / 85%) identical.
+- On this ring's 22-day history every day lands at 47–83% of predicted, so no usable HRmax
+  exists yet. Heart-rate recovery and HR-at-fixed-workload were also checked and rejected:
+  only 4 of 14 exercise episodes had usable 60-second recovery coverage, and just 41
+  MET-minutes across all history fall in the 2.5–4 MET band with concurrent HR. The ring
+  samples PPG when you are still, so daytime effort data is scarce by design.
 
 ## Sleep metrics: two code paths, one algorithm — keep them in sync
 

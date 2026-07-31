@@ -328,19 +328,37 @@ function renderDay(d) {
   }
 }
 
-// Cardiovascular keeps only what this machine can actually compute without Oura's
-// models: the Jackson non-exercise VO₂max estimate. Vascular age moved to its own
-// panel next door, since it's a separate (and currently gated) story.
+// Resting HR leads this panel because it is the only fitness signal here the ring
+// actually measures and that responds to training. The VO₂max estimate is a regression
+// on age/sex/weight — it cannot move with conditioning — so it sits below as a baseline,
+// labelled for what it is. Vascular age lives in its own panel next door.
 function renderCardio(d) {
   const box = $("cardio");
+  const rh = d.vitals?.rhr || {};
   const vo2 = d.fitness?.vo2max;
   box.innerHTML = "";
-  if (vo2 == null) {
-    box.append(el("div", "error", "VO₂max needs your age, sex and weight — add them in profile details."));
-    return;
+
+  if (rh.latest == null) {
+    box.append(el("div", "error", "Resting heart rate needs a scored night — it's measured from the ring's overnight beat intervals."));
+  } else {
+    box.append(el("div", "big-metric", `<span class="n">${rh.latest}</span><span class="u">bpm resting</span>`));
+    const dlt = rh.baseline != null ? Math.round((rh.latest - rh.baseline) * 10) / 10 : null;
+    box.append(el("div", "sub", dlt == null
+      ? "Measured overnight from the ring's own beat intervals."
+      : `${dlt <= 0 ? `${Math.abs(dlt)} bpm below` : `${dlt} bpm above`} your ${rh.baseline} bpm baseline. Measured overnight, and it falls as conditioning improves — the fitness signal on this page that responds to training.`));
+    if ((rh.series || []).length > 1) {
+      const sp = el("div", "spark");
+      sp.innerHTML = sparkline(rh.series);
+      box.append(sp);
+    }
   }
-  box.append(el("div", "big-metric", `<span class="n">${vo2}</span><span class="u">ml/kg/min VO₂max</span>`));
-  box.append(el("div", "sub", "Jackson non-exercise estimate from your age, sex and weight. No ring model needed."));
+
+  const kvs = el("div", "kvs");
+  if (vo2 != null) kvs.append(el("div", "kv", `<div class="k">VO₂max · demographic baseline</div><div class="v">${vo2} ml/kg/min</div>`));
+  if (kvs.children.length) box.append(kvs);
+  if (vo2 != null) {
+    box.append(el("p", "cardio-note", "The VO₂max figure is a Jackson non-exercise estimate computed from age, sex and weight alone — no ring data reaches it, so it shifts only when you age or change weight, never with training."));
+  }
 }
 
 function renderVascular(d) {
@@ -759,6 +777,14 @@ function metProfileChart(prof, stepsProf, dayTotalSteps) {
   return wrap;
 }
 
+// How close the day's best sustained rate came to being a usable maximum. Kept identical
+// to the iOS `peakHrVerdict` in Reports.swift.
+function peakHrVerdict(pct) {
+  if (pct >= 95) return "That's close enough to a true maximum to be worth trusting as one.";
+  if (pct >= 85) return "That's a hard effort, but still short of a true maximum, which needs roughly 95%.";
+  return "That's the hardest sustained stretch of the day rather than anything near your ceiling.";
+}
+
 function activityReport(d, ymd) {
   const root = el("div", "rpt-act");
   const ds = (d.activity_daily || {})[ymd];
@@ -784,12 +810,25 @@ function activityReport(d, ymd) {
   const peakMet = prof.length ? Math.max(...prof.map((v) => v || 0)) : 0;
   const mg = el("div", "metric-grid");
   const mc = (k, v) => `<div class="mc"><div class="mc-v">${v}</div><div class="mc-k">${k}</div></div>`;
+  const peakHr = ds && ds.peak_hr;
   mg.innerHTML =
     mc("Active", Math.round(activeMin) + " min") +
     mc("Lightly active", Math.round(lightMin) + " min") +
     mc("Peak intensity", peakMet.toFixed(1) + " MET") +
+    mc("Peak HR", peakHr ? Math.round(peakHr) + " bpm" : "—") +
     mc("Sessions", sessionsForDay(d, ymd).length);
   root.append(mg);
+
+  // A single high beat is a PPG artefact, so this is the best 30-second sustained rate.
+  // Say how far it sits from a real ceiling — an effort at 83% of predicted max is a hard
+  // session, not a maximum, and can't anchor an HR-ratio VO₂max estimate.
+  const hrMax = d.fitness?.hr_max_predicted;
+  if (peakHr) {
+    const pct = hrMax ? Math.round((peakHr / hrMax) * 100) : null;
+    root.append(el("p", "act-note", pct == null
+      ? `Peak HR is the highest 30-second sustained rate of the day, from the ring's quality-checked beats.`
+      : `Peak HR is the highest 30-second sustained rate of the day — ${pct}% of the ${Math.round(hrMax)} bpm predicted for your age. ${peakHrVerdict(pct)}`));
+  }
 
   // sessions timeline + list
   const sessions = sessionsForDay(d, ymd);

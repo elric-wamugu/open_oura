@@ -220,6 +220,48 @@ fn nightly_skin_temp(temps_c: &[f64]) -> Option<f64> {
         .or_else(|| mean(temps_c))
 }
 
+/// Highest *sustained* heart rate in a day's quality-gated beat series.
+///
+/// A single 167 bpm beat is a PPG artefact, not an effort, so a raw daily max is
+/// meaningless. We slide a 30-second window over the beats and take the largest window
+/// median, requiring `MIN_BEATS` beats in the window — a rate you actually held, not a
+/// spike. Input must be `(unix_seconds, bpm)` sorted by time.
+fn peak_sustained_hr(samples: &[(f64, f64)]) -> Option<f64> {
+    const WINDOW_S: f64 = 30.0;
+    const MIN_BEATS: usize = 10;
+    let mut best: Option<f64> = None;
+    let mut j = 0usize;
+    for i in 0..samples.len() {
+        if j < i {
+            j = i;
+        }
+        while j < samples.len() && samples[j].0 <= samples[i].0 + WINDOW_S {
+            j += 1;
+        }
+        if j - i < MIN_BEATS {
+            continue;
+        }
+        let mut win: Vec<f64> = samples[i..j].iter().map(|s| s.1).collect();
+        win.sort_by(f64::total_cmp);
+        let m = if win.len().is_multiple_of(2) {
+            (win[win.len() / 2 - 1] + win[win.len() / 2]) / 2.0
+        } else {
+            win[win.len() / 2]
+        };
+        if best.is_none_or(|b| m > b) {
+            best = Some(m);
+        }
+    }
+    best
+}
+
+/// Age-predicted maximum heart rate (Tanaka et al. 2001, `208 − 0.7·age`) — the modern
+/// replacement for `220 − age`, which overestimates in the young and under-estimates
+/// with age. Only a population mean: the real spread is roughly ±10 bpm.
+fn hr_max_predicted(age_years: f64) -> f64 {
+    (208.0 - 0.7 * age_years).max(1.0)
+}
+
 // ── per-night signal accumulation ────────────────────────────────────────────
 #[derive(Default)]
 struct Night {
@@ -1067,6 +1109,53 @@ pub fn build_summary(db: &Path, tz: i64, runner: &dyn ModelRunner) -> Result<Val
         }
     }
 
+    // Peak sustained HR per day, from the quality-gated beat stream (`green_ibi_quality_event`
+    // carries a per-beat quality flag; the ungated `ibi_and_amplitude_event` is full of
+    // 30-bpm/2000-ms artefacts). Beat times step forward by each beat's own IBI.
+    let mut hr_by_day: std::collections::BTreeMap<String, Vec<(f64, f64)>> = Default::default();
+    for (event_idx, (ds, tag, jstr, _)) in events.iter().enumerate() {
+        if name_of(*tag) != "green_ibi_quality_event" {
+            continue;
+        }
+        let Ok(v) = serde_json::from_str::<Value>(jstr) else {
+            continue;
+        };
+        let Some(hr) = v["hr_bpm"].as_array() else {
+            continue;
+        };
+        let q = v["quality"].as_array();
+        let ibi = v["ibi_ms"].as_array();
+        let mut t = unix_in_epoch(*ds, event_epochs[event_idx]);
+        for (i, h) in hr.iter().enumerate() {
+            let bpm = h.as_f64().unwrap_or(0.0);
+            let good = q
+                .and_then(|a| a.get(i))
+                .and_then(|x| x.as_i64())
+                .unwrap_or(0)
+                == 1;
+            if good && (25.0..=220.0).contains(&bpm) {
+                let local = t + tz as f64 * 3600.0;
+                let (y, mo, dd) = civil((local / 86400.0).floor() as i64);
+                hr_by_day
+                    .entry(format!("{y:04}-{mo:02}-{dd:02}"))
+                    .or_default()
+                    .push((t, bpm));
+            }
+            t += ibi
+                .and_then(|a| a.get(i))
+                .and_then(|x| x.as_f64())
+                .unwrap_or(600.0)
+                / 1000.0;
+        }
+    }
+    let peak_hr: std::collections::BTreeMap<String, f64> = hr_by_day
+        .iter_mut()
+        .filter_map(|(k, v)| {
+            v.sort_by(|a, b| a.0.total_cmp(&b.0));
+            peak_sustained_hr(v).map(|p| (k.clone(), p.round()))
+        })
+        .collect();
+
     let activity_daily: Value = daily
         .iter()
         .map(|(k, (act, steps))| {
@@ -1080,6 +1169,7 @@ pub fn build_summary(db: &Path, tz: i64, runner: &dyn ModelRunner) -> Result<Val
                     "total_kcal": (bmr_kcal_day + act).round(),
                     "steps": steps_r,
                     "distance_m": distance_m,
+                    "peak_hr": peak_hr.get(k),
                 }),
             )
         })
@@ -1291,7 +1381,10 @@ pub fn build_summary(db: &Path, tz: i64, runner: &dyn ModelRunner) -> Result<Val
         "nights": nights_json,
         "sleep_debt": sleep_debt,
         "cardio": cva,
-        "fitness": { "vo2max": (vo2max * 10.0).round() / 10.0 },
+        "fitness": {
+            "vo2max": (vo2max * 10.0).round() / 10.0,
+            "hr_max_predicted": hr_max_predicted(demo.age).round(),
+        },
         "activity": activity,
         "activity_profile": activity_profile,
         "activity_steps": activity_steps,

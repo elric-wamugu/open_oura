@@ -252,9 +252,9 @@ body {
 .tile .delta.up { color: var(--good); }
 .tile .delta.down { color: var(--warn); }
 .tile .delta.flat { color: var(--faint); }
-.tile .spark { margin-top: 8px; height: 26px; position: relative; }
-.tile .spark svg { display: block; width: 100%; height: 100%; overflow: visible; }
-.tile .spark-dot {
+.spark { margin-top: 8px; height: 26px; position: relative; }
+.spark svg { display: block; width: 100%; height: 100%; overflow: visible; }
+.spark-dot {
   position: absolute; right: 0; width: 5px; height: 5px; border-radius: 50%;
   background: var(--spark); transform: translate(50%, -50%);
 }
@@ -386,6 +386,7 @@ body {
 
 /* ── cardio ─────────────────────────────────────────────── */
 .cardio-body, .vascular-body { min-height: 150px; }
+.cardio-note { margin: 12px 0 0; font-size: 11px; line-height: 1.55; color: var(--faint); }
 .big-metric {
   display: flex; align-items: baseline; gap: 8px;
   font-family: var(--mono); font-variant-numeric: tabular-nums;
@@ -472,6 +473,7 @@ body.page-open { overflow: hidden; }
 .stagebar .sw-rem { background: var(--rem); } .stagebar .sw-wake { background: var(--wake); }
 
 /* clinical metric grid */
+.act-note { margin: 12px 0 0; font-size: 11px; line-height: 1.55; color: var(--faint); }
 .metric-grid { display: grid; grid-template-columns: repeat(6, 1fr); gap: 12px; margin-top: 16px; }
 @media (max-width: 760px) { .metric-grid { grid-template-columns: repeat(3, 1fr); } }
 @media (max-width: 440px) { .metric-grid { grid-template-columns: repeat(2, 1fr); } }

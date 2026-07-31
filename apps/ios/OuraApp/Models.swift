@@ -36,7 +36,7 @@ struct NightRow: Decodable, Identifiable {
     var id: String { (date ?? "") + (start ?? "") }
     var hasHypnogram: Bool { (stages?.count ?? 0) > 1 }
 }
-struct DailyStat: Decodable { var active_kcal: Double?; var total_kcal: Double?; var steps: Double?; var distance_m: Double? }
+struct DailyStat: Decodable { var active_kcal: Double?; var total_kcal: Double?; var steps: Double?; var distance_m: Double?; var peak_hr: Double? }
 struct Profile: Decodable { var sex: String?; var age: Double?; var height_m: Double?; var weight_kg: Double?; var ring_size: Double? }
 // a detected activity session (on-device automatic_activity_detection)
 struct WorkoutSession: Identifiable {
@@ -46,7 +46,7 @@ struct WorkoutSession: Identifiable {
     var startHM: String { String(start.suffix(5)) }        // HH:MM
 }
 struct Cardio: Decodable { var vascular_age: Double?; var chronological_age: Double?; var pwv_ms: Double?; var segments: Int? }
-struct Fitness: Decodable { var vo2max: Double? }
+struct Fitness: Decodable { var vo2max: Double?; var hr_max_predicted: Double? }
 struct Device: Decodable {
     var serial: String?; var firmware: String?
     var battery_pct: Int?
