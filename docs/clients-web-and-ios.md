@@ -44,13 +44,14 @@ metric there once and both clients receive it in the JSON.
 | **Full-page activity report** (24h MET profile + intensity metrics) | `openDayPage`→`activityReport`, `metProfileSvg` | `DayReportView`→`ActivityReport`, `MetProfile` (Reports.swift) | `activity_profile`, `activity_daily`, `activity` | AAD |
 | Stage breakdown | `stageBar` | `StageBreakdown` | `nights[].{deep,light,rem,wake}_pct` | SleepNet |
 | **Autonomic recovery by stage** (mean HR/HRV in deep/light/REM) | `sleepReport` autonomic grid | `SleepReport` `autonomicGrid` | `nights[].autonomic` | SleepNet (needs hypnogram) |
-| **Cardiovascular age** | `renderCardio` | Cardio section | `cardio` | CVA (web: Python · iOS: `CvaModel`) |
+| **Cardiovascular age** | `renderVascular` (own panel) | Cardio section | `cardio` | CVA (web: Python · iOS: `CvaModel`) |
 | **VO₂max estimate** | `renderCardio` | Fitness section | `fitness.vo2max` | — (Jackson, model-free) |
 | Movement ridge | `ridgeSvg` | `MovementRidge` | `activity_profile` | — (MET, model-free) |
 | **Activity sessions / workouts** | `openActDetail` (session) | workouts section | `activity` | AAD (web: Python · iOS: `ActivityModel`) |
 | Steps / active calories / **distance** | activity report stats | activity day stats | `activity_daily` (incl. `distance_m`) | — |
 | Previous days browser | `openDaysBrowser` → `openDayPage` | `AllDaysView` → `DayDetailView` | day keys | — |
 | Device & data health | `renderDevice` | device section | `device`, `streams` | — |
+| Excluded-period note | `renderDevice` (`.dh-note`) | device section stat | `device.short_periods_excluded` | — |
 
 ## The day is one unit — pair night + activity by *wake date*
 
@@ -77,6 +78,21 @@ a nap doesn't shadow the real sleep.
   DB. The web dashboard has **no** BLE; it reads a DB produced by the desktop `oura sync`.
   Both ultimately run the SAME `oura-link` `OuraClient<T: Transport>` over a different
   transport (btleplug on desktop, CoreBluetooth-over-FFI on iOS).
+
+## What counts as a night: bedtime periods under 90 min are not sleep
+
+The ring logs a `bedtime_period` for any stretch of stillness, so a quiet evening produces
+several 10–40 minute periods alongside the real night. `build_summary` drops any period
+shorter than **one sleep cycle (90 min)** before it becomes a `Night` — below that there is
+no architecture to stage, and a fragment landing *after* the real sleep would otherwise
+become `nights[0]` and drive the sleep tile, the HRV/RHR baselines and sleep debt off a
+20-minute sit-down. On this ring's history the split is clean: periods are either ≤ 1.1 h or
+≥ 2.8 h, so the cut falls in a 1.7 h empty band, and long naps (> 90 min) still count.
+
+The count of dropped periods is published as `device.short_periods_excluded` and shown in
+both clients, so the night count always reconciles with the ring's own period count rather
+than being quietly short. This lives in the **shared brain**, so both clients inherit it —
+don't re-filter per client.
 
 ## Sleep metrics: two code paths, one algorithm — keep them in sync
 

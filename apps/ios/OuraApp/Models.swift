@@ -51,6 +51,7 @@ struct Device: Decodable {
     var serial: String?; var firmware: String?
     var battery_pct: Int?
     var days_of_data: Double?; var nights: Int?
+    var short_periods_excluded: Int?
     var synced: String?; var synced_hm: String?
 }
 struct Summary: Decodable {

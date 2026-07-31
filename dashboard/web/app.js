@@ -851,6 +851,13 @@ function renderDevice(d) {
   stats.append(stat("Events", (dev.total_events || 0).toLocaleString()));
   box.append(stats);
 
+  // Say so when bedtime periods were dropped, rather than leaving the night count
+  // quietly short of what the ring logged.
+  const dropped = dev.short_periods_excluded;
+  if (dropped) {
+    box.append(el("p", "dh-note", `${dev.nights} scoreable ${dev.nights === 1 ? "night" : "nights"}. ${dropped} shorter bedtime ${dropped === 1 ? "period was" : "periods were"} logged by the ring but excluded — under 90 minutes, they're stillness rather than sleep and can't be staged.`));
+  }
+
   // left = data streams (what the ring is recording)
   const left = el("div");
   const streams = dev.streams || [];

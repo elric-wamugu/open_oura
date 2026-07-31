@@ -359,6 +359,11 @@ struct RootView: View {
                             ObsStat(label: "days of data",
                                     value: s.device?.days_of_data.map { String(format: "%.0f", $0) } ?? "—")
                             ObsStat(label: "nights", value: "\(s.device?.nights ?? s.nights.count)")
+                            // say so when bedtime periods were dropped, rather than leaving
+                            // the night count quietly short of what the ring logged
+                            if let dropped = s.device?.short_periods_excluded, dropped > 0 {
+                                ObsStat(label: "short periods excluded", value: "\(dropped)")
+                            }
                         }
                         .obsCard()
                     }

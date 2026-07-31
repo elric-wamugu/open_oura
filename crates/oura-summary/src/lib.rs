@@ -717,6 +717,20 @@ pub fn build_summary(db: &Path, tz: i64, runner: &dyn ModelRunner) -> Result<Val
     }
     beds.sort_by(|a, b| unix_in_epoch(a.0, a.2).total_cmp(&unix_in_epoch(b.0, b.2)));
 
+    // The ring emits a `bedtime_period` for any stretch of stillness, so an evening spent
+    // sitting quietly yields several 10–40 minute "nights" alongside the real one. They
+    // can't be scored — a sleep cycle is ~90 min, so anything shorter has no architecture
+    // to stage — and they poison everything keyed off the newest night (the sleep tile,
+    // the HRV/RHR baselines, sleep debt) whenever one lands after the actual sleep.
+    //
+    // Drop them below one sleep cycle. On this ring's data the split is unambiguous:
+    // periods are either ≤ 1.1 h or ≥ 2.8 h, so the cut sits in a 1.7 h empty band rather
+    // than near any real value. Genuine long naps stay — they clear 90 min.
+    const MIN_SLEEP_PERIOD_DS: i64 = 90 * 600;
+    let beds_before = beds.len();
+    beds.retain(|&(s, e, _)| e - s >= MIN_SLEEP_PERIOD_DS);
+    let short_periods_excluded = beds_before - beds.len();
+
     let mut nights: Vec<Night> = beds
         .iter()
         .map(|&(s, e, epoch_idx)| Night {
@@ -1238,6 +1252,9 @@ pub fn build_summary(db: &Path, tz: i64, runner: &dyn ModelRunner) -> Result<Val
         "days_of_data": ((epochs.iter().map(|e| (e.max_ds - e.min_ds) as f64).sum::<f64>() / 10.0 / 86400.0) * 10.0).round() / 10.0,
         "total_events": events.len(),
         "nights": nights.len(),
+        // reported, not silently dropped — so the night count reconciles with the ring's
+        // own bedtime_period count if anyone goes looking.
+        "short_periods_excluded": short_periods_excluded,
         "battery_pct": battery_pct,
         "battery_v": battery_v,
         "battery_as_of": battery_as_of,
