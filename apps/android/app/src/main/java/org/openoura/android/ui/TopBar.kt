@@ -17,6 +17,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import org.openoura.android.data.Device
@@ -48,12 +54,19 @@ fun TopBar(
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            // the "live" dot — teal when the last reading is recent, muted once it ages
+        // Logo lockup: the open-ring mark (same artwork as the launcher icon) plus the
+        // wordmark. The mark doubles as the liveness indicator the plain dot used to be —
+        // teal while the last reading is recent, muted once it ages.
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(9.dp)) {
             val fresh = (device?.freshHours ?: Double.MAX_VALUE) < 12.0
-            val dot = if (fresh) c.accent else c.muted
-            Canvas(Modifier.size(9.dp)) { drawCircle(dot) }
-            Text("open_oura", color = c.text, fontSize = 17.sp, fontFamily = FontFamily.Monospace)
+            OpenRingMark(tint = if (fresh) c.accent else c.muted)
+            Text(
+                "open_oura",
+                color = c.text,
+                fontSize = 17.sp,
+                fontFamily = FontFamily.Monospace,
+                letterSpacing = (-0.3).sp,
+            )
         }
 
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -131,4 +144,27 @@ private fun ProfileButton(onClick: () -> Unit) {
             .clickable(onClick = onClick)
             .padding(horizontal = 11.dp, vertical = 5.dp),
     )
+}
+
+/**
+ * The open-ring mark: a 300° arc with the gap at the top. Drawn rather than loaded so it
+ * scales cleanly and can take a state colour; geometry matches
+ * `res/drawable/ic_launcher_foreground.xml` so the app icon and the in-app logo are the
+ * same shape.
+ */
+@Composable
+fun OpenRingMark(tint: Color, size: Dp = 17.dp) {
+    Canvas(Modifier.size(size)) {
+        val stroke = this.size.minDimension * 0.145f
+        val inset = stroke / 2f
+        drawArc(
+            color = tint,
+            startAngle = -50f,
+            sweepAngle = 300f,
+            useCenter = false,
+            topLeft = Offset(inset, inset),
+            size = Size(this.size.width - stroke, this.size.height - stroke),
+            style = Stroke(width = stroke, cap = StrokeCap.Round),
+        )
+    }
 }
