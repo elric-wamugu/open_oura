@@ -26,10 +26,10 @@ Consequences that run through the whole plan:
   `android:foregroundServiceType="connectedDevice"` and hold
   `FOREGROUND_SERVICE_CONNECTED_DEVICE`, or Android 14 throws at `startForeground()`.
   This is a requirement here, not a nicety.
-- **The Snapdragon 765G is a 2020 mid-range part**, roughly 3–5× slower single-threaded
-  than the M2 the timings below were taken on. Budget **10–20 s** for a cold
-  `build_summary`, which makes the snapshot cache load-bearing rather than an optimisation,
-  and means any manual refresh needs a visible progress state.
+- **`build_summary` measured at 8.0 s on the Pixel 5** over 847k events (vs 3.0 s on the
+  M2 — 2.7× slower, better than the 3–5× I first assumed). Cold start from the cached
+  snapshot is **1.29 s**, so the cache is worth ~6× and is load-bearing rather than an
+  optimisation. Any manual refresh needs a visible progress state.
 - **Good news for Phase 4:** Pixels run the AOSP reference Bluetooth stack, so you avoid the
   worst vendor-specific GATT quirks. This is the easiest Android hardware to get BLE working
   on.
@@ -154,10 +154,27 @@ July 18) rather than generating them during the build.
 
 ---
 
-## Phase 1 — data layer and first screen (no BLE)
+## Phase 1 — data layer and first screen (no BLE) — **DONE**
 
 **Goal:** render real data from a side-loaded database.
-**Exit criteria:** the vitals tiles show your real HRV/RHR/efficiency/SpO2 on device.
+**Exit criteria:** the vitals tiles show your real HRV/RHR/efficiency/SpO2 on device. ✅
+
+Verified on the Pixel against the same `oura.db` the web dashboard reads, and the two agree
+exactly: HRV 37 ms / baseline 41.3, resting HR 61 / baseline 64.6, efficiency 66%, SpO₂ 97%,
+17 nights, 23 short periods excluded, 25.8 days, identical digest string.
+
+Two notes for whoever picks this up:
+
+- **Scoped storage.** An app cannot read `/sdcard/Download` on Android 11+, and
+  `READ_EXTERNAL_STORAGE` no longer grants it. Import goes through the Storage Access
+  Framework (`ActivityResultContracts.OpenDocument`), so the user picks the file and the
+  app needs no storage permission at all. For development, bypass it entirely:
+  ```
+  adb push oura.db /data/local/tmp/oura.db
+  adb shell run-as org.openoura.android cp /data/local/tmp/oura.db files/oura.db
+  ```
+- **Nothing about sleep metrics was ported to Kotlin.** `NightRow.metrics`, `stagesFull`
+  and `autonomic` decode straight from what Rust computed, exactly as invariant 2 requires.
 
 1. **[you]** Push a copy of the database to the Pixel:
    ```bash

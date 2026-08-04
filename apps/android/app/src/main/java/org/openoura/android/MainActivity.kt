@@ -1,60 +1,75 @@
 package org.openoura.android
 
 import android.os.Bundle
-import android.util.Log
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Column
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Text
-import androidx.compose.ui.Alignment
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.unit.dp
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.launch
+import org.openoura.android.data.SummaryRepository
+import org.openoura.android.ui.HomeScreen
 import org.openoura.android.ui.theme.OpenOuraTheme
-import uniffi.oura_core.coreVersion
-import uniffi.oura_core.rmssd
 
-private const val TAG = "OpenOura"
-
-private data class CoreProbe(val version: String, val rmssd: String)
-
-/**
- * Phase 0 proving harness: calls the shared Rust core over UniFFI and shows what came
- * back. `coreVersion()` proves the .so loads and the JNA bridge works; `rmssd()` proves a
- * real computation crosses the boundary with arguments and a return value.
- *
- * Replaced in Phase 1 by the real summary rendering.
- */
 class MainActivity : ComponentActivity() {
+
+    private lateinit var repo: SummaryRepository
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        repo = SummaryRepository(applicationContext)
 
-        val probe = CoreProbe(
-            version = runCatching { coreVersion() }.getOrElse { "FFI FAILED: $it" },
-            rmssd = runCatching { rmssd(listOf(800u, 820u, 810u, 850u, 830u)) }
-                .map { "%.3f ms".format(it) }
-                .getOrElse { "FFI FAILED: $it" },
-        )
-        Log.i(TAG, "core_version=${probe.version} rmssd=${probe.rmssd}")
+        // Render the cached snapshot immediately; only compute when there is nothing
+        // cached. A full recompute is an explicit user action (and, from Phase 4, a
+        // post-sync step) rather than something that blocks every launch.
+        lifecycleScope.launch { repo.load(refresh = false) }
 
         setContent {
             OpenOuraTheme {
-                Scaffold(modifier = Modifier.fillMaxSize()) { inner ->
-                    Column(
-                        modifier = Modifier.fillMaxSize().padding(inner).padding(24.dp),
-                        verticalArrangement = Arrangement.spacedBy(12.dp, Alignment.CenterVertically),
-                        horizontalAlignment = Alignment.CenterHorizontally,
-                    ) {
-                        Text("open_oura", style = MaterialTheme.typography.headlineMedium)
-                        Text("Rust core ${probe.version}", style = MaterialTheme.typography.bodyLarge)
-                        Text("RMSSD probe: ${probe.rmssd}", style = MaterialTheme.typography.bodyMedium)
+                val state by repo.state.collectAsState()
+                var busy by remember { mutableStateOf(false) }
+                val scope = rememberCoroutineScope()
+
+                // SAF picker: the user grants access to one file, so the app needs no
+                // storage permission. "*/*" because a .db has no registered MIME type and
+                // narrower filters hide it in the picker.
+                val pickDatabase = rememberLauncherForActivityResult(
+                    ActivityResultContracts.OpenDocument(),
+                ) { uri ->
+                    if (uri == null) return@rememberLauncherForActivityResult
+                    scope.launch {
+                        busy = true
+                        if (repo.importFrom(uri)) repo.recompute()
+                        busy = false
                     }
+                }
+
+                Scaffold(modifier = Modifier.fillMaxSize()) { inner ->
+                    HomeScreen(
+                        state = state,
+                        busy = busy,
+                        onRefresh = {
+                            scope.launch {
+                                busy = true
+                                repo.recompute()
+                                busy = false
+                            }
+                        },
+                        onImportDatabase = { pickDatabase.launch(arrayOf("*/*")) },
+                        modifier = Modifier.padding(inner),
+                    )
                 }
             }
         }
