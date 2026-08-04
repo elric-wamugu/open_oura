@@ -208,6 +208,20 @@ real data while the risky part is still ahead.
 
 ---
 
+## ⚠ The profile is NOT in the database
+
+`oura-summary::profile_path` reads **`profile.json` sitting next to the .db**, and falls
+back to a generic 30-year-old / 75 kg / 1.78 m default when it is missing. Copying only
+`oura.db` onto a device therefore silently changes every demographic-derived figure:
+Jackson VO₂max, the Tanaka predicted HR max, Schofield BMR and so active/total kcal. Sleep,
+HRV, RHR, SpO₂ and step counts are unaffected, which is what makes it easy to miss —
+the app looked right and was quietly wrong (187 bpm predicted max instead of 184;
+Aug 3 energy 253/1986 kcal instead of 222/1852).
+
+Android ships a profile editor (`ProfileStore` + `ProfileScreen`, reachable from the top
+bar) that writes the same `profile.json` beside the database. Anything that provisions a
+database onto a device must provision the profile with it.
+
 ## Phase 2 — the full Compose UI port
 
 **Goal:** feature parity with the web dashboard's main page.

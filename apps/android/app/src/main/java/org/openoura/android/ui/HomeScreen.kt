@@ -1,5 +1,10 @@
 package org.openoura.android.ui
 
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -34,9 +39,13 @@ fun HomeScreen(
     busy: Boolean,
     onRefresh: () -> Unit,
     onImportDatabase: () -> Unit,
+    onOpenDay: (String, Boolean) -> Unit,
+    onBrowseDays: () -> Unit,
+    onProfile: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val c = Oura.colors
+    val ready = state as? SummaryState.Ready
     Column(
         modifier = modifier
             .fillMaxSize()
@@ -44,14 +53,8 @@ fun HomeScreen(
             .padding(horizontal = 16.dp, vertical = 12.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
-        Row(
-            Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text("open_oura", color = c.text, fontSize = 20.sp, fontFamily = FontFamily.Monospace)
-            if (busy) CircularProgressIndicator(strokeWidth = 2.dp, modifier = Modifier.padding(4.dp))
-        }
+        // Order: top bar → day card → key vitals.
+        TopBar(device = ready?.summary?.device, busy = busy, onSync = onRefresh, onProfile = onProfile)
 
         when (state) {
             is SummaryState.Loading -> Notice(
@@ -76,15 +79,36 @@ fun HomeScreen(
                 state.summary.digest?.takeIf { it.isNotBlank() }?.let {
                     Text(it, color = c.muted, fontSize = 13.sp)
                 }
-                VitalsGrid(state.summary)
-                if (state.stale) {
-                    Text(
-                        "Showing the cached snapshot.",
-                        color = c.faint,
-                        fontSize = 11.sp,
+                val days = state.summary.days
+                days.firstOrNull()?.let { day ->
+                    DayCard(
+                        summary = state.summary,
+                        ymd = day,
+                        onOpenSleep = { onOpenDay(day, true) },
+                        onOpenActivity = { onOpenDay(day, false) },
                     )
                 }
-                Button(onClick = onRefresh, enabled = !busy) { Text("Recompute summary") }
+                // Today often has activity but no night yet — the night you woke from
+                // belongs to yesterday's date — so the browser is the way to reach a
+                // scored night from the home screen.
+                if (days.size > 1) {
+                    Text(
+                        "Show all ${days.size} days",
+                        color = c.accent,
+                        fontSize = 12.sp,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(8.dp))
+                            .border(1.dp, c.line, RoundedCornerShape(8.dp))
+                            .clickable(onClick = onBrowseDays)
+                            .padding(vertical = 10.dp),
+                        textAlign = TextAlign.Center,
+                    )
+                }
+                VitalsGrid(state.summary)
+                if (state.stale) {
+                    Text("Showing the cached snapshot.", color = c.faint, fontSize = 11.sp)
+                }
                 Footer(state.summary)
             }
         }

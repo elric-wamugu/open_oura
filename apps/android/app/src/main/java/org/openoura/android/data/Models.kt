@@ -126,6 +126,9 @@ data class Device(
     val nights: Int? = null,
     @SerialName("short_periods_excluded") val shortPeriodsExcluded: Int? = null,
     @SerialName("total_events") val totalEvents: Long? = null,
+    @SerialName("battery_v") val batteryV: Double? = null,
+    /** Hours since the reading was captured — drives the freshness suffix on the pill. */
+    @SerialName("fresh_hours") val freshHours: Double? = null,
     val synced: String? = null,
     @SerialName("synced_hm") val syncedHm: String? = null,
 )
