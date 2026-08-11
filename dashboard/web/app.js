@@ -1610,8 +1610,8 @@ async function doSync() {
   const box = $("sync-progress"), bar = $("sync-progress-bar"), ptext = $("sync-progress-text");
   if (box) { box.hidden = false; bar.classList.remove("done"); bar.style.width = "0%"; ptext.textContent = "Connecting to the ring…"; }
 
-  // /api/sync streams SSE frames: {kind:"progress",events,kb_left} · {kind:"retry"} · {kind:"done",ok,message}
-  let total = null, ok = false, message = "";
+  // /api/sync streams SSE frames: {kind:"progress",events,kb_left,pct} · {kind:"retry"} · {kind:"done",ok,message}
+  let ok = false, message = "";
   try {
     const resp = await fetch("/api/sync", { method: "POST", headers: { ...DASH_HEADERS } });
     if (!resp.ok || !resp.body) throw new Error("bad response");
@@ -1629,13 +1629,16 @@ async function doSync() {
         if (!line) continue;
         let m; try { m = JSON.parse(line); } catch { continue; }
         if (m.kind === "progress") {
-          if (total == null) total = Math.max(m.kb_left || 0, 0.001); // first line ≈ total to drain
-          const pct = Math.max(0, Math.min(100, ((total - (m.kb_left || 0)) / total) * 100));
-          if (bar) bar.style.width = pct.toFixed(1) + "%";
-          $("sync-label").textContent = "Syncing " + Math.round(pct) + "%";
+          // pct is computed in oura-link and rendered as-is — the same number, from the
+          // same code, that the Android client shows. This used to be derived here from
+          // the first kb_left seen, which quietly disagreed with the phone whenever the
+          // ring accrued events mid-drain. Null until the ring reports a backlog to
+          // measure against, which is not the same as zero.
+          const pct = typeof m.pct === "number" ? Math.max(0, Math.min(100, m.pct)) : null;
+          if (bar) bar.style.width = pct == null ? "0%" : pct.toFixed(1) + "%";
+          $("sync-label").textContent = pct == null ? "Syncing" : `Syncing ${Math.round(pct)}%`;
           if (ptext) ptext.textContent = `${(m.events || 0).toLocaleString()} events · ${fmtKb(m.kb_left)} left on ring`;
         } else if (m.kind === "retry") {
-          total = null;
           if (bar) bar.style.width = "0%";
           if (ptext) ptext.textContent = "Ring not found — retrying…";
         } else if (m.kind === "done") {

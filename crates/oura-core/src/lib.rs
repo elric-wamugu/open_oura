@@ -112,13 +112,24 @@ pub trait BleWriter: Send + Sync {
     fn write(&self, data: Vec<u8>);
 }
 
-/// Swift implements this to receive sync progress. `stage` is a short machine
+/// The client implements this to receive sync progress. `stage` is a short machine
 /// tag ("auth" / "setup" / "sync"); during "sync", `bytes_left` is the ring's
 /// own count of event bytes still to transfer (0 = unknown/finished) and
 /// `events_synced` the events pulled so far this session.
+///
+/// `progress` is 0..=1 through the drain, or `None` while it cannot be known — before
+/// the drain starts, and until the ring has reported a backlog to measure against.
+/// It comes from `oura-link`, the same value the web dashboard renders, so clients
+/// display a fraction rather than each inventing one.
 #[uniffi::export(callback_interface)]
 pub trait SyncProgressListener: Send + Sync {
-    fn on_progress(&self, stage: String, bytes_left: u64, events_synced: u32);
+    fn on_progress(
+        &self,
+        stage: String,
+        bytes_left: u64,
+        events_synced: u32,
+        progress: Option<f32>,
+    );
 }
 
 #[derive(uniffi::Record)]
@@ -197,12 +208,12 @@ impl RingSession {
         };
         let client = OuraClient::new(transport);
 
-        progress.on_progress("auth".into(), 0, 0);
+        progress.on_progress("auth".into(), 0, 0, None);
         client
             .authenticate(&key)
             .await
             .map_err(|e| fail(e.to_string()))?;
-        progress.on_progress("setup".into(), 0, 0);
+        progress.on_progress("setup".into(), 0, 0, None);
         client
             .setup_app_stream()
             .await
@@ -236,7 +247,7 @@ impl RingSession {
 
         let inserted = AtomicU32::new(0);
         let db_err: Mutex<Option<String>> = Mutex::new(None);
-        progress.on_progress("sync".into(), 0, 0);
+        progress.on_progress("sync".into(), 0, 0, None);
         let outcome = client
             .drain_events(
                 cursor,
@@ -253,7 +264,7 @@ impl RingSession {
                     }
                 },
                 |p| {
-                    progress.on_progress("sync".into(), p.bytes_left as u64, p.events_synced);
+                    progress.on_progress("sync".into(), p.bytes_left as u64, p.events_synced, p.progress);
                     if db_err.lock().unwrap().is_some() {
                         return;
                     }

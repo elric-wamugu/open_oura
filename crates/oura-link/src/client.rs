@@ -98,6 +98,37 @@ pub struct BatchProgress {
     pub next_cursor: u32,
     pub bytes_left: u32,
     pub events_synced: u32,
+    /// How far through the drain, 0..=1, or `None` while it cannot be known.
+    ///
+    /// Computed here rather than in each client so the web dashboard and the phone show
+    /// the same number from the same code — they previously each derived it, differently.
+    /// See [`OuraClient::drain_events`] for why the denominator is what it is.
+    pub progress: Option<f32>,
+}
+
+/// Turns the ring's "bytes still to come" into a 0..=1 fraction for a progress bar.
+///
+/// The ring only ever reports what it *still holds*, never how much there was, so the
+/// largest backlog seen is the only denominator available — and taking the peak rather
+/// than the first report keeps it honest when events accrue mid-drain. The high-water
+/// mark then stops the bar sliding backwards when they do. `bytes_left == 0` doubles as
+/// "unknown" in the protocol, so nothing is claimed until a real backlog has been seen.
+#[derive(Debug, Default)]
+struct DrainProgress {
+    peak: u32,
+    reached: f32,
+}
+
+impl DrainProgress {
+    fn observe(&mut self, bytes_left: u32) -> Option<f32> {
+        self.peak = self.peak.max(bytes_left);
+        if self.peak == 0 {
+            return None;
+        }
+        let done = self.peak.saturating_sub(bytes_left) as f32 / self.peak as f32;
+        self.reached = self.reached.max(done.clamp(0.0, 1.0));
+        Some(self.reached)
+    }
 }
 
 /// Quiet-window fallback for event-batch requests. Batches terminate on the
@@ -452,6 +483,7 @@ impl<T: Transport> OuraClient<T> {
     {
         let mut start = cursor;
         let mut total = 0u32;
+        let mut drain_progress = DrainProgress::default();
         // Prefer Ring 5's Android-style extended event drain. It falls back to
         // legacy GetEvent if the ring explicitly reports the extended API as
         // unsupported.
@@ -546,12 +578,15 @@ impl<T: Transport> OuraClient<T> {
                     .request_tag(&protocol::req_get_event_ack(start), 0x11)
                     .await;
             }
+            let progress = drain_progress.observe(bytes_left);
+
             // Report every batch (even an empty terminal one) so callers can
             // persist the cursor and show progress.
             on_batch(&BatchProgress {
                 next_cursor: start,
                 bytes_left,
                 events_synced: total,
+                progress,
             });
             if bytes_left == 0 {
                 break; // drained
@@ -958,6 +993,39 @@ fn parse_live_hr_frame(frame: &[u8]) -> Option<HeartRateSample> {
         return None;
     }
     bpm_from_ibi(ibi_ms).map(|bpm| HeartRateSample { bpm, ibi_ms })
+}
+
+#[cfg(test)]
+mod progress_tests {
+    use super::DrainProgress;
+
+    #[test]
+    fn unknown_until_the_ring_reports_a_backlog() {
+        let mut p = DrainProgress::default();
+        // 0 means "unknown or finished", so it is not 0% — it is no answer at all.
+        assert_eq!(p.observe(0), None);
+        assert_eq!(p.observe(1000), Some(0.0));
+    }
+
+    #[test]
+    fn advances_as_the_backlog_drains() {
+        let mut p = DrainProgress::default();
+        assert_eq!(p.observe(1000), Some(0.0));
+        assert_eq!(p.observe(750), Some(0.25));
+        assert_eq!(p.observe(500), Some(0.5));
+        assert_eq!(p.observe(0), Some(1.0));
+    }
+
+    #[test]
+    fn never_slides_backwards_when_events_accrue_mid_drain() {
+        let mut p = DrainProgress::default();
+        p.observe(1000);
+        assert_eq!(p.observe(200), Some(0.8));
+        // The ring recorded more while we were draining: the denominator grows, but the
+        // bar holds rather than jumping back to 40%.
+        assert_eq!(p.observe(600), Some(0.8));
+        assert_eq!(p.observe(100), Some(0.9));
+    }
 }
 
 #[cfg(test)]

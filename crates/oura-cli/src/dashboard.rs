@@ -727,10 +727,16 @@ async fn stream_sync(
         let mut lines = BufReader::new(stdout).lines();
         let mut summary = String::new();
         while let Ok(Some(line)) = lines.next_line().await {
-            if let Some((events, kb_left)) = parse_progress(&line) {
+            if let Some(p) = parse_progress(&line) {
                 let frame = format!(
                     "data: {}\n\n",
-                    json!({ "kind": "progress", "events": events, "kb_left": kb_left })
+                    json!({
+                        "kind": "progress",
+                        "events": p.events,
+                        "kb_left": p.kb_left,
+                        // The client renders this rather than deriving one of its own.
+                        "pct": p.fraction.map(|f| f * 100.0),
+                    })
                 );
                 if sock.write_all(frame.as_bytes()).await.is_err() {
                     let _ = child.wait().await; // browser hung up
@@ -781,7 +787,19 @@ async fn stream_sync(
 
 /// Parse a sync progress line — `  … 255 events so far, ~3024.1 KB left on ring` —
 /// into `(events, kb_left)`. Non-progress lines return `None`.
-fn parse_progress(line: &str) -> Option<(u64, f64)> {
+/// One scraped progress line from `oura sync`: events drained, KB the ring still
+/// holds, and how far through it reckons it is.
+#[derive(Debug, PartialEq)]
+struct SyncProgressLine {
+    events: u64,
+    kb_left: f64,
+    /// 0..=1, absent on the batches before the ring has reported a backlog to measure
+    /// against. Computed in `oura-link`, not here — the browser and the phone must not
+    /// each invent their own fraction.
+    fraction: Option<f64>,
+}
+
+fn parse_progress(line: &str) -> Option<SyncProgressLine> {
     let ev = line.find(" events so far")?;
     let events: u64 = line[..ev]
         .rsplit(|ch: char| !ch.is_ascii_digit())
@@ -790,22 +808,46 @@ fn parse_progress(line: &str) -> Option<(u64, f64)> {
         .ok()?;
     let rest = &line[line.find('~')? + 1..];
     let kb: f64 = rest[..rest.find(" KB")?].trim().parse().ok()?;
-    Some((events, kb))
+    // "  … 38% · 4096 events so far, …" — the percentage is optional, and only ever
+    // appears before the event count.
+    let fraction = line[..ev]
+        .find('%')
+        .and_then(|p| {
+            line[..p]
+                .rsplit(|ch: char| !ch.is_ascii_digit())
+                .find(|s| !s.is_empty())
+        })
+        .and_then(|s| s.parse::<f64>().ok())
+        .map(|p| p / 100.0);
+    Some(SyncProgressLine {
+        events,
+        kb_left: kb,
+        fraction,
+    })
 }
 
 #[cfg(test)]
 mod sync_tests {
-    use super::parse_progress;
+    use super::{parse_progress, SyncProgressLine};
 
     #[test]
     fn parses_progress_and_ignores_others() {
+        // Before the ring has reported a backlog there is no percentage to print.
         assert_eq!(
             parse_progress("  … 255 events so far, ~3024.1 KB left on ring"),
-            Some((255, 3024.1))
+            Some(SyncProgressLine { events: 255, kb_left: 3024.1, fraction: None })
+        );
+        assert_eq!(
+            parse_progress("  … 38% · 4096 events so far, ~500.0 KB left on ring"),
+            Some(SyncProgressLine { events: 4096, kb_left: 500.0, fraction: Some(0.38) })
+        );
+        assert_eq!(
+            parse_progress("  … 100% · 2971 events so far, ~0.0 KB left on ring"),
+            Some(SyncProgressLine { events: 2971, kb_left: 0.0, fraction: Some(1.0) })
         );
         assert_eq!(
             parse_progress("  … 2971 events so far, ~0.0 KB left on ring"),
-            Some((2971, 0.0))
+            Some(SyncProgressLine { events: 2971, kb_left: 0.0, fraction: None })
         );
         assert_eq!(
             parse_progress("Done: 2971 events received, 2716 new rows, next cursor 1553158."),
