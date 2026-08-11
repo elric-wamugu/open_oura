@@ -324,8 +324,20 @@ Ring GATT identifiers (from `BLETransport.swift`):
    - Not the cause here, but worth keeping: a settle delay after `stopScan`, retries, and
      `autoConnect=true` as a last attempt. RSSI turned out to be a red herring (−87 and −72
      behaved identically once bonded).
-3. **[agent]** `SyncService`: a foreground service (type `connectedDevice`) so Doze does not
-   kill a sync in progress; surface `SyncProgressListener` as a notification.
+3. **[agent] — DONE.** `ble/RingSyncService` (type `connectedDevice`) + `ble/RingSync.kt`.
+   Verified against the real ring: `sync done: 10480 events, 10480 new, cursor 28366777`,
+   cursor 28,250,624 → 28,366,777, ~70 s drain, summary rebuilt in 5.6 s.
+   Two bridge details worth keeping: Rust calls `BleWriter.write` **synchronously and
+   fire-and-forget** from its own runtime, so writes are queued and drained by one pump
+   coroutine (instant callback, and the one-op-at-a-time GATT rule still holds); and the
+   frame collector must start **before** `sync()`, because the transport buffers from
+   connect and setup-phase frames would otherwise be lost.
+
+   **Known gap:** `RingSession::sync` does not capture the live battery, but the CLI's
+   `cmd_sync` does (`store.insert_battery`). So a phone-only sync leaves `battery_as_of` /
+   `fresh_hours` / `synced_hm` frozen at whatever the desktop last wrote, and the device
+   panel and top-bar battery pill slowly go stale even though syncs are succeeding. Fix is
+   a few lines in `oura-core` plus an AAR rebuild.
 4. **[agent] — DONE.** Key storage: `RingKeyStore` + `RingKeyScreen`, reached from the
    profile screen. **Deviation:** not `EncryptedSharedPreferences` — `androidx.security:
    security-crypto` deprecated that API and pulls in Tink for one 32-character string.
