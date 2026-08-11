@@ -54,6 +54,14 @@ private const val SCAN_SETTLE_MS = 400L
 private const val CONNECT_ATTEMPTS = 3
 private const val RETRY_BACKOFF_MS = 700L
 
+/**
+ * Below this, an advertisement is strong enough to *find* the ring but usually too weak to
+ * complete a GATT connect — the link drops mid-handshake and surfaces as a bare status 133,
+ * which looks like a software fault and is not one. Worth saying out loud, because the fix
+ * (move the ring closer) is nothing like the fix for a real 133.
+ */
+private const val WEAK_RSSI_DBM = -80
+
 private const val CONNECT_TIMEOUT_MS = 30_000L
 private const val DISCOVER_TIMEOUT_MS = 15_000L
 private const val MTU_TIMEOUT_MS = 5_000L
@@ -113,6 +121,8 @@ class BleTransport private constructor(
     val mtu: Int,
     val deviceName: String,
     val subscribedCount: Int,
+    /** Advertisement strength at connect time, in dBm. Below about -80 the link is fragile. */
+    val rssi: Int,
 ) {
     /** Every notify/indicate characteristic merged into one stream of raw frames. */
     val frames: Flow<ByteArray> get() = callback.frames
@@ -236,11 +246,22 @@ class BleTransport private constructor(
                 // peripherals where the direct connect keeps failing.
                 val patient = attempt == CONNECT_ATTEMPTS - 1
                 try {
-                    return openLink(ctx, device, name, patient, onStage)
+                    return openLink(ctx, device, name, found.rssi, patient, onStage)
                 } catch (t: Throwable) {
                     last = t
                     Log.w(TAG, "connect attempt ${attempt + 1} failed: ${t.message}")
                 }
+            }
+            // A weak signal is the most common cause of a connect that finds the ring and
+            // then dies, so lead with it rather than leaving a bare GATT status to be
+            // mistaken for a bug in the transport.
+            if (found.rssi < WEAK_RSSI_DBM) {
+                throw BleException(
+                    "the ring answered the scan at ${found.rssi} dBm, which is too weak to " +
+                        "hold a connection (anything below $WEAK_RSSI_DBM usually fails). " +
+                        "Put the ring next to the phone — wearing it also keeps it awake — " +
+                        "and try again. Underlying failure: ${last?.message}",
+                )
             }
             throw last ?: BleException("could not connect to the ring")
         }
@@ -251,6 +272,7 @@ class BleTransport private constructor(
             ctx: Context,
             device: BluetoothDevice,
             name: String,
+            rssi: Int,
             autoConnect: Boolean,
             onStage: (String) -> Unit,
         ): BleTransport {
@@ -312,7 +334,7 @@ class BleTransport private constructor(
                 Log.i(TAG, "subscribed to $subscribed/${notifyChars.size} characteristics")
 
                 onStage("ready")
-                return BleTransport(gatt, callback, writeChar, mtu, name, subscribed)
+                return BleTransport(gatt, callback, writeChar, mtu, name, subscribed, rssi)
             } catch (t: Throwable) {
                 runCatching { gatt.disconnect() }
                 runCatching { gatt.close() }

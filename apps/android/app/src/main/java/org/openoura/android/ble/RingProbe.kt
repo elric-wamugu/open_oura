@@ -29,6 +29,7 @@ data class RingProbeResult(
     /** The furthest stage reached: scanning / connecting / … / ready. */
     val stage: String,
     val deviceName: String? = null,
+    val rssi: Int? = null,
     val mtu: Int? = null,
     val subscribed: Int? = null,
     val framesSeen: Int = 0,
@@ -37,14 +38,16 @@ data class RingProbeResult(
     val error: String? = null,
 ) {
     /** One-line summary for the UI. */
-    fun summary(): String = when {
-        !ok -> "$stage — ${error ?: "failed"}"
-        sawFirmwareReply ->
-            "$deviceName · MTU $mtu · $subscribed notify · the ring replied ($framesSeen frames)"
-        framesSeen > 0 ->
-            "$deviceName · MTU $mtu · $subscribed notify · $framesSeen frames, no 0x09 reply"
-        else ->
-            "$deviceName · MTU $mtu · $subscribed notify · connected but SILENT — check the CCCD write"
+    fun summary(): String {
+        if (!ok) return "$stage — ${error ?: "failed"}"
+        val head = "$deviceName · $rssi dBm · MTU $mtu · $subscribed notify"
+        return when {
+            sawFirmwareReply -> "$head · the ring replied ($framesSeen frames)"
+            framesSeen > 0 -> "$head · $framesSeen frames, no 0x09 reply"
+            // Connected and subscribed but nothing arrived: the CCCD write is the usual
+            // culprit, and this is the exact failure the probe exists to catch.
+            else -> "$head · connected but SILENT — check the CCCD write"
+        }
     }
 }
 
@@ -82,6 +85,7 @@ suspend fun probeRing(ctx: Context, nameContains: String = "Oura"): RingProbeRes
             ok = true,
             stage = "ready",
             deviceName = t.deviceName,
+            rssi = t.rssi,
             mtu = t.mtu,
             subscribed = t.subscribedCount,
             framesSeen = frames.size,
