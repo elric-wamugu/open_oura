@@ -83,8 +83,8 @@ bundled events on extended sync. The parser must walk the whole notification or
 bundle. The persisted cursor (`nextEventToSync`) makes sync incremental.
 `sleepAnalysisProgress` is surfaced as progress only, not a block.
 
-Two places where `oura-link` deliberately deviates from the app's literal
-behavior (2026-07-04):
+Three places where `oura-link` deliberately deviates from the app's literal
+behavior:
 
 - **Batch termination.** The summary packet is the ring's explicit batch
   terminator, so the client returns from a request the moment it (or a
@@ -92,6 +92,17 @@ behavior (2026-07-04):
   window after the last frame. The quiet window (1.5 s) remains only as the
   fallback for errors/dead links. A batch that ends *without* a summary is a
   hard error (link lost mid-batch), never treated as "drained".
+- **The per-batch ack is not sent** (2026-08-11). The app's `GetEvent(cursor,
+  max_events = 0)` after each burst costs **~21 s on the Gen3** — measured at
+  `flush_ms=28 fetch_ms=180 ack_ms=21033`, i.e. 99.2% of a drain's wall clock,
+  for a reply the client discards. The ring is not busy during it: ten
+  back-to-back batches without acks held a flat ~155 ms each (1,611 events/s
+  vs ~12 with them). Nothing depends on it — `bytes_left` is derived from the
+  cursor in the request, the cursor lives in `sync_state`, and the ring
+  re-serves acked history. One ack is sent at the *end* of a drain, written
+  and not awaited. Never un-await it mid-drain: the reply is a `0x11`, so it
+  would arrive inside a later batch's window and be mistaken for that batch's
+  summary. Result: a 111,190-event drain went from a projected 2.6 h to 1m49s.
 - **Batch size.** The app requests `max_events = 65535` — effectively the whole
   backlog as one batch. Since the cursor can only be checkpointed at batch
   boundaries, one giant batch means a dropped link forfeits all progress and
@@ -158,7 +169,8 @@ Validation on 2026-07-01:
 5. SyncTime using the app-style counter packet (`12 09 ... f6`) where supported.
 6. (optional) firmware / product / battery for metadata.
 7. DataFlush, then drain history events from the persisted cursor; persist each
-   event, ack with `GetEvent(max_events=0)`, and advance the cursor; stop when
-   `bytes_left == 0`.
+   event and advance the cursor; stop when `bytes_left == 0`. **Do not ack per
+   batch** — it costs ~21 s each on the Gen3 and buys nothing (see above). Ack
+   once at the end if at all, and do not wait for it.
 
 Do not issue any RData (0x03) for a normal pull.
