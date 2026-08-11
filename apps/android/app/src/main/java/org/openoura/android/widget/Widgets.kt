@@ -11,15 +11,20 @@ import androidx.glance.ImageProvider
 import androidx.glance.layout.ContentScale
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.unit.DpSize
+import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.glance.GlanceId
+import androidx.compose.ui.unit.Dp
 import androidx.glance.GlanceModifier
 import androidx.glance.GlanceTheme
+import androidx.glance.LocalSize
 import androidx.glance.action.actionStartActivity
 import androidx.glance.action.clickable
 import androidx.glance.appwidget.GlanceAppWidget
 import androidx.glance.appwidget.GlanceAppWidgetReceiver
+import androidx.glance.appwidget.SizeMode
 import androidx.glance.appwidget.cornerRadius
 import androidx.glance.appwidget.provideContent
 import androidx.glance.background
@@ -66,13 +71,13 @@ private val REM = Color(0xFF6FA1A8)
 private val WAKE = Color(0xFFC1B08F)
 
 @Composable
-private fun Shell(content: @Composable () -> Unit) {
+private fun Shell(padding: Dp = 12.dp, content: @Composable () -> Unit) {
     Column(
         modifier = GlanceModifier
             .fillMaxSize()
             .background(BG)
             .cornerRadius(16.dp)
-            .padding(12.dp)
+            .padding(padding)
             .clickable(actionStartActivity<MainActivity>()),
         // Centre the content: a widget occupies a whole cell whatever its content height,
         // and top-aligned text leaves the lower half visibly empty.
@@ -86,9 +91,9 @@ private fun Label(text: String) =
     Text(text, style = TextStyle(color = androidx.glance.unit.ColorProvider(FAINT), fontSize = 10.sp, fontWeight = FontWeight.Medium))
 
 @Composable
-private fun Big(value: String, unit: String, tint: Color = TEXT) {
+private fun Big(value: String, unit: String, tint: Color = TEXT, size: TextUnit = 26.sp) {
     Row(verticalAlignment = Alignment.Bottom) {
-        Text(value, style = TextStyle(color = androidx.glance.unit.ColorProvider(tint), fontSize = 26.sp, fontWeight = FontWeight.Medium))
+        Text(value, style = TextStyle(color = androidx.glance.unit.ColorProvider(tint), fontSize = size, fontWeight = FontWeight.Medium))
         if (unit.isNotEmpty()) {
             Spacer(GlanceModifier.width(3.dp))
             Text(unit, style = TextStyle(color = androidx.glance.unit.ColorProvider(MUTED), fontSize = 11.sp))
@@ -227,7 +232,23 @@ class SleepWidgetReceiver : GlanceAppWidgetReceiver() {
 
 // ── today (2x2) ──────────────────────────────────────────────────────────────────────
 
+/**
+ * The smallest useful shape: the steps figure alone, for a cell too short for anything else.
+ * 40 dp is what Android's conservative `70n - 30` formula promises for a single row.
+ */
+private val TODAY_COMPACT = DpSize(110.dp, 40.dp)
+
+/** Label, figure and the two supporting lines. Fits a two-row cell. */
+private val TODAY_FULL = DpSize(110.dp, 110.dp)
+
 class ActivityWidget : GlanceAppWidget() {
+    // Keyed off the space actually granted, not the cell count. "One row" is 40 dp by the
+    // formula but ~114 dp on this Pixel, so a widget that decided by cells would render the
+    // stripped-down layout on a launcher with room for everything. Glance picks the largest
+    // declared size that fits, which means a 2x1 here still gets the full layout and only a
+    // genuinely tiny cell falls back.
+    override val sizeMode = SizeMode.Responsive(setOf(TODAY_COMPACT, TODAY_FULL))
+
     override suspend fun provideGlance(context: Context, id: GlanceId) {
         val s = WidgetStore.read(context)
         provideContent { GlanceTheme { ActivityContent(s) } }
@@ -235,18 +256,24 @@ class ActivityWidget : GlanceAppWidget() {
 }
 
 @Composable
-private fun ActivityContent(s: WidgetSnapshot) = Shell {
-    Label("TODAY")
-    Big(s.steps?.let { "%,d".format(it) } ?: "—", if (s.steps != null) "steps" else "", ACCENT)
-    Spacer(GlanceModifier.height(6.dp))
-    if (s.steps == null) {
-        Sub(empty())
-    } else {
-        // One fact per line, not a single " · "-joined row. At two cells wide that row no
-        // longer fits and RemoteViews would silently clip it; the square shape trades the
-        // width for the vertical space to stack instead.
-        s.peakHr?.let { Sub("peak $it bpm") }
-        s.batteryPct?.let { Sub("ring $it%") }
+private fun ActivityContent(s: WidgetSnapshot) {
+    val compact = LocalSize.current.height < TODAY_FULL.height
+    val steps = s.steps?.let { "%,d".format(it) } ?: "—"
+    Shell(padding = if (compact) 8.dp else 12.dp) {
+        // In compact the figure has to carry the widget on its own, so the label goes —
+        // "steps" next to the number already says what it is.
+        if (!compact) Label("TODAY")
+        Big(steps, if (s.steps != null) "steps" else "", ACCENT, if (compact) 20.sp else 26.sp)
+        if (s.steps == null) {
+            if (!compact) Sub(empty())
+        } else if (!compact) {
+            // One fact per line, not a single " · "-joined row. At two cells wide that row
+            // no longer fits and RemoteViews would silently clip it; the taller shape trades
+            // the width for the vertical space to stack instead.
+            Spacer(GlanceModifier.height(6.dp))
+            s.peakHr?.let { Sub("peak $it bpm") }
+            s.batteryPct?.let { Sub("ring $it%") }
+        }
     }
 }
 
