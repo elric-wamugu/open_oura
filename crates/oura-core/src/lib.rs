@@ -218,6 +218,16 @@ impl RingSession {
             .unwrap()
             .upsert_device(&serial, None, info.as_ref())
             .map_err(|e| fail(e.to_string()))?;
+
+        // Capture the live battery, exactly as `oura sync` does. `build_summary` picks
+        // whichever of this reading and the ring's own battery log is newer, and the log
+        // only records *changes* — so without this a client that syncs only over FFI shows
+        // a battery figure that silently ages, while the sync itself succeeds. Best-effort:
+        // a ring that declines the read should not fail an otherwise good sync.
+        if let Ok(b) = client.battery().await {
+            let _ = store.lock().unwrap().insert_battery(&serial, &b);
+        }
+
         let cursor = store
             .lock()
             .unwrap()
