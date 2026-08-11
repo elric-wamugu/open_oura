@@ -359,6 +359,15 @@ class BleTransport private constructor(
                 withTimeoutOrNull(CONNECT_TIMEOUT_MS) { callback.connected.await() }
                     ?: throw BleException("timed out connecting to the ring (GATT never opened)")
 
+                // Deliberately NOT calling requestConnectionPriority(CONNECTION_PRIORITY_HIGH)
+                // here. It is the obvious reach for a bulk transfer — shortest connection
+                // interval, ~11 ms against a ~50 ms default — but it was measured on this
+                // ring and does nothing: two 64k-event drains from an identical database,
+                // 1,237 vs 1,256 events/sec, +1.5% and inside the noise. The drain is bound
+                // by per-batch request/response latency, not by the interval, and the stack
+                // already sends several packets per connection event. Not worth the extra
+                // radio duty cycle. Re-measure before adding it, don't assume.
+
                 // MTU before discovery: the negotiated size applies to everything that
                 // follows, and asking afterwards can invalidate a freshly-built cache.
                 onStage("negotiating MTU")
