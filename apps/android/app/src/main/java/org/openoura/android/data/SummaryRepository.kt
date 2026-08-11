@@ -30,7 +30,26 @@ sealed interface SummaryState {
  * start, and a refresh recomputes in the background. Widgets (Phase 3) read a much
  * smaller projection and must never call the core at all.
  */
-class SummaryRepository(private val ctx: Context) {
+class SummaryRepository private constructor(private val ctx: Context) {
+
+    companion object {
+        @Volatile
+        private var instance: SummaryRepository? = null
+
+        /**
+         * The one repository for the process.
+         *
+         * This has to be a singleton, not a per-caller object: the sync service and the
+         * Activity both recompute, and with separate instances the service would refresh
+         * the cache file while the Activity went on rendering its own stale `StateFlow` —
+         * a screen showing pre-sync numbers on top of a database that had already moved.
+         * Two instances would also race writing `summary.json`.
+         */
+        fun get(ctx: Context): SummaryRepository =
+            instance ?: synchronized(this) {
+                instance ?: SummaryRepository(ctx.applicationContext).also { instance = it }
+            }
+    }
 
     private val json = Json {
         ignoreUnknownKeys = true   // the Rust core may add fields; never break on them

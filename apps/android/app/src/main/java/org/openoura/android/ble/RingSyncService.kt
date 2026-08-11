@@ -81,7 +81,7 @@ class RingSyncService : Service() {
                 // Only now is the database newer than the cached summary. recompute()
                 // rewrites the widget projection and repaints the widgets itself.
                 notify("Rebuilding the summary…")
-                runCatching { SummaryRepository(applicationContext).recompute() }
+                runCatching { SummaryRepository.get(applicationContext).recompute() }
                     .onFailure { Log.e(TAG, "post-sync recompute failed", it) }
             }
 

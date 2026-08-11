@@ -47,7 +47,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-        repo = SummaryRepository(applicationContext)
+        repo = SummaryRepository.get(applicationContext)
         profiles = ProfileStore(applicationContext)
         ringKeys = RingKeyStore(applicationContext)
         // Panel fold state, persisted the way the web keeps it in localStorage: collapsed
