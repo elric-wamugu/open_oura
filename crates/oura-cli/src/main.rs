@@ -1002,8 +1002,14 @@ async fn cmd_sync(cli: &Cli, key: &Option<[u8; 16]>, sync_time: bool) -> Result<
                     Ok(()) => cursor_advanced.set(true),
                     Err(e) => *db_err.borrow_mut() = Some(e),
                 }
+                // The dashboard scrapes this line (`dashboard::parse_progress`) to drive
+                // its progress bar, so the shape is load-bearing — keep the percentage,
+                // the event count and the KB figure where they are.
                 println!(
-                    "  … {} events so far, ~{:.1} KB left on ring",
+                    "  … {}{} events so far, ~{:.1} KB left on ring",
+                    p.progress
+                        .map(|f| format!("{:.0}% · ", f * 100.0))
+                        .unwrap_or_default(),
                     p.events_synced,
                     p.bytes_left as f64 / 1024.0
                 );
