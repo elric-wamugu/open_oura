@@ -2,6 +2,29 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:tools="http://schemas.android.com/tools">
 
+    <!--
+        BLE, API 31+. neverForLocation is an assertion that we do not derive location from
+        scan results; without it Android forces the scan to also hold ACCESS_FINE_LOCATION.
+    -->
+    <uses-permission
+        android:name="android.permission.BLUETOOTH_SCAN"
+        android:usesPermissionFlags="neverForLocation"
+        tools:targetApi="s" />
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+
+    <!--
+        The pre-31 equivalents. minSdk is 26, so these still matter: before Android 12 a BLE
+        scan was treated as a location capability and genuinely required FINE_LOCATION.
+    -->
+    <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30" />
+    <uses-permission
+        android:name="android.permission.ACCESS_FINE_LOCATION"
+        android:maxSdkVersion="30" />
+
+    <!-- No BLE, no ring: this app has nothing to offer a device without it. -->
+    <uses-feature android:name="android.hardware.bluetooth_le" android:required="true" />
+
     <application
         android:allowBackup="true"
         android:dataExtractionRules="@xml/data_extraction_rules"

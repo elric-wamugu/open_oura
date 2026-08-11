@@ -49,6 +49,9 @@ fun RingKeyScreen(
     onSave: (String) -> Boolean,
     onImportFile: () -> Unit,
     onRemove: () -> Unit,
+    probing: Boolean,
+    probeStatus: String?,
+    onTestConnection: () -> Unit,
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -167,9 +170,24 @@ fun RingKeyScreen(
             }
         }
 
+        // Diagnostic, not the sync path. It proves the Bluetooth link end to end — scan,
+        // connect, MTU, the CCCD write, a request out and a notification back — which is
+        // otherwise invisible: a link that subscribes but delivers nothing looks exactly
+        // like a working one until a sync mysteriously produces no events.
+        OutlinedButton(
+            onClick = onTestConnection,
+            enabled = !probing,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Text(if (probing) "Testing…" else "Test ring connection")
+        }
+        if (probeStatus != null) {
+            Text(probeStatus, color = c.muted, fontSize = 12.sp, fontFamily = FontFamily.Monospace)
+        }
+
         Text(
-            "Storing the key does not sync anything yet — the Bluetooth transport is still " +
-                "to come. Until then the database is imported from the desktop client.",
+            "The connection test needs no key — it only asks the ring for its firmware. " +
+                "Syncing history does need one, and is still to come.",
             color = c.faint,
             fontSize = 11.sp,
         )

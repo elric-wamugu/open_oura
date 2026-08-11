@@ -21,6 +21,8 @@ import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import org.openoura.android.ble.BlePermissions
+import org.openoura.android.ble.probeRing
 import org.openoura.android.data.ProfileStore
 import org.openoura.android.data.RingKeyStore
 import org.openoura.android.data.SummaryRepository
@@ -103,6 +105,29 @@ class MainActivity : ComponentActivity() {
                 var browsing by remember { mutableStateOf(false) }
                 var editingProfile by remember { mutableStateOf(false) }
                 var editingRingKey by remember { mutableStateOf(false) }
+
+                // BLE connection test. Bluetooth permissions are requested on demand rather
+                // than at launch: the app is fully usable on an imported database without
+                // ever touching the radio, so asking up front would be asking for nothing.
+                var probing by remember { mutableStateOf(false) }
+                var probeStatus by remember { mutableStateOf<String?>(null) }
+                fun runProbe() {
+                    scope.launch {
+                        probing = true
+                        probeStatus = "Scanning…"
+                        probeStatus = probeRing(applicationContext).summary()
+                        probing = false
+                    }
+                }
+                val askBlePermissions = rememberLauncherForActivityResult(
+                    ActivityResultContracts.RequestMultiplePermissions(),
+                ) { granted ->
+                    if (granted.values.all { it }) {
+                        runProbe()
+                    } else {
+                        probeStatus = "Bluetooth permission denied — can't reach the ring."
+                    }
+                }
                 var batteryOpen by remember { mutableStateOf(prefs.getBoolean("fold_battery", false)) }
 
                 Scaffold(modifier = Modifier.fillMaxSize()) { inner ->
@@ -129,6 +154,15 @@ class MainActivity : ComponentActivity() {
                             onRemove = {
                                 ringKeys.clear()
                                 ringKeyFp = null
+                            },
+                            probing = probing,
+                            probeStatus = probeStatus,
+                            onTestConnection = {
+                                if (BlePermissions.granted(applicationContext)) {
+                                    runProbe()
+                                } else {
+                                    askBlePermissions.launch(BlePermissions.required())
+                                }
                             },
                             // Back returns to Profile, which is where this was reached from.
                             onBack = { editingRingKey = false },
