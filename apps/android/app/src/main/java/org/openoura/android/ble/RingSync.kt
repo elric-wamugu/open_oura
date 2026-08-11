@@ -6,6 +6,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import org.openoura.android.data.RingKeyStore
 import uniffi.oura_core.BleWriter
 import uniffi.oura_core.RingSession
@@ -14,6 +15,9 @@ import java.io.File
 import kotlin.math.roundToInt
 
 private const val TAG = "OpenOuraBle"
+
+/** How long to let queued writes flush after a sync returns, before cancelling the pump. */
+private const val WRITE_DRAIN_GRACE_MS = 2_000L
 
 /** Where a sync currently is. Mirrors the `stage` tags the Rust core emits. */
 sealed interface SyncPhase {
@@ -143,8 +147,13 @@ suspend fun runRingSync(
                 )
             } finally {
                 reader.cancel()
-                pump.cancel()
+                // Close first, then let the pump drain what is queued, and only cancel as a
+                // backstop. The drain writes one last ack on its way out and does not await
+                // it, so cancelling the pump straight away raced that write and dropped it
+                // — visibly, as "write of 11B failed: StandaloneCoroutine was cancelled".
                 outbound.close()
+                withTimeoutOrNull(WRITE_DRAIN_GRACE_MS) { pump.join() }
+                pump.cancel()
                 session.close()
             }
         }
