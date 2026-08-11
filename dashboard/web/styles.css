@@ -886,3 +886,23 @@ body.page-open { overflow: hidden; }
 
 /* Toasts — rounded, elevated */
 .toast { border-radius: var(--radius-sm); background: var(--surface); box-shadow: var(--elev-3); -webkit-backdrop-filter: none; backdrop-filter: none; }
+
+/* ── battery ────────────────────────────────────────────── */
+.battery-body { min-height: 120px; }
+.batt-wrap { margin-top: 14px; }
+.batt-svg { display: block; width: 100%; height: 90px; overflow: visible; }
+.batt-legend { display: flex; gap: 16px; margin-top: 6px; font-size: 11px; color: var(--faint); }
+.batt-legend span { display: inline-flex; align-items: center; gap: 6px; }
+.batt-cycles { display: flex; flex-direction: column; gap: 2px; }
+.batt-cycle {
+  display: grid; grid-template-columns: 4.5rem 5.5rem 3.5rem 4rem 1fr;
+  gap: 10px; padding: 7px 0; border-top: 1px solid var(--line-soft);
+  font-family: var(--mono); font-variant-numeric: tabular-nums; font-size: 12px;
+}
+.batt-cycle .bc-when { color: var(--muted); }
+.batt-cycle .bc-full { color: var(--faint); text-align: right; }
+@media (max-width: 560px) {
+  .batt-cycle { grid-template-columns: 1fr 1fr; }
+  .batt-cycle .bc-full { text-align: left; }
+}
+.batt-note { margin: 12px 0 0; font-size: 11px; line-height: 1.55; color: var(--faint); }
