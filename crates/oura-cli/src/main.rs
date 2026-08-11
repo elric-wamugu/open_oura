@@ -66,6 +66,21 @@ enum Command {
         #[arg(long)]
         sync_time: bool,
     },
+    /// Probe what history the ring will still serve from a given cursor, WITHOUT
+    /// acknowledging it and without writing to the database.
+    ///
+    /// Read-only diagnostic. `sync` acks each batch it drains, so the open
+    /// question for running two clients against one ring is whether the ring
+    /// keeps serving events it has already handed over. Point this at a cursor
+    /// your database is already past and see what comes back.
+    Peek {
+        /// History cursor to ask from, in deciseconds. 0 = the very beginning.
+        #[arg(long, default_value_t = 0)]
+        from: u32,
+        /// How many events to ask for (kept small — this is a probe, not a sync).
+        #[arg(long, default_value_t = 10)]
+        max: u16,
+    },
     /// Read the ring's latest cached HR / SpO2 values.
     Latest,
     /// Stream live heart rate for a number of seconds (ring must be worn).
@@ -347,6 +362,7 @@ async fn main() -> Result<()> {
         Command::Pair => cmd_pair(&cli).await,
         Command::Info => cmd_info(&cli, &key).await,
         Command::Sync { sync_time } => cmd_sync(&cli, &key, *sync_time).await,
+        Command::Peek { from, max } => cmd_peek(&cli, &key, *from, *max).await,
         Command::Latest => cmd_latest(&cli, &key).await,
         Command::LiveHr { seconds, raw } => cmd_live_hr(&cli, &key, *seconds, *raw).await,
         Command::Accel { seconds } => cmd_accel(&cli, &key, *seconds).await,
@@ -811,6 +827,112 @@ async fn cmd_info(cli: &Cli, key: &Option<[u8; 16]>) -> Result<()> {
         }
     } else {
         println!("Battery  : <pass --key-file to read (auth required)>");
+    }
+
+    let _ = client.transport().disconnect().await;
+    Ok(())
+}
+
+/// Read-only history probe — see [`Command::Peek`]. Authenticates and registers
+/// the stream exactly as `sync` does, asks for one small batch, and stops: no
+/// ack is sent and no database is written, so the ring's state is unchanged.
+async fn cmd_peek(cli: &Cli, key: &Option<[u8; 16]>, from: u32, max: u16) -> Result<()> {
+    let key = key
+        .as_ref()
+        .ok_or_else(|| anyhow!("peek requires --key-file (history events are auth-gated)"))?;
+
+    let client = connect(cli).await?;
+    client.authenticate(key).await.context("authenticating")?;
+    client
+        .setup_app_stream()
+        .await
+        .context("running app-style stream setup")?;
+
+    let serial = client.serial().await.unwrap_or_else(|_| "unknown".into());
+
+    // Report the local cursor alongside the probe so the output interprets itself:
+    // anything returned below it is history a real sync has already acked.
+    let stored = Store::open(&cli.db).ok().and_then(|s| s.cursor(&serial).ok());
+    match stored {
+        Some(c) => println!("Local cursor for {serial}: {c}"),
+        None => println!(
+            "Local cursor for {serial}: <no database at {}>",
+            cli.db.display()
+        ),
+    }
+    println!("Probing from cursor {from} for up to {max} event(s) — no ack, no writes ...");
+
+    let out = client
+        .peek_events(from, max)
+        .await
+        .context("probing history")?;
+
+    println!(
+        "\nPath      : {}",
+        if out.extended {
+            "extended (ExtGetEvent)"
+        } else {
+            "legacy (GetEvent)"
+        }
+    );
+    println!("Events    : {}", out.events.len());
+    match out.bytes_left {
+        Some(b) => println!("Bytes left: {b}"),
+        None => println!("Bytes left: <no summary packet from the ring>"),
+    }
+    if let (Some(first), Some(last)) = (out.events.first(), out.events.last()) {
+        println!("Timestamps: {} .. {}", first.timestamp, last.timestamp);
+    }
+    for ev in out.events.iter().take(20) {
+        println!("  ts={:<12} tag=0x{:02x} {}", ev.timestamp, ev.tag, ev.name);
+    }
+
+    // Two independent facts come out of one probe, and conflating them is how you
+    // get a wrong answer: whether an ack deletes, and where the ring's retention
+    // floor sits. A probe from 0 that returns events at ts 20_000_000 says "acks
+    // are harmless" AND "everything below 20_000_000 is already gone".
+    println!("\nVerdict:");
+    let oldest = out.events.first().map(|e| e.timestamp);
+
+    match (oldest, stored) {
+        (None, Some(c)) if from < c => {
+            println!("  Ack       : nothing served from {from}, which is behind the local cursor");
+            println!("              {c} — consistent with the ack discarding history.");
+        }
+        (None, _) => println!("  Ack       : nothing served from {from} — inconclusive."),
+        (Some(_), Some(c)) if out.events.iter().any(|e| e.timestamp < c) => {
+            println!("  Ack       : the ring re-served events below the local cursor {c}, so");
+            println!("              acknowledging a batch does NOT delete it. Two clients with");
+            println!("              independent cursors do not starve each other.");
+        }
+        (Some(_), _) => {
+            println!("  Ack       : events came back, but none below the local cursor —");
+            println!("              inconclusive. Re-run with --from well below it.");
+        }
+    }
+
+    // The ring silently clamps a too-old cursor to the oldest record it still
+    // holds, so the gap between what we asked for and what we got IS the floor.
+    if let Some(o) = oldest {
+        if o.saturating_sub(from) > 1_000 {
+            println!("  Retention : asked from {from} but the oldest record served was {o} —");
+            println!("              everything below {o} has been evicted.");
+            if let Some(c) = stored {
+                let span = c.saturating_sub(o);
+                println!(
+                    "              Retained window ≈ {span} ds (~{:.1} d at a nominal 10 ds/s){}.",
+                    span as f64 / 864_000.0,
+                    out.bytes_left
+                        .map(|b| format!(", {b} bytes"))
+                        .unwrap_or_default()
+                );
+                println!("              Any client that goes longer than that without syncing");
+                println!("              loses the gap permanently — including this one.");
+            }
+        } else {
+            println!("  Retention : served from {o}, at the cursor asked for — no floor found");
+            println!("              above {from}.");
+        }
     }
 
     let _ = client.transport().disconnect().await;

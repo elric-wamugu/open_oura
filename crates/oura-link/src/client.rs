@@ -79,6 +79,18 @@ pub struct SyncOutcome {
     pub next_cursor: u32,
 }
 
+/// Outcome of a read-only history probe ([`OuraClient::peek_events`]).
+#[derive(Clone, Debug)]
+pub struct PeekOutcome {
+    /// Events the ring was willing to serve from the probed cursor.
+    pub events: Vec<RingEvent>,
+    /// The ring's own count of event bytes still waiting beyond this batch.
+    /// `None` when the ring sent no summary packet at all.
+    pub bytes_left: Option<u32>,
+    /// Whether the extended (`ExtGetEvent`) path answered, or it fell back to legacy.
+    pub extended: bool,
+}
+
 /// Progress after each fully-processed event batch: the checkpointed cursor,
 /// the ring's own count of bytes still waiting, and events synced so far.
 #[derive(Clone, Copy, Debug)]
@@ -554,6 +566,79 @@ impl<T: Transport> OuraClient<T> {
         Ok(SyncOutcome {
             events_synced: total,
             next_cursor: start,
+        })
+    }
+
+    /// Ask the ring what history it will serve from `cursor` — one batch, capped
+    /// at `max_events` — **without acknowledging it and without looping**.
+    ///
+    /// This is the read-only counterpart to [`Self::drain_events`]: no
+    /// `GetEvent(max_events = 0)` ack is sent, so the ring's own notion of what
+    /// the client has consumed is left exactly as it was. That makes it safe to
+    /// point at a cursor a real sync has already passed, which is the only way to
+    /// answer "does the ring still hold events it has already handed over?" —
+    /// e.g. before letting a second client sync the same ring.
+    pub async fn peek_events(&self, cursor: u32, max_events: u16) -> Result<PeekOutcome> {
+        let batch_terminal = |p: &Packet| {
+            p.tag == 0x11
+                || (p.tag == 0x2f && matches!(p.payload.first(), Some(0x42) | Some(0x00)))
+        };
+
+        let mut packets = self
+            .request_tag(&protocol::req_data_flush(), 0x29)
+            .await?;
+
+        // Prefer the extended path, exactly as the drain does, so the probe
+        // exercises the same code the real sync would.
+        let mut extended = true;
+        let ext = self
+            .request_batch(
+                &protocol::req_ext_get_event((cursor as u64) * 100, max_events, 0),
+                batch_terminal,
+            )
+            .await?;
+        let unsupported = ext
+            .iter()
+            .any(|p| p.tag == 0x2f && p.payload.first().copied() == Some(0x00));
+        if unsupported {
+            extended = false;
+            packets.extend(
+                self.request_batch(
+                    &protocol::req_get_event(cursor, max_events.min(255) as u8, -1),
+                    batch_terminal,
+                )
+                .await?,
+            );
+        } else {
+            packets.extend(ext);
+        }
+
+        let mut summary: Option<u32> = None;
+        let mut events = Vec::new();
+        let mut ext_envelopes = ExtEventEnvelopeParser::default();
+        for p in &packets {
+            if p.tag == 0x11 {
+                summary = EventBatchSummary::parse(p).map(|s| s.bytes_left);
+            } else if p.tag == 0x2f && p.payload.first().copied() == Some(0x42) {
+                summary = ExtEventBatchSummary::parse(p).map(|s| s.bytes_left);
+            } else if p.tag == 0x2f && p.payload.first().copied() == Some(0x43) {
+                for ep in ext_envelopes.push_packet(p) {
+                    if ep.tag >= protocol::HISTORY_EVENT_PREFIX {
+                        events.push(RingEvent::from_packet(&ep));
+                    }
+                }
+            } else if p.tag >= protocol::HISTORY_EVENT_PREFIX {
+                events.push(RingEvent::from_packet(p));
+            }
+        }
+
+        // Unlike the drain, a missing summary is not fatal here: "the ring said
+        // nothing" is itself a meaningful probe result, so report it as unknown
+        // rather than erroring out and losing the events we did see.
+        Ok(PeekOutcome {
+            events,
+            bytes_left: summary,
+            extended,
         })
     }
 
