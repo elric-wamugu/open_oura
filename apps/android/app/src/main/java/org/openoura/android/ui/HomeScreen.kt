@@ -42,6 +42,8 @@ fun HomeScreen(
     onOpenDay: (String, Boolean) -> Unit,
     onBrowseDays: () -> Unit,
     onProfile: () -> Unit,
+    batteryExpanded: Boolean,
+    onToggleBattery: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val c = Oura.colors
@@ -106,6 +108,11 @@ fun HomeScreen(
                     )
                 }
                 VitalsGrid(state.summary)
+                BatteryPanel(
+                    battery = state.summary.battery,
+                    expanded = batteryExpanded,
+                    onToggle = onToggleBattery,
+                )
                 if (state.stale) {
                     Text("Showing the cached snapshot.", color = c.faint, fontSize = 11.sp)
                 }

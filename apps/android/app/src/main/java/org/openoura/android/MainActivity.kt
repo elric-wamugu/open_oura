@@ -1,5 +1,6 @@
 package org.openoura.android
 
+import android.content.Context
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -37,6 +38,9 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         repo = SummaryRepository(applicationContext)
         profiles = ProfileStore(applicationContext)
+        // Panel fold state, persisted the way the web keeps it in localStorage: collapsed
+        // on a first run, but a choice to open it should survive restarting the app.
+        val prefs = getSharedPreferences("ui", Context.MODE_PRIVATE)
 
         // Render the cached snapshot immediately; only compute when there is nothing
         // cached. A full recompute is an explicit user action (and, from Phase 4, a
@@ -67,6 +71,7 @@ class MainActivity : ComponentActivity() {
                 var openDay by remember { mutableStateOf<Pair<String, Boolean>?>(null) }
                 var browsing by remember { mutableStateOf(false) }
                 var editingProfile by remember { mutableStateOf(false) }
+                var batteryOpen by remember { mutableStateOf(prefs.getBoolean("fold_battery", false)) }
 
                 Scaffold(modifier = Modifier.fillMaxSize()) { inner ->
                     val ready = state as? SummaryState.Ready
@@ -113,6 +118,11 @@ class MainActivity : ComponentActivity() {
                             onOpenDay = { day, sleep -> openDay = day to sleep },
                             onBrowseDays = { browsing = true },
                             onProfile = { editingProfile = true },
+                            batteryExpanded = batteryOpen,
+                            onToggleBattery = {
+                                batteryOpen = !batteryOpen
+                                prefs.edit().putBoolean("fold_battery", batteryOpen).apply()
+                            },
                             modifier = Modifier.padding(inner),
                         )
                     }

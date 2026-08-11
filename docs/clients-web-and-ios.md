@@ -54,7 +54,7 @@ metric there once and both clients receive it in the JSON.
 | Steps / active calories / **distance** | activity report stats | activity day stats | `activity_daily` (incl. `distance_m`) | — |
 | Previous days browser | `openDaysBrowser` → `openDayPage` | `AllDaysView` → `DayDetailView` | day keys | — |
 | Device & data health | `renderDevice` | device section | `device`, `streams` | — |
-| **Battery log + discharge runs** | `renderBattery`, `batteryChart` | *not yet ported* | `battery.{series,cycles}` | — |
+| **Battery log + discharge runs** | `renderBattery`, `batteryChart` | `BatteryPanel`, `drawBatteryChart` | `battery.{series,cycles}` | — |
 | Excluded-period note | `renderDevice` (`.dh-note`) | device section stat | `device.short_periods_excluded` | — |
 
 ## The day is one unit — pair night + activity by *wake date*

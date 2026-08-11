@@ -133,6 +133,34 @@ data class Device(
     @SerialName("synced_hm") val syncedHm: String? = null,
 )
 
+/** One point from the ring's own `battery_level_changed` log. */
+@Serializable
+data class BatteryPoint(val t: Double, val pct: Int, val mv: Int)
+
+/**
+ * One discharge run, peak to trough. `projectedFullH` — what a 100 → 0 run would take at
+ * this run's rate — is the figure to compare across runs, since runs start from different
+ * levels.
+ */
+@Serializable
+data class BatteryCycle(
+    val start: Double,
+    val end: Double,
+    @SerialName("from_pct") val fromPct: Int,
+    @SerialName("to_pct") val toPct: Int,
+    @SerialName("from_mv") val fromMv: Int = 0,
+    @SerialName("to_mv") val toMv: Int = 0,
+    val hours: Double,
+    @SerialName("pct_per_hour") val pctPerHour: Double,
+    @SerialName("projected_full_h") val projectedFullH: Double,
+)
+
+@Serializable
+data class Battery(
+    val series: List<BatteryPoint> = emptyList(),
+    val cycles: List<BatteryCycle> = emptyList(),
+)
+
 @Serializable
 data class Summary(
     val digest: String? = null,
@@ -144,6 +172,7 @@ data class Summary(
     /** date → 96 × 15-min steps, same buckets */
     @SerialName("activity_steps") val activitySteps: Map<String, List<Double>> = emptyMap(),
     @SerialName("activity_daily") val activityDaily: Map<String, DailyStat> = emptyMap(),
+    val battery: Battery = Battery(),
     val profile: Profile? = null,
     val cardio: Cardio? = null,
     val fitness: Fitness? = null,
