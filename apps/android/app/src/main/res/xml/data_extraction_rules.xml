@@ -1,19 +1,25 @@
-<?xml version="1.0" encoding="utf-8"?><!--
-   Sample data extraction rules file; uncomment and customize as necessary.
-   See https://developer.android.com/about/versions/12/backup-restore#xml-changes
-   for details.
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    Backup/transfer policy (API 31+). See backup_rules.xml for API 26–30.
 -->
 <data-extraction-rules>
     <cloud-backup>
-        <!-- TODO: Use <include> and <exclude> to control what is backed up.
-        <include .../>
-        <exclude .../>
+        <!--
+            The ring key. Its ciphertext is bound to THIS device's Keystore, so a restored
+            copy cannot be decrypted — it would only make the app look configured when it
+            is not. The key is re-imported from the desktop client instead.
         -->
+        <exclude domain="sharedpref" path="ring_key.xml" />
+        <!--
+            filesDir holds oura.db, the summary cache and profile.json — the user's whole
+            health record. This client exists to keep that off other people's servers, so
+            it does not get silently uploaded to cloud backup either.
+        -->
+        <exclude domain="file" path="." />
     </cloud-backup>
-    <!--
     <device-transfer>
-        <include .../>
-        <exclude .../>
+        <!-- Keystore-bound, as above: re-import the key on the new phone. -->
+        <exclude domain="sharedpref" path="ring_key.xml" />
+        <!-- The database itself is fine to carry directly phone-to-phone. -->
     </device-transfer>
-    -->
 </data-extraction-rules>

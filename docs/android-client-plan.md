@@ -310,11 +310,24 @@ Ring GATT identifiers (from `BLETransport.swift`):
    - Do every GATT operation one at a time — Android's stack silently drops concurrent ops.
 3. **[agent]** `SyncService`: a foreground service (type `connectedDevice`) so Doze does not
    kill a sync in progress; surface `SyncProgressListener` as a notification.
-4. **[agent]** Key storage: `EncryptedSharedPreferences` backed by the Android Keystore —
-   the counterpart to iOS's Keychain. **Never** a `key.hex` file, never in the repo.
+4. **[agent] — DONE.** Key storage: `RingKeyStore` + `RingKeyScreen`, reached from the
+   profile screen. **Deviation:** not `EncryptedSharedPreferences` — `androidx.security:
+   security-crypto` deprecated that API and pulls in Tink for one 32-character string.
+   Instead an AES/GCM key generated *inside* the Keystore (non-exportable) encrypts the key
+   and only the ciphertext reaches SharedPreferences. Verified on device: the displayed
+   fingerprint matched an independently computed SHA-256 prefix, `shared_prefs/ring_key.xml`
+   holds ciphertext only, and the key survived a process restart.
+   Both backup configs now exclude it — a restored blob is undecryptable on another device
+   and would make the app look configured when it is not. They also exclude `filesDir`, so
+   Auto Backup stops shipping `oura.db` to Google's cloud, which a cloud-free client should
+   never have been doing.
 5. **[you]** Pair on the desktop client first and transfer the existing key; do not
    re-pair the ring from Android in Phase 4 (pairing rewrites the ring's auth key and can
    lock out the desktop client).
+   **Measured 2026-08-11 (`oura peek`):** acking does not delete, so desktop and phone can
+   both sync the same ring with independent cursors. But retention is a rolling ~8.5–9 day
+   window (~8 MB), so **67% of the existing history lives only in the desktop `oura.db`** —
+   the phone must be seeded by importing that database, and can never rebuild it from the ring.
 6. **[you]** Run a real sync, wearing the ring, and confirm the event count matches.
 7. **[agent]** On sync success: refresh the snapshot, then update widgets.
 

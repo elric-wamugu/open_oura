@@ -18,26 +18,32 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.openoura.android.data.ProfileStore
+import org.openoura.android.data.RingKeyStore
 import org.openoura.android.data.SummaryRepository
 import org.openoura.android.data.SummaryState
 import org.openoura.android.ui.DayReportScreen
 import org.openoura.android.ui.DaysBrowser
 import org.openoura.android.ui.HomeScreen
 import org.openoura.android.ui.ProfileScreen
+import org.openoura.android.ui.RingKeyScreen
 import org.openoura.android.ui.theme.OpenOuraTheme
 
 class MainActivity : ComponentActivity() {
 
     private lateinit var repo: SummaryRepository
     private lateinit var profiles: ProfileStore
+    private lateinit var ringKeys: RingKeyStore
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         repo = SummaryRepository(applicationContext)
         profiles = ProfileStore(applicationContext)
+        ringKeys = RingKeyStore(applicationContext)
         // Panel fold state, persisted the way the web keeps it in localStorage: collapsed
         // on a first run, but a choice to open it should survive restarting the app.
         val prefs = getSharedPreferences("ui", Context.MODE_PRIVATE)
@@ -68,10 +74,35 @@ class MainActivity : ComponentActivity() {
                     }
                 }
 
+                // The stored key is never held in UI state — only its fingerprint, refreshed
+                // explicitly after an import or removal so recomposition doesn't repeatedly
+                // hit the Keystore.
+                var ringKeyFp by remember { mutableStateOf(ringKeys.fingerprint()) }
+
+                // A .key file is plain hex text, but has no registered MIME type — same
+                // reason the database picker uses "*/*".
+                val pickRingKey = rememberLauncherForActivityResult(
+                    ActivityResultContracts.OpenDocument(),
+                ) { uri ->
+                    if (uri == null) return@rememberLauncherForActivityResult
+                    scope.launch {
+                        val text = withContext(Dispatchers.IO) {
+                            runCatching {
+                                contentResolver.openInputStream(uri)?.use {
+                                    it.readBytes().toString(Charsets.US_ASCII)
+                                }
+                            }.getOrNull()
+                        }
+                        if (text != null) ringKeys.save(text)
+                        ringKeyFp = ringKeys.fingerprint()
+                    }
+                }
+
                 // Which day report is open, and whether on the sleep or activity tab.
                 var openDay by remember { mutableStateOf<Pair<String, Boolean>?>(null) }
                 var browsing by remember { mutableStateOf(false) }
                 var editingProfile by remember { mutableStateOf(false) }
+                var editingRingKey by remember { mutableStateOf(false) }
                 var batteryOpen by remember { mutableStateOf(prefs.getBoolean("fold_battery", false)) }
 
                 Scaffold(modifier = Modifier.fillMaxSize()) { inner ->
@@ -86,14 +117,33 @@ class MainActivity : ComponentActivity() {
                             onBack = { openDay = null },
                             modifier = Modifier.padding(inner),
                         )
+                    } else if (editingRingKey) {
+                        RingKeyScreen(
+                            fingerprint = ringKeyFp,
+                            onSave = { text ->
+                                val ok = ringKeys.save(text)
+                                ringKeyFp = ringKeys.fingerprint()
+                                ok
+                            },
+                            onImportFile = { pickRingKey.launch(arrayOf("*/*")) },
+                            onRemove = {
+                                ringKeys.clear()
+                                ringKeyFp = null
+                            },
+                            // Back returns to Profile, which is where this was reached from.
+                            onBack = { editingRingKey = false },
+                            modifier = Modifier.padding(inner),
+                        )
                     } else if (editingProfile) {
                         ProfileScreen(
                             initial = profiles.read(),
+                            ringKeyFingerprint = ringKeyFp,
                             onSave = { p ->
                                 profiles.write(p)
                                 editingProfile = false
                                 scope.launch { busy = true; repo.recompute(); busy = false }
                             },
+                            onRingKey = { editingRingKey = true },
                             onBack = { editingProfile = false },
                             modifier = Modifier.padding(inner),
                         )

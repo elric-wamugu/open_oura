@@ -40,7 +40,9 @@ import org.openoura.android.ui.theme.Oura
 @Composable
 fun ProfileScreen(
     initial: RingProfile,
+    ringKeyFingerprint: String?,
     onSave: (RingProfile) -> Unit,
+    onRingKey: () -> Unit,
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -117,6 +119,32 @@ fun ProfileScreen(
             },
             modifier = Modifier.fillMaxWidth(),
         ) { Text("Save and recompute") }
+
+        // Device setup lives here too rather than in the top bar, which is already carrying
+        // battery, sync and this screen's own button. When Phase 4 adds a real sync screen
+        // the ring key belongs next to it, and this row can point there instead.
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(10.dp))
+                .background(c.surface)
+                .border(1.dp, c.line, RoundedCornerShape(10.dp))
+                .clickable(onClick = onRingKey)
+                .padding(horizontal = 14.dp, vertical = 12.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text("Ring key", color = c.text, fontSize = 13.sp)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    ringKeyFingerprint?.let { "#$it" } ?: "not set",
+                    color = if (ringKeyFingerprint != null) c.accent else c.muted,
+                    fontSize = 12.sp,
+                    fontFamily = FontFamily.Monospace,
+                )
+                Text("›", color = c.muted, fontSize = 15.sp)
+            }
+        }
     }
 }
 
