@@ -227,9 +227,30 @@ When you close one of these gaps, update this section.
 every time the ring reboots (battery drain, firmware reset). Naively anchoring every ds
 to one global `max_ds`/`captured_unix` scatters older boots to wildly wrong dates (a boot
 can land months in the past). The fix segments events into boot **epochs** — walk in real
-sync order `(captured_unix, then ds)`, split on any large backward jump in ds, anchor each
-epoch's newest ds to that event's capture time — and maps ds→wall-clock per epoch. This
-lives in **three places that must stay in sync**:
+sync order `(captured_unix, then ds)`, split on any large backward jump in ds — and maps
+ds→wall-clock per epoch.
+
+**Within an epoch, do NOT anchor on the newest event.** That was the original model and it
+was wrong in a way that showed: a sync which stopped before draining the buffer left
+`max_ds` behind the ring's real counter while still being pinned to "now", sliding every
+earlier timestamp forward, and the next sync moved the anchor again. The same night could
+read `10:02–20:56` in one view and `23:57–09:47` in the next — a ten-hour swing over
+identical data. Measured on real history, sync-to-sync rates alternate between ~3 ds/sec
+and ~500 ds/sec (partial drain, then catch-up) while the counter's own long-run rate is
+**9.96 ds/sec** — it tracks wall clock and does not pause, contrary to what the earlier
+comment here claimed.
+
+The model is instead `unix(ds) = offset + ds/10` with the offset **fitted per epoch**
+(`fit_ds_offsets`). Each sync gives one observation — its newest event, ds `D` drained at
+host time `T` — and since that event was generated at or before `T`, it bounds the offset
+above at `T − D/10`, inflated by exactly how far behind that drain finished. The true
+offset only grows (the counter loses time, never gains it), so the tightest consistent fit
+is the running minimum of those bounds taken from the newest ds backwards. Partial drains
+are self-correcting, and an event's time depends only on syncs that had already observed
+its ds — so **today's sync cannot move last week's night**. That property is covered by
+unit tests in the same file; keep them passing.
+
+This lives in **three places that must stay in sync**:
 
 - `crates/oura-summary/src/lib.rs` — the shared brain (`unix_s`); fixes night/activity/
   movement **dates for both clients** at once.
@@ -238,6 +259,12 @@ lives in **three places that must stay in sync**:
 - `apps/ios/OuraApp/EventStore.swift` (`epochs` / `unixSeconds`) used by
   `ActivityModel.swift` and `SleepStaging.swift` — the **iOS** on-device model times.
   iOS must be rebuilt to pick this up.
+
+⚠ **The offset fit currently lives only in `oura-summary`.** `tools/epoch_time.py` and
+`EventStore.swift` still use the old newest-event anchor, so they will disagree with the
+brain whenever a sync finishes behind. Neither is exercised today — the Python helpers need
+the torch venv and models, and iOS is frozen at maintenance — but port the fit before either
+is used again for timing.
 
 Operational gap (not yet fixed): `oura sync` keys incremental pulls off the PC-side cursor
 (`sync_state.next_cursor`, deciseconds). After a reboot the ring's ds restarts low, so a
