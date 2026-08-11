@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Static mock shown in the widget picker. Not the live widget — the picker cannot run
+     Glance — so it just has to look like the real thing at a glance. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:background="@drawable/widget_bg"
+    android:padding="12dp">
+    <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+        android:text="RESTING HR" android:textColor="#6B7280" android:textSize="10sp"
+        android:textStyle="bold" />
+    <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+        android:text="54" android:textColor="#2DD4BF" android:textSize="26sp"
+        android:layout_marginTop="2dp" />
+    <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+        android:text="11 below baseline 65" android:textColor="#9AA0AA" android:textSize="11sp"
+        android:layout_marginTop="2dp" />
+</LinearLayout>

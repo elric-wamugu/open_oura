@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Placeholder shown between a widget being dropped on the home screen and Glance
+     producing its first RemoteViews. android:initialLayout is REQUIRED on every provider:
+     without it the launcher has nothing to draw and will not offer the widget in the
+     picker at all. Glance 1.1.1 does not ship one, so this is ours. -->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@drawable/widget_bg">
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center"
+        android:text="@string/app_name"
+        android:textColor="#6B7280"
+        android:textSize="11sp" />
+</FrameLayout>

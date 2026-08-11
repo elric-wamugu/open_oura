@@ -3,4 +3,7 @@
     <string name="widget_vitals_desc">Resting heart rate and HRV against your baseline</string>
     <string name="widget_sleep_desc">Last night: hours, efficiency and sleep stages</string>
     <string name="widget_activity_desc">Today: steps, active energy and peak heart rate</string>
+    <string name="widget_vitals_label">Vitals</string>
+    <string name="widget_sleep_label">Last night</string>
+    <string name="widget_activity_label">Today</string>
 </resources>

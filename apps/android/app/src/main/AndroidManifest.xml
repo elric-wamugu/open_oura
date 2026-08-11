@@ -26,7 +26,8 @@
 
         <receiver
             android:name=".widget.VitalsWidgetReceiver"
-            android:exported="false">
+            android:label="@string/widget_vitals_label"
+            android:exported="true">
             <intent-filter>
                 <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
             </intent-filter>
@@ -37,7 +38,8 @@
 
         <receiver
             android:name=".widget.SleepWidgetReceiver"
-            android:exported="false">
+            android:label="@string/widget_sleep_label"
+            android:exported="true">
             <intent-filter>
                 <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
             </intent-filter>
@@ -48,7 +50,8 @@
 
         <receiver
             android:name=".widget.ActivityWidgetReceiver"
-            android:exported="false">
+            android:label="@string/widget_activity_label"
+            android:exported="true">
             <intent-filter>
                 <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
             </intent-filter>

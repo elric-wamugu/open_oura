@@ -74,6 +74,9 @@ private fun Shell(content: @Composable () -> Unit) {
             .cornerRadius(16.dp)
             .padding(12.dp)
             .clickable(actionStartActivity<MainActivity>()),
+        // Centre the content: a widget occupies a whole cell whatever its content height,
+        // and top-aligned text leaves the lower half visibly empty.
+        verticalAlignment = Alignment.Vertical.CenterVertically,
         content = { content() },
     )
 }
