@@ -19,7 +19,10 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Text
+import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -33,6 +36,7 @@ import org.openoura.android.ui.theme.Oura
 /** Overnight SpO2 at or above this reads as normal — same constant as app.js. */
 private const val SPO2_HEALTHY = 95.0
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HomeScreen(
     state: SummaryState,
@@ -42,6 +46,10 @@ fun HomeScreen(
     onSyncFromRing: () -> Unit,
     /** One line of live sync state, or null when nothing is happening. */
     syncStatus: String? = null,
+    /** 0..1 through the drain; null means show an indeterminate bar. */
+    syncProgress: Float? = null,
+    /** Whether a sync is in flight, which drives the pull-to-refresh spinner. */
+    syncing: Boolean = false,
     onImportDatabase: () -> Unit,
     onOpenDay: (String, Boolean) -> Unit,
     onBrowseDays: () -> Unit,
@@ -52,90 +60,120 @@ fun HomeScreen(
 ) {
     val c = Oura.colors
     val ready = state as? SummaryState.Ready
-    Column(
-        modifier = modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(horizontal = 16.dp, vertical = 12.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp),
+    // Pull-to-refresh means the same thing as the top bar's Sync: pull history off the
+    // ring. Keeping both matters — the gesture is the reflex, the button is the one that
+    // is discoverable and still reachable when the list is already at the top.
+    PullToRefreshBox(
+        isRefreshing = syncing,
+        onRefresh = onSyncFromRing,
+        modifier = modifier.fillMaxSize(),
     ) {
-        // Order: top bar → day card → key vitals.
-        TopBar(
-            device = ready?.summary?.device,
-            busy = busy,
-            onSync = onSyncFromRing,
-            onProfile = onProfile,
-        )
-
-        if (syncStatus != null) {
-            Text(
-                syncStatus,
-                color = c.muted,
-                fontSize = 12.sp,
-                fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
-            )
-        }
-
-        when (state) {
-            is SummaryState.Loading -> Notice(
-                "Computing the summary from the ring database. Over ~850k events this takes " +
-                    "roughly 8 seconds on this device; the result is cached, so later launches " +
-                    "open straight from it.",
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 16.dp, vertical = 12.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
+        ) {
+            // Order: top bar → day card → key vitals.
+            TopBar(
+                device = ready?.summary?.device,
+                busy = busy,
+                onSync = onSyncFromRing,
+                onProfile = onProfile,
             )
 
-            is SummaryState.Empty -> Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Notice(state.reason)
-                Button(onClick = onImportDatabase, enabled = !busy) {
-                    Text("Import oura.db…")
-                }
-            }
-
-            is SummaryState.Failed -> Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                Notice("Could not build the summary.\n\n${state.message}")
-                Button(onClick = onRefresh, enabled = !busy) { Text("Retry") }
-            }
-
-            is SummaryState.Ready -> {
-                state.summary.digest?.takeIf { it.isNotBlank() }?.let {
-                    Text(it, color = c.muted, fontSize = 13.sp)
-                }
-                val days = state.summary.days
-                days.firstOrNull()?.let { day ->
-                    DayCard(
-                        summary = state.summary,
-                        ymd = day,
-                        onOpenSleep = { onOpenDay(day, true) },
-                        onOpenActivity = { onOpenDay(day, false) },
-                    )
-                }
-                // Today often has activity but no night yet — the night you woke from
-                // belongs to yesterday's date — so the browser is the way to reach a
-                // scored night from the home screen.
-                if (days.size > 1) {
+            if (syncStatus != null) {
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                     Text(
-                        "Show all ${days.size} days",
-                        color = c.accent,
+                        syncStatus,
+                        color = c.muted,
                         fontSize = 12.sp,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(8.dp))
-                            .border(1.dp, c.line, RoundedCornerShape(8.dp))
-                            .clickable(onClick = onBrowseDays)
-                            .padding(vertical = 10.dp),
-                        textAlign = TextAlign.Center,
+                        fontFamily = FontFamily.Monospace,
                     )
+                    if (syncing) {
+                        // Determinate once the ring has told us how much it is holding;
+                        // indeterminate through connect, auth and setup, where there is
+                        // genuinely nothing to measure against.
+                        if (syncProgress != null) {
+                            LinearProgressIndicator(
+                                progress = { syncProgress },
+                                color = c.accent,
+                                trackColor = c.surface2,
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                        } else {
+                            LinearProgressIndicator(
+                                color = c.accent,
+                                trackColor = c.surface2,
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                        }
+                    }
                 }
-                VitalsGrid(state.summary)
-                BatteryPanel(
-                    battery = state.summary.battery,
-                    device = state.summary.device,
-                    expanded = batteryExpanded,
-                    onToggle = onToggleBattery,
+            }
+
+            when (state) {
+                is SummaryState.Loading -> Notice(
+                    "Computing the summary from the ring database. Over ~850k events this takes " +
+                        "roughly 8 seconds on this device; the result is cached, so later launches " +
+                        "open straight from it.",
                 )
-                if (state.stale) {
-                    Text("Showing the cached snapshot.", color = c.faint, fontSize = 11.sp)
+
+                is SummaryState.Empty -> Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Notice(state.reason)
+                    Button(onClick = onImportDatabase, enabled = !busy) {
+                        Text("Import oura.db…")
+                    }
                 }
-                Footer(state.summary)
+
+                is SummaryState.Failed -> Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Notice("Could not build the summary.\n\n${state.message}")
+                    Button(onClick = onRefresh, enabled = !busy) { Text("Retry") }
+                }
+
+                is SummaryState.Ready -> {
+                    state.summary.digest?.takeIf { it.isNotBlank() }?.let {
+                        Text(it, color = c.muted, fontSize = 13.sp)
+                    }
+                    val days = state.summary.days
+                    days.firstOrNull()?.let { day ->
+                        DayCard(
+                            summary = state.summary,
+                            ymd = day,
+                            onOpenSleep = { onOpenDay(day, true) },
+                            onOpenActivity = { onOpenDay(day, false) },
+                        )
+                    }
+                    // Today often has activity but no night yet — the night you woke from
+                    // belongs to yesterday's date — so the browser is the way to reach a
+                    // scored night from the home screen.
+                    if (days.size > 1) {
+                        Text(
+                            "Show all ${days.size} days",
+                            color = c.accent,
+                            fontSize = 12.sp,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(8.dp))
+                                .border(1.dp, c.line, RoundedCornerShape(8.dp))
+                                .clickable(onClick = onBrowseDays)
+                                .padding(vertical = 10.dp),
+                            textAlign = TextAlign.Center,
+                        )
+                    }
+                    VitalsGrid(state.summary)
+                    BatteryPanel(
+                        battery = state.summary.battery,
+                        device = state.summary.device,
+                        expanded = batteryExpanded,
+                        onToggle = onToggleBattery,
+                    )
+                    if (state.stale) {
+                        Text("Showing the cached snapshot.", color = c.faint, fontSize = 11.sp)
+                    }
+                    Footer(state.summary)
+                }
             }
         }
     }

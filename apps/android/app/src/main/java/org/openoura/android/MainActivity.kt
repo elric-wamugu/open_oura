@@ -12,6 +12,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Scaffold
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -21,11 +22,13 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.lifecycleScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.openoura.android.ble.BlePermissions
 import org.openoura.android.ble.RingSyncService
 import org.openoura.android.ble.SyncPhase
+import org.openoura.android.ble.describeSync
 import org.openoura.android.ble.probeRing
 import org.openoura.android.data.ProfileStore
 import org.openoura.android.data.RingKeyStore
@@ -137,6 +140,21 @@ class MainActivity : ComponentActivity() {
                 // survives the screen going off and a returning Activity picks up the
                 // current phase rather than showing a stale one.
                 val syncPhase by RingSyncService.phase.collectAsState()
+                LaunchedEffect(syncPhase) {
+                    // A success is read at a glance; a failure has to be read properly, so
+                    // it gets much longer before it clears itself.
+                    when (syncPhase) {
+                        is SyncPhase.Done -> {
+                            delay(6_000)
+                            RingSyncService.acknowledge()
+                        }
+                        is SyncPhase.Failed -> {
+                            delay(20_000)
+                            RingSyncService.acknowledge()
+                        }
+                        else -> Unit
+                    }
+                }
                 val askSyncPermissions = rememberLauncherForActivityResult(
                     ActivityResultContracts.RequestMultiplePermissions(),
                 ) { granted ->
@@ -229,8 +247,10 @@ class MainActivity : ComponentActivity() {
                             syncStatus = if (syncPhase is SyncPhase.Idle) {
                                 null
                             } else {
-                                RingSyncService.describe(syncPhase)
+                                describeSync(syncPhase)
                             },
+                            syncProgress = (syncPhase as? SyncPhase.Running)?.progress,
+                            syncing = syncPhase is SyncPhase.Running,
                             onImportDatabase = { pickDatabase.launch(arrayOf("*/*")) },
                             onOpenDay = { day, sleep -> openDay = day to sleep },
                             onBrowseDays = { browsing = true },

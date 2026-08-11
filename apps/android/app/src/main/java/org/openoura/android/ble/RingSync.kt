@@ -11,6 +11,7 @@ import uniffi.oura_core.BleWriter
 import uniffi.oura_core.RingSession
 import uniffi.oura_core.SyncProgressListener
 import java.io.File
+import kotlin.math.roundToInt
 
 private const val TAG = "OpenOuraBle"
 
@@ -23,10 +24,38 @@ sealed interface SyncPhase {
         val stage: String,
         val eventsSynced: Long = 0,
         val bytesLeft: Long = 0,
+        /**
+         * 0..1 through the drain, or null while it cannot be known — during connect, auth
+         * and setup, and until the ring has reported a backlog size to measure against.
+         * A null here means "show an indeterminate bar", not "zero".
+         */
+        val progress: Float? = null,
     ) : SyncPhase
 
     data class Done(val serial: String, val events: Long, val inserted: Long) : SyncPhase
     data class Failed(val message: String) : SyncPhase
+}
+
+/**
+ * Human-readable line for a phase, shared by the progress notification and the UI.
+ *
+ * Kept next to [SyncPhase] rather than on the service so it stays a pure function of the
+ * phase — no Android types, directly unit-testable, and impossible to accidentally couple
+ * to service state.
+ */
+fun describeSync(phase: SyncPhase): String = when (phase) {
+    is SyncPhase.Idle -> "Idle"
+    is SyncPhase.Running -> buildString {
+        phase.progress?.let { append("${(it * 100).roundToInt()}% · ") }
+        if (phase.eventsSynced > 0) {
+            append("${phase.eventsSynced} events")
+        } else {
+            append(phase.stage.replaceFirstChar { it.uppercase() })
+        }
+        if (phase.bytesLeft > 0) append(" · ${phase.bytesLeft / 1024} KB left")
+    }
+    is SyncPhase.Done -> "Synced ${phase.events} events, ${phase.inserted} new"
+    is SyncPhase.Failed -> phase.message
 }
 
 /**
@@ -77,6 +106,14 @@ suspend fun runRingSync(
                 link.frames.collect { frame -> session.pushFrame(frame) }
             }
 
+            // The ring reports how much it still holds, never how much there was, so the
+            // largest backlog seen is the only denominator available. Tracking the peak
+            // (rather than the first report) keeps the figure sane when events accrue
+            // mid-drain, and carrying the high-water mark stops the bar sliding backwards
+            // when it does.
+            var backlogBytes = 0L
+            var reached = 0f
+
             try {
                 val report = session.sync(
                     dbPath,
@@ -87,11 +124,26 @@ suspend fun runRingSync(
                             bytesLeft: ULong,
                             eventsSynced: UInt,
                         ) {
+                            val left = bytesLeft.toLong()
+                            if (left > backlogBytes) backlogBytes = left
+                            // bytes_left of 0 also means "unknown", so a fraction is only
+                            // meaningful once a real backlog has been reported.
+                            val fraction = if (backlogBytes > 0) {
+                                reached = maxOf(
+                                    reached,
+                                    ((backlogBytes - left).toFloat() / backlogBytes)
+                                        .coerceIn(0f, 1f),
+                                )
+                                reached
+                            } else {
+                                null
+                            }
                             onPhase(
                                 SyncPhase.Running(
                                     stage = stage,
                                     eventsSynced = eventsSynced.toLong(),
-                                    bytesLeft = bytesLeft.toLong(),
+                                    bytesLeft = left,
+                                    progress = fraction,
                                 ),
                             )
                         }

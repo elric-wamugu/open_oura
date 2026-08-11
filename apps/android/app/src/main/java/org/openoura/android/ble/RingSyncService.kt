@@ -73,7 +73,7 @@ class RingSyncService : Service() {
         scope.launch {
             val result = runRingSync(applicationContext) { phase ->
                 _phase.value = phase
-                if (phase is SyncPhase.Running) notify(describe(phase))
+                if (phase is SyncPhase.Running) notify(describeSync(phase))
             }
             _phase.value = result
 
@@ -143,18 +143,16 @@ class RingSyncService : Service() {
             ctx.startForegroundService(Intent(ctx, RingSyncService::class.java))
         }
 
-        /** Human-readable line for a phase, shared by the notification and the UI. */
-        fun describe(phase: SyncPhase): String = when (phase) {
-            is SyncPhase.Idle -> "Idle"
-            is SyncPhase.Running -> when {
-                phase.eventsSynced > 0 && phase.bytesLeft > 0 ->
-                    "${phase.eventsSynced} events · ${phase.bytesLeft / 1024} KB left"
-                phase.eventsSynced > 0 -> "${phase.eventsSynced} events"
-                else -> phase.stage.replaceFirstChar { it.uppercase() }
+        /**
+         * Drop back to [SyncPhase.Idle]. The UI calls this once a terminal message has
+         * been on screen long enough to read — the phase is process-wide state, so without
+         * it a finished sync's line would sit there until the next one started.
+         */
+        fun acknowledge() {
+            if (_phase.value is SyncPhase.Done || _phase.value is SyncPhase.Failed) {
+                _phase.value = SyncPhase.Idle
             }
-            is SyncPhase.Done ->
-                "Synced ${phase.events} events, ${phase.inserted} new"
-            is SyncPhase.Failed -> phase.message
         }
+
     }
 }
