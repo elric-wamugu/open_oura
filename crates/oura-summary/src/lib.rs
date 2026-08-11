@@ -653,6 +653,60 @@ fn stages_from_phase_data(
     stages
 }
 
+/// A break longer than this in capture time means a separate sync. Within one drain the
+/// capture times only track transfer progress, so a session must collapse to a single
+/// observation — treating each event separately would map generation time onto drain order.
+const SYNC_GAP_S: i64 = 120;
+
+/// Fit the `ds → wall-clock` offset steps for one epoch from its `(captured_unix, ds)`
+/// rows (any order). Returns `(ds, offset)` ascending by ds, where
+/// `unix = offset + ds/10` holds for every ds at or below that step's ds.
+///
+/// Each sync contributes one observation — its newest event, ds `D` drained at host time
+/// `T` — which bounds the offset from above at `T − D/10`, inflated by however far behind
+/// that drain finished. The true offset only grows (the counter loses time, never gains
+/// it), so the tightest consistent fit is the running minimum taken from the newest ds
+/// backwards. See the call site for why the old single-anchor model was wrong.
+fn fit_ds_offsets(rows: &mut [(i64, i64)]) -> Vec<(i64, f64)> {
+    rows.sort_unstable();
+    let mut obs: Vec<(i64, f64)> = Vec::new();
+    let mut last_cu = i64::MIN;
+    let (mut sess_d, mut sess_t) = (i64::MIN, 0i64);
+    for &(cu, ds) in rows.iter() {
+        if cu - last_cu > SYNC_GAP_S && sess_d != i64::MIN {
+            obs.push((sess_d, sess_t as f64 - sess_d as f64 / 10.0));
+            sess_d = i64::MIN;
+        }
+        if ds >= sess_d {
+            sess_d = ds;
+            sess_t = cu;
+        }
+        last_cu = cu;
+    }
+    if sess_d != i64::MIN {
+        obs.push((sess_d, sess_t as f64 - sess_d as f64 / 10.0));
+    }
+    obs.sort_by_key(|o| o.0);
+    let mut run = f64::INFINITY;
+    for o in obs.iter_mut().rev() {
+        run = run.min(o.1);
+        o.1 = run;
+    }
+    obs
+}
+
+/// Map a ring counter to wall-clock through fitted offset steps: use the tightest bound
+/// from the earliest sync that had already observed this ds.
+fn unix_from_offsets(offsets: &[(i64, f64)], ds: i64) -> Option<f64> {
+    if offsets.is_empty() {
+        return None;
+    }
+    let i = offsets
+        .partition_point(|(d, _)| *d < ds)
+        .min(offsets.len() - 1);
+    Some(offsets[i].1 + ds as f64 / 10.0)
+}
+
 /// Assemble the full dashboard summary as a JSON value. The torch models are
 /// supplied by `runner` (Python subprocess on desktop, `.ptl` on-device).
 pub fn build_summary(db: &Path, tz: i64, runner: &dyn ModelRunner) -> Result<Value> {
@@ -686,13 +740,34 @@ pub fn build_summary(db: &Path, tz: i64, runner: &dyn ModelRunner) -> Result<Val
     // belongs. We split into boot "epochs" (a reboot resets ds toward ~0) and anchor
     // each on its newest event's capture time.
     //
-    // Caveat: across an off-period *within* an epoch (ring dead, ds paused but no
-    // reboot) events before the gap compress — unavoidable without a real ring clock;
-    // only continuous-wear stretches are accurate, which is the case that matters.
+    // Anchoring on the *newest* event alone was wrong, and visibly so: a sync that
+    // stopped before draining the buffer left `max_ds` behind the ring's true counter
+    // while still being pinned to "now", which slid every earlier timestamp forward.
+    // Re-syncing moved the anchor again, so the same night could shift by hours between
+    // two views of the same data. Measured on real history: sync-to-sync rates alternate
+    // between ~3 ds/sec and ~500 ds/sec — the signature of a partial drain followed by
+    // one that catches up — even though the counter's own long-run rate is 9.96/sec.
+    //
+    // So instead of one anchor we fit an *offset* per epoch. Writing the mapping as
+    //     unix(ds) = offset + ds/10
+    // each sync yields one observation: its newest event, ds `D` drained at host time
+    // `T`, must have been generated at or before `T`, giving `offset <= T − D/10`. Every
+    // sync is therefore an upper bound, inflated exactly by how far behind that drain
+    // finished. The true offset only ever grows (the counter loses time; it cannot gain
+    // it), so the tightest fit is the running minimum of those bounds taken from the
+    // newest ds backwards — a non-decreasing step function that respects every bound.
+    //
+    // Two properties matter. Partial drains are self-correcting: a later, caught-up sync
+    // supplies a tighter bound and the inflated one is discarded. And an event's time
+    // depends only on syncs that had already observed its ds, so adding today's sync
+    // cannot move last week's night.
     struct Epoch {
         min_ds: i64,
         max_ds: i64,
         anchor_unix: i64,
+        /// (ds, offset) steps, ascending by ds. `offset` is seconds such that
+        /// `unix = offset + ds/10` for every ds at or below that step's ds.
+        offsets: Vec<(i64, f64)>,
     }
     // A real reboot drops ds by millions; 6 h of slack absorbs minor out-of-order
     // framing within an epoch without ever splitting one.
@@ -718,13 +793,31 @@ pub fn build_summary(db: &Path, tz: i64, runner: &dyn ModelRunner) -> Result<Val
             }
         }
         event_epochs[event_idx] = epochs.len();
-        epochs.push(Epoch { min_ds: ds, max_ds: ds, anchor_unix: cu });
+        epochs.push(Epoch {
+            min_ds: ds,
+            max_ds: ds,
+            anchor_unix: cu,
+            offsets: Vec::new(),
+        });
     }
-    // ds → wall-clock: pin the epoch's newest event to its capture time, step back at
-    // the ring's nominal 10 ds/sec.
+
+    // Fit the per-epoch offset steps described above.
+    {
+        let mut per_epoch: Vec<Vec<(i64, i64)>> = vec![Vec::new(); epochs.len()]; // (cu, ds)
+        for (idx, (ds, _, _, cu)) in events.iter().enumerate() {
+            per_epoch[event_epochs[idx]].push((*cu, *ds));
+        }
+        for (e, mut rows) in epochs.iter_mut().zip(per_epoch) {
+            e.offsets = fit_ds_offsets(&mut rows);
+        }
+    }
+
+    // ds → wall-clock through the fitted offsets, falling back to the old single-anchor
+    // behaviour only if an epoch somehow produced no observations.
     let unix_in_epoch = |ds: i64, epoch_idx: usize| -> f64 {
         let e = &epochs[epoch_idx];
-        e.anchor_unix as f64 - (e.max_ds - ds) as f64 / 10.0
+        unix_from_offsets(&e.offsets, ds)
+            .unwrap_or_else(|| e.anchor_unix as f64 - (e.max_ds - ds) as f64 / 10.0)
     };
     // Wall-clock "now" reference (newest sync).
     let anchor_unix = epochs.iter().map(|e| e.anchor_unix).max().unwrap_or(0);
@@ -1391,4 +1484,82 @@ pub fn build_summary(db: &Path, tz: i64, runner: &dyn ModelRunner) -> Result<Val
         "activity_daily": activity_daily,
         "vitals": { "hrv": trend(&hrv_stat), "rhr": trend(&rhr_stat) },
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{fit_ds_offsets, unix_from_offsets};
+
+    /// Build one sync session: `n` events ending at counter `end_ds`, drained starting at
+    /// host time `t0` at one event per second (so capture times track transfer, not
+    /// generation).
+    fn session(t0: i64, end_ds: i64, n: i64) -> Vec<(i64, i64)> {
+        (0..n)
+            .map(|i| (t0 + i, end_ds - (n - 1 - i) * 10))
+            .collect()
+    }
+
+    #[test]
+    fn caught_up_syncs_agree_on_one_offset() {
+        // Two syncs, each fully drained: the counter reads 1000 at t=100 and 2000 at
+        // t=200, i.e. exactly 10 ds/sec, so a single offset explains both.
+        let mut rows = session(100, 1000, 1);
+        rows.extend(session(200, 2000, 1));
+        let offs = fit_ds_offsets(&mut rows);
+        for ds in [0, 500, 1000, 1500, 2000] {
+            let unix = unix_from_offsets(&offs, ds).unwrap();
+            assert!((unix - ds as f64 / 10.0).abs() < 1e-6, "ds {ds} -> {unix}");
+        }
+    }
+
+    #[test]
+    fn a_partial_drain_is_corrected_by_the_next_sync() {
+        // The 08:00 sync stops 3600 s (36 000 ds) short of the ring's true counter, so on
+        // its own it would place everything an hour late. The 09:00 sync catches up and
+        // supplies the tighter bound, which must win for the earlier data too.
+        let partial = session(28_800, 252_000, 1); // offset would be 28800-25200 = 3600
+        let stale = fit_ds_offsets(&mut partial.clone());
+        assert!((stale[0].1 - 3600.0).abs() < 1e-6, "partial bound {stale:?}");
+
+        let mut rows = partial;
+        rows.extend(session(32_400, 324_000, 1)); // caught up: offset 32400-32400 = 0
+        let offs = fit_ds_offsets(&mut rows);
+        let unix = unix_from_offsets(&offs, 252_000).unwrap();
+        assert!(
+            (unix - 25_200.0).abs() < 1e-6,
+            "the inflated bound should be discarded, got {unix}"
+        );
+    }
+
+    #[test]
+    fn earlier_timestamps_do_not_move_when_a_later_sync_arrives() {
+        // The regression this whole change exists for: re-syncing must not slide history.
+        let mut before = session(1000, 10_000, 40);
+        before.extend(session(5000, 50_000, 40));
+        let offs_before = fit_ds_offsets(&mut before.clone());
+
+        let mut after = before;
+        after.extend(session(9000, 90_000, 40)); // a third sync, a day later in ring time
+        let offs_after = fit_ds_offsets(&mut after);
+
+        for ds in (0..=50_000).step_by(2_500) {
+            let a = unix_from_offsets(&offs_before, ds).unwrap();
+            let b = unix_from_offsets(&offs_after, ds).unwrap();
+            assert!((a - b).abs() < 1e-6, "ds {ds} moved {a} -> {b}");
+        }
+    }
+
+    #[test]
+    fn mapping_is_monotonic_across_offset_steps() {
+        // A counter that loses an hour between two regimes still maps monotonically.
+        let mut rows = session(1000, 10_000, 5);
+        rows.extend(session(9000, 50_000, 5)); // 8000 s of wall time for 4000 s of counter
+        let offs = fit_ds_offsets(&mut rows);
+        let mut prev = f64::NEG_INFINITY;
+        for ds in (0..=50_000).step_by(500) {
+            let u = unix_from_offsets(&offs, ds).unwrap();
+            assert!(u >= prev, "ds {ds}: {u} < {prev}");
+            prev = u;
+        }
+    }
 }
