@@ -298,16 +298,32 @@ Ring GATT identifiers (from `BLETransport.swift`):
 1. **[you]** Add `BLUETOOTH_SCAN` (with `neverForLocation`), `BLUETOOTH_CONNECT`, and
    `FOREGROUND_SERVICE_CONNECTED_DEVICE` to the manifest; wire the runtime permission
    request. Test on a real device — emulators have no Bluetooth.
-2. **[agent]** `BleTransport.kt`: scan → connect → discover → subscribe.
-   Android-specific differences from the iOS reference, all of which bite:
-   - Scan **unfiltered** and match in the callback, as iOS does — the ring's advertisement
-     is crowded and its name arrives late.
+2. **[agent] — DONE and verified on the Pixel 5.** `ble/BleTransport.kt` + `ble/RingProbe.kt`.
+   Proof: `Oura Ring Gen3 · -72 dBm · MTU 203 · 1 notify · the ring replied`, the frame being
+   `09 12 02000003040301000105000c <mac bytes>` → firmware 3.4.3, MAC `<ring MAC>`.
+
+   **The one that cost the most: the ring requires a BLE bond.** Without it the link
+   *establishes* and the ring drops it ~110 ms later, which the stack surfaces as a bare
+   `GATT status 133` — indistinguishable from a dozen unrelated causes, and it sends you
+   chasing range, contention and stack races instead. The tell is not in logcat but in
+   `adb shell dumpsys bluetooth_manager`, under `shim::legacy::acl`:
+   `disconnect_reason: REMOTE_DEVICE_TERMINATED_CONNECTION_POWER_OFF` with a ~100 ms
+   lifetime. CoreBluetooth bonds implicitly, which is why `sync-orchestration.md` lists
+   "CONNECT (BLE connect + bond)" as one step and the desktop client never had to care.
+   `createBond()` + waiting for `BOND_BONDED` fixes it outright. **Reach for `dumpsys` early
+   on any 133** — the GATT status is nearly information-free by comparison.
+
+   The rest, as expected:
+   - Scan **unfiltered** and match in the callback — the ring's name arrives late.
    - Notifications need **both** `setCharacteristicNotification(...)` *and* an explicit CCCD
-     descriptor write (`00002902-0000-1000-8000-00805f9b34fb`). iOS does this implicitly;
-     Android does not, and this is the single most common "it connects but no data" bug.
-   - Call `requestMtu(517)` after connect and wait for the callback before writing.
-   - Merge all four notify characteristics into one frame stream.
-   - Do every GATT operation one at a time — Android's stack silently drops concurrent ops.
+     descriptor write (`00002902-…`). iOS does this implicitly; Android does not.
+   - `requestMtu(517)` before discovery; this ring negotiates down to **203**.
+   - Merge every notify characteristic — but note the **Gen3 Heritage exposes only one**
+     (`…0003`). The four-characteristic case is Ring 5. Filter by property, not a UUID list.
+   - Do every GATT operation one at a time — Android silently drops concurrent ops.
+   - Not the cause here, but worth keeping: a settle delay after `stopScan`, retries, and
+     `autoConnect=true` as a last attempt. RSSI turned out to be a red herring (−87 and −72
+     behaved identically once bonded).
 3. **[agent]** `SyncService`: a foreground service (type `connectedDevice`) so Doze does not
    kill a sync in progress; surface `SyncProgressListener` as a notification.
 4. **[agent] — DONE.** Key storage: `RingKeyStore` + `RingKeyScreen`, reached from the
