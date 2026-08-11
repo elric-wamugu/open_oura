@@ -948,3 +948,7 @@ body.page-open { overflow: hidden; }
 .subfold[open] > summary .chev { transform: rotate(-135deg); margin-bottom: 0; }
 .subfold-body { margin-top: 14px; }
 @media (prefers-reduced-motion: reduce) { .subfold > summary .chev { transition: none; } }
+/* ring-detected effort rows: same shape as a model session, but not a button —
+   there's no labelled session behind them to open. */
+.dd-session.effort { cursor: default; }
+.dd-session.effort:hover { border-color: var(--line); }

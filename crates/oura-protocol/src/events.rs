@@ -83,6 +83,8 @@ fn decode_body(tag: u8, body: &[u8]) -> Option<serde_json::Value> {
         0x80 => decode_green_ibi_quality(body),
         // ambient_event / eda: u16 LE samples, one per 5 min.
         0x59 => decode_u16_samples(body, "ambient"),
+        // ehr_trace_event: exercise-HR trace — structure known, semantics not.
+        0x73 => decode_ehr_trace(body),
         // ehr_acm_intensity_event: up to 7 u16 LE intensity values.
         0x74 => decode_u16_samples(body, "intensity"),
         // activity_information: state byte + per-bin MET levels.
@@ -630,6 +632,42 @@ fn decode_real_steps(body: &[u8]) -> Option<serde_json::Value> {
         p[13] as u16,
     ];
     Some(serde_json::json!({ "fields": fields, "_status": "part1_raw" }))
+}
+
+/// `ehr_trace_event` (tag `0x73`): the exercise-HR trace, emitted while the ring believes
+/// you are exercising.
+///
+/// The **structure** is clear from the captured bodies — a 2-byte header (a counter that
+/// advances one per event, plus a flag) followed by 3-byte records, 1/3/4 of them per event
+/// — but the **semantics are not**, so this surfaces the fields raw under the same
+/// `part1_raw` convention `real_steps` uses rather than inventing meanings.
+///
+/// What is ruled out: `a` is not bpm. Across 1934 records cross-checked against the
+/// quality-gated green-IBI heart rate within 30 s, only 14% fell within ±8 bpm (median
+/// offset +23, spread −25..+86). Observed ranges are a 52–208, b 23–237, c 0–255, with
+/// a == b in 51% of records — likely a min/max pair over a window, with `c` a quality or
+/// confidence byte. Confirming that wants a labelled capture: run `oura live-hr` while
+/// exercising and fit the trace against the live stream.
+///
+/// Decoding it is not needed to use the stream: *when* it fires already marks effort, which
+/// is what `oura-summary`'s effort sessions are built from.
+fn decode_ehr_trace(body: &[u8]) -> Option<serde_json::Value> {
+    if body.len() < 5 {
+        return None;
+    }
+    let records: Vec<[u16; 3]> = body[2..]
+        .chunks_exact(3)
+        .map(|r| [r[0] as u16, r[1] as u16, r[2] as u16])
+        .collect();
+    if records.is_empty() {
+        return None;
+    }
+    Some(serde_json::json!({
+        "seq": body[0],
+        "flag": body[1],
+        "records": records,
+        "_status": "part1_raw",
+    }))
 }
 
 /// `aohr_event` (tag `0x86`): always-on HR. Header flag, a base offset, then a

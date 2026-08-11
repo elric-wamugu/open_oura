@@ -51,6 +51,7 @@ metric there once and both clients receive it in the JSON.
 | **Peak sustained HR** (daily) | `activityReport` metric + note | `ActivityReport` readout + note | `activity_daily[].peak_hr`, `fitness.hr_max_predicted` | — |
 | Movement ridge | `ridgeSvg` | `MovementRidge` | `activity_profile` | — (MET, model-free) |
 | **Activity sessions / workouts** | `openActDetail` (session) | workouts section | `activity` | AAD (web: Python · iOS: `ActivityModel`) |
+| **Ring-detected effort** (fallback when AAD is absent) | `effortForDay` + effort rows | *not yet ported* | `effort` | — (exercise-HR trace timing) |
 | Steps / active calories / **distance** | activity report stats | activity day stats | `activity_daily` (incl. `distance_m`) | — |
 | Previous days browser | `openDaysBrowser` → `openDayPage` | `AllDaysView` → `DayDetailView` | day keys | — |
 | Device & data health | `renderDevice` | device section | `device`, `streams` | — |
@@ -160,6 +161,29 @@ shows nothing was switched on mid-month. What changed is workload: mean events/d
 from 12 530 (8–17 Jul) to 44 413 (22 Jul on), 3.5x, and the flattering 163 h run spans
 12–14 Jul at ~2 270 events/day — the ring was barely being worn. Always check measurement
 volume before reading a long run as good battery life.
+
+## Effort sessions: the ring's trace, not a labelled workout
+
+`activity[]` comes from Oura's `automatic_activity_detection` model, which needs the torch
+models — so without them the sessions list is permanently empty. `effort[]` fills that gap
+from data the ring already sends.
+
+`ehr_trace_event` (tag 0x73) fires while the ring believes you are exercising. Its payload
+is **not** semantically decoded — `decode_ehr_trace` surfaces the structure under the same
+`part1_raw` convention `real_steps` uses — but *when* it fires is itself the signal:
+measured against the quality-gated beat stream, HR at those moments runs p50 90 / p90 111
+versus p50 77 / p90 102 overall. `effort_sessions` clusters the timestamps (10-minute gap
+ends a session, under 5 minutes is discarded) and attaches mean/peak HR and the
+`ehr_acm_intensity_event` values. On this ring: 54 sessions, median 14 min, longest 62.
+
+Two things to keep honest when rendering these:
+
+- **They carry no label and must not be shown as if they did.** AAD says "running"; this
+  says "the ring was recording effort".
+- **`hr_peak` is suppressed when it does not exceed `hr_mean`.** The mean uses every gated
+  beat in the window; the peak only considers 30-second windows holding ten or more. During
+  movement the fastest stretches are where beats are sparsest, so the peak can genuinely
+  land below the mean — true, but it reads as a bug, so it is omitted instead.
 
 ## Sleep metrics: two code paths, one algorithm — keep them in sync
 
