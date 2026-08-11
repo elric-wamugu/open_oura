@@ -939,15 +939,22 @@ function openDaysBrowser(d, days) {
     row.type = "button";
     const left = el("div", "dl-left");
     left.append(el("div", "dl-date", dayTitle(ymd)));
-    left.append(el("div", "dl-sub", ds ? `${kfmt(ds.steps)} steps · ${Math.round(ds.active_kcal)} kcal` : (n ? "sleep only" : "—")));
-    row.append(left);
-    if (n && n.stages && n.stages.length) {
-      const hyp = hypnogram(n.stages);
-      hyp.classList.add("dl-hyp");
-      row.append(hyp);
+    // Kept identical to the Android DaysBrowser: the three figures you actually scan a
+    // list of days for. No hypnogram strip — at row height it reads as texture rather
+    // than information, and the full one is a tap away.
+    const bits = [];
+    if (n) {
+      bits.push(`${num(n.in_bed_h)}h sleep`);
+      if (n.efficiency != null) bits.push(`${Math.round(n.efficiency)}% eff`);
     }
-    row.append(el("span", "dp-chev"));
-    row.addEventListener("click", () => { dlg.close(); openDayPage(d, ymd, "sleep"); });
+    if (ds && ds.steps > 0) bits.push(`${Math.round(ds.steps)} steps`);
+    // A day can have a movement profile with zero steps; "no data" would be wrong.
+    else if (ds) bits.push(`${Math.round(ds.active_kcal || 0)} kcal`);
+    left.append(el("div", "dl-sub", bits.length ? bits.join(" · ") : "no data"));
+    row.append(left);
+    // Open the tab that actually has something on it.
+    row.append(n ? el("span", "dp-chev") : el("span", "dl-actonly", "activity"));
+    row.addEventListener("click", () => { dlg.close(); openDayPage(d, ymd, n ? "sleep" : "activity"); });
     list.append(row);
   });
   form.append(list);
