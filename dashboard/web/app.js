@@ -997,7 +997,8 @@ function renderBattery(d) {
       if (Math.abs(pctChange) >= 15) {
         box.append(el("p", "batt-note",
           `A full charge now lasts about ${Math.round(now)} h, against ${Math.round(early)} h across the earliest runs here — ` +
-          `${pctChange < 0 ? "down" : "up"} ${Math.abs(pctChange)}%. Measurement features (SpO2, real steps, raw PPG) are the usual cause of a step change like this.`));
+          `${pctChange < 0 ? "down" : "up"} ${Math.abs(pctChange)}%. Compare like with like before reading that as wear on the cell: ` +
+          `drain tracks how much the ring actually measures, so a stretch spent off the finger will always look like excellent battery life.`));
       }
     }
   }

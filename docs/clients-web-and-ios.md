@@ -154,8 +154,12 @@ fell 3679 → 3449 mV, then recovering to 3505 mV at rest with no charger.
 `cycles` are discharge runs found by a zigzag with hysteresis (a 5-point rise confirms the
 charger went on; runs dropping less than 15 points are ignored). `projected_full_h` — what a
 100 → 0 run would take at that run's rate — is the number to compare across runs, since runs
-start from different levels. On this ring it fell from ~165 h in early July to ~77 h by
-August; a step change like that usually means measurement features were switched on.
+start from different levels. On this ring it fell from ~165 h in early July to ~77 h by August — but that is NOT
+degradation. All sensor streams have been emitting since 8 Jul, and `feature_modes.json`
+shows nothing was switched on mid-month. What changed is workload: mean events/day went
+from 12 530 (8–17 Jul) to 44 413 (22 Jul on), 3.5x, and the flattering 163 h run spans
+12–14 Jul at ~2 270 events/day — the ring was barely being worn. Always check measurement
+volume before reading a long run as good battery life.
 
 ## Sleep metrics: two code paths, one algorithm — keep them in sync
 
