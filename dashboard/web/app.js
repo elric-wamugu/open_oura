@@ -227,6 +227,18 @@ function sessionsForDay(d, ymd) {
     .sort((a, b) => a.start - b.start);
 }
 
+// Ring-detected effort for a day. `startMin` mirrors what sessionsForDay produces so the
+// two lists format their times the same way.
+function effortForDay(d, ymd) {
+  return (d.effort || [])
+    .filter((s) => ymdOf(s.start) === ymd)
+    .map((s) => {
+      const dt = new Date(s.start * 1000);
+      return { ...s, startMin: dt.getHours() * 60 + dt.getMinutes() };
+    })
+    .sort((a, b) => a.startMin - b.startMin);
+}
+
 const dayTitle = (ymd) => {
   const p = (ymd || "").split("-");
   if (p.length !== 3) return ymd;
@@ -835,7 +847,7 @@ function activityReport(d, ymd) {
     mc("Lightly active", Math.round(lightMin) + " min") +
     mc("Peak intensity", peakMet.toFixed(1) + " MET") +
     mc("Peak HR", peakHr ? Math.round(peakHr) + " bpm" : "—") +
-    mc("Sessions", sessionsForDay(d, ymd).length);
+    mc("Sessions", sessionsForDay(d, ymd).length || effortForDay(d, ymd).length);
   root.append(mg);
 
   // A single high beat is a PPG artefact, so this is the best 30-second sustained rate.
@@ -851,6 +863,7 @@ function activityReport(d, ymd) {
 
   // sessions timeline + list
   const sessions = sessionsForDay(d, ymd);
+  const effort = effortForDay(d, ymd);
   root.append(el("p", "subhead", "Sessions"));
   if (sessions.length) {
     const list = el("div", "dd-sessions");
@@ -866,6 +879,30 @@ function activityReport(d, ymd) {
       list.append(row);
     });
     root.append(list);
+  } else if (effort.length) {
+    // Ring-detected effort, shown only when the AAD model has nothing — the model labels a
+    // session ("running"), these are unlabelled by construction, so they must not be
+    // dressed up as the same thing.
+    const list = el("div", "dd-sessions");
+    effort.forEach((s) => {
+      const row = el("div", "dd-session effort");
+      const bits = [`${s.duration_min} min`];
+      if (s.hr_mean != null) bits.push(`${s.hr_mean} bpm avg`);
+      if (s.hr_peak != null) bits.push(`${s.hr_peak} peak`);
+      if (s.intensity_peak != null) bits.push(`intensity ${s.intensity_peak}`);
+      row.innerHTML =
+        `<span class="ic" style="--i:url(/icons/act-default.svg)"></span>` +
+        `<span class="dd-s-name">effort · ${hhmm(s.startMin)}</span>` +
+        `<span class="dd-s-meta">${bits.join(" · ")}</span>`;
+      list.append(row);
+    });
+    root.append(list);
+    root.append(el("p", "act-note",
+      "Detected from the ring's own exercise-HR trace — it records while the ring thinks " +
+      "you're working, so these are start/stop and effort, not labelled workouts. Naming " +
+      "them needs Oura's activity model, which isn't bundled. Heart rate is missing from " +
+      "some because motion corrupts the optical signal, which is exactly when the ring is " +
+      "least able to read a clean beat."));
   } else {
     root.append(el("div", "ad-muted", "No sessions detected this day."));
   }

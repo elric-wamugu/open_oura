@@ -783,6 +783,78 @@ fn battery_history(mut points: Vec<(f64, i64, i64)>) -> (Vec<Value>, Vec<Value>)
     (series, cycles)
 }
 
+/// Effort sessions detected from the ring's own exercise-HR trace.
+///
+/// `ehr_trace_event` is emitted while the ring believes you are exercising: its payload is
+/// still undecoded (tag 0x73 has no decoder), but *when* it fires is itself the signal.
+/// Measured against the quality-gated beat stream, HR at those moments runs p50 90 / p90 111
+/// against p50 77 / p90 102 across all HR samples — it tracks effort.
+///
+/// This is deliberately NOT Oura's `automatic_activity_detection`. That model labels a
+/// session ("running", "walking"); this only knows the ring was recording effort, so the
+/// output carries no label and must not be presented as one. It exists because AAD needs the
+/// torch models, which aren't bundled — leaving the sessions list permanently empty.
+///
+/// `traces` and `intensity` are `(unix, value)`; `hr` is the quality-gated beat series.
+fn effort_sessions(
+    traces: &mut [f64],
+    hr: &[(f64, f64)],
+    intensity: &[(f64, f64)],
+) -> Vec<Value> {
+    // A gap longer than this ends a session. Ten minutes keeps a walk with a pause at the
+    // lights in one piece without welding the morning and the evening together.
+    const SESSION_GAP_S: f64 = 600.0;
+    // Shorter than this is a stray trace, not something worth calling a session.
+    const MIN_SESSION_S: f64 = 300.0;
+
+    traces.sort_by(f64::total_cmp);
+    let mut out = Vec::new();
+    let mut i = 0usize;
+    while i < traces.len() {
+        let mut j = i;
+        while j + 1 < traces.len() && traces[j + 1] - traces[j] <= SESSION_GAP_S {
+            j += 1;
+        }
+        let (a, b, n) = (traces[i], traces[j], j - i + 1);
+        i = j + 1;
+        if b - a < MIN_SESSION_S {
+            continue;
+        }
+        let win = |v: &[(f64, f64)]| -> Vec<f64> {
+            v.iter()
+                .filter(|(t, _)| *t >= a && *t <= b)
+                .map(|(_, x)| *x)
+                .collect()
+        };
+        let hrs = win(hr);
+        let ints = win(intensity);
+        // Peak HR reuses the sustained-window rule the daily figure uses, so one artefact
+        // beat can't inflate a session.
+        let hr_pts: Vec<(f64, f64)> =
+            hr.iter().filter(|(t, _)| *t >= a && *t <= b).copied().collect();
+        let int_peak = ints.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+        let hr_mean = mean(&hrs);
+        // The two figures come from different sample bases: the mean uses every gated beat
+        // in the window, while the peak only considers 30-second windows holding at least
+        // ten of them. During movement the fastest stretches are exactly where beats are
+        // sparsest, so the peak can land *below* the mean — true, but it reads as a bug.
+        // Report it only when it actually exceeds the average.
+        let hr_peak = peak_sustained_hr(&hr_pts)
+            .filter(|p| hr_mean.is_none_or(|m| *p > m));
+        out.push(json!({
+            "start": a.round(),
+            "end": b.round(),
+            "duration_min": ((b - a) / 60.0).round(),
+            "hr_mean": hr_mean.map(|v| v.round()),
+            "hr_peak": hr_peak.map(|v| v.round()),
+            "intensity_mean": mean(&ints).map(|v| v.round()),
+            "intensity_peak": int_peak.is_finite().then(|| int_peak.round()),
+            "traces": n,
+        }));
+    }
+    out
+}
+
 /// Assemble the full dashboard summary as a JSON value. The torch models are
 /// supplied by `runner` (Python subprocess on desktop, `.ptl` on-device).
 pub fn build_summary(db: &Path, tz: i64, runner: &dyn ModelRunner) -> Result<Value> {
@@ -1317,6 +1389,37 @@ pub fn build_summary(db: &Path, tz: i64, runner: &dyn ModelRunner) -> Result<Val
                 / 1000.0;
         }
     }
+    // Effort sessions from the exercise-HR trace. The same quality-gated beats that feed
+    // peak_hr are reused, flattened onto one timeline.
+    let effort = {
+        let mut traces: Vec<f64> = Vec::new();
+        let mut intensity: Vec<(f64, f64)> = Vec::new();
+        for (event_idx, (ds, tag, jstr, _)) in events.iter().enumerate() {
+            let t = || unix_in_epoch(*ds, event_epochs[event_idx]);
+            match name_of(*tag) {
+                "ehr_trace_event" => traces.push(t()),
+                "ehr_acm_intensity_event" => {
+                    if let Ok(v) = serde_json::from_str::<Value>(jstr) {
+                        if let Some(a) = v["intensity"].as_array() {
+                            let base = t();
+                            for (i, x) in a.iter().enumerate() {
+                                if let Some(n) = x.as_f64() {
+                                    intensity.push((base + i as f64, n));
+                                }
+                            }
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        let mut hr_flat: Vec<(f64, f64)> =
+            hr_by_day.values().flatten().map(|&(t, v)| (t, v)).collect();
+        hr_flat.sort_by(|a, b| a.0.total_cmp(&b.0));
+        intensity.sort_by(|a, b| a.0.total_cmp(&b.0));
+        effort_sessions(&mut traces, &hr_flat, &intensity)
+    };
+
     let peak_hr: std::collections::BTreeMap<String, f64> = hr_by_day
         .iter_mut()
         .filter_map(|(k, v)| {
@@ -1611,6 +1714,8 @@ pub fn build_summary(db: &Path, tz: i64, runner: &dyn ModelRunner) -> Result<Val
         "activity_profile": activity_profile,
         "activity_steps": activity_steps,
         "battery": { "series": battery_series, "cycles": battery_cycles },
+        // Ring-detected effort. Unlabelled by design — see effort_sessions().
+        "effort": effort,
         "activity_daily": activity_daily,
         "vitals": { "hrv": trend(&hrv_stat), "rhr": trend(&rhr_stat) },
     }))
