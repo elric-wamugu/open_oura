@@ -225,7 +225,7 @@ class SleepWidgetReceiver : GlanceAppWidgetReceiver() {
     override val glanceAppWidget: GlanceAppWidget = SleepWidget()
 }
 
-// ── today (medium) ───────────────────────────────────────────────────────────────────
+// ── today (2x2) ──────────────────────────────────────────────────────────────────────
 
 class ActivityWidget : GlanceAppWidget() {
     override suspend fun provideGlance(context: Context, id: GlanceId) {
@@ -239,14 +239,15 @@ private fun ActivityContent(s: WidgetSnapshot) = Shell {
     Label("TODAY")
     Big(s.steps?.let { "%,d".format(it) } ?: "—", if (s.steps != null) "steps" else "", ACCENT)
     Spacer(GlanceModifier.height(6.dp))
-    Sub(
-        if (s.steps == null) empty()
-        else listOfNotNull(
-            s.activeKcal?.let { "$it kcal" },
-            s.peakHr?.let { "peak $it bpm" },
-            s.batteryPct?.let { "ring $it%" },
-        ).joinToString(" · "),
-    )
+    if (s.steps == null) {
+        Sub(empty())
+    } else {
+        // One fact per line, not a single " · "-joined row. At two cells wide that row no
+        // longer fits and RemoteViews would silently clip it; the square shape trades the
+        // width for the vertical space to stack instead.
+        s.peakHr?.let { Sub("peak $it bpm") }
+        s.batteryPct?.let { Sub("ring $it%") }
+    }
 }
 
 class ActivityWidgetReceiver : GlanceAppWidgetReceiver() {

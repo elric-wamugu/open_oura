@@ -35,7 +35,6 @@ data class WidgetSnapshot(
     val wakePct: Int? = null,
     // today
     val steps: Int? = null,
-    val activeKcal: Int? = null,
     val peakHr: Int? = null,
     val batteryPct: Int? = null,
 )
@@ -79,7 +78,6 @@ object WidgetStore {
             remPct = night?.remPct?.roundToInt(),
             wakePct = night?.wakePct?.roundToInt(),
             steps = daily?.steps?.roundToInt(),
-            activeKcal = daily?.activeKcal?.roundToInt(),
             peakHr = daily?.peakHr?.roundToInt(),
             batteryPct = s.device?.batteryPct,
         )
