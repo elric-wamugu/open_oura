@@ -110,6 +110,7 @@ fun HomeScreen(
                 VitalsGrid(state.summary)
                 BatteryPanel(
                     battery = state.summary.battery,
+                    device = state.summary.device,
                     expanded = batteryExpanded,
                     onToggle = onToggleBattery,
                 )

@@ -30,6 +30,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.unit.sp
 import org.openoura.android.data.Battery
 import org.openoura.android.data.BatteryPoint
+import org.openoura.android.data.Device
 import org.openoura.android.ui.theme.Oura
 import org.openoura.android.ui.theme.OuraColors
 import java.time.Instant
@@ -82,13 +83,19 @@ fun DrawScope.drawBatteryChart(series: List<BatteryPoint>, c: OuraColors) {
 @Composable
 fun BatteryPanel(
     battery: Battery,
+    device: Device?,
     expanded: Boolean,
     onToggle: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val c = Oura.colors
     val series = battery.series
+    // The reconciled figure from the brain, not the tail of the series — the brain already
+    // picked whichever source is freshest, and reading the tail here is exactly what made
+    // this header disagree with the top bar.
     val last = series.lastOrNull()
+    val pct = device?.batteryPct ?: last?.pct
+    val volts = device?.batteryV ?: last?.let { it.mv / 1000.0 }
 
     Column(
         modifier = modifier
@@ -113,7 +120,7 @@ fun BatteryPanel(
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 // The header says something useful while collapsed.
                 Text(
-                    last?.let { "${it.pct}% · ${"%.2f".format(it.mv / 1000f)} V" } ?: "—",
+                    pct?.let { p -> "$p%" + (volts?.let { " · ${"%.2f".format(it)} V" } ?: "") } ?: "—",
                     color = c.muted,
                     fontSize = 12.sp,
                     fontFamily = FontFamily.Monospace,
