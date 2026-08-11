@@ -53,7 +53,7 @@ metric there once and both clients receive it in the JSON.
 | **Activity sessions / workouts** | `openActDetail` (session) | workouts section | `activity` | AAD (web: Python · iOS: `ActivityModel`) |
 | **Ring-detected effort** (fallback when AAD is absent) | `effortForDay` + effort rows | `EffortSessions` (DayReportScreen.kt) | `effort` | — (exercise-HR trace timing) |
 | Steps / active calories / **distance** | activity report stats | activity day stats | `activity_daily` (incl. `distance_m`) | — |
-| Previous days browser | `openDaysBrowser` → `openDayPage` | `AllDaysView` → `DayDetailView` | day keys | — |
+| Previous days browser (date · sleep h · eff % · steps) | `openDaysBrowser` → `openDayPage` | `DaysBrowser` (Android) / `AllDaysView` (iOS) | day keys | — |
 | Device & data health | `renderDevice` | device section | `device`, `streams` | — |
 | **Battery log + discharge runs** | `renderBattery`, `batteryChart` | `BatteryPanel`, `drawBatteryChart` | `battery.{series,cycles}` | — |
 | Excluded-period note | `renderDevice` (`.dh-note`) | device section stat | `device.short_periods_excluded` | — |
