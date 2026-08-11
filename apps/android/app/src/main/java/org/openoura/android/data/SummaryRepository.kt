@@ -98,6 +98,12 @@ class SummaryRepository(private val ctx: Context) {
             onSuccess = { s ->
                 // The core reports its own failures in-band rather than throwing.
                 val err = s.error
+                if (err == null) {
+                    // Widgets read this projection and never call the core, so it has to be
+                    // written here — the one place we know the summary is fresh and valid.
+                    WidgetStore.write(ctx, WidgetStore.from(s))
+                    org.openoura.android.widget.WidgetUpdates.refreshAll(ctx)
+                }
                 _state.value = if (err != null) SummaryState.Failed(err)
                 else SummaryState.Ready(s, stale = false)
             },

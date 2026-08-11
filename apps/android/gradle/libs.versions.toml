@@ -12,6 +12,11 @@ composeBom = "2026.02.01"
 jna = "5.14.0"
 # kotlinx.serialization parses the ~136 KB summary_json() payload from the Rust core.
 kotlinxSerialization = "1.7.3"
+# Glance renders App Widgets. They are RemoteViews under the hood, not Compose — see
+# the widget package for what that rules out.
+glance = "1.1.1"
+# WorkManager gives the widgets a periodic refresh independent of the app being open.
+work = "2.9.1"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -31,6 +36,8 @@ androidx-compose-material3 = { group = "androidx.compose.material3", name = "mat
 # The "@aar" classifier is required — the plain JAR does not load on Android.
 jna = { group = "net.java.dev.jna", name = "jna", version.ref = "jna" }
 kotlinx-serialization-json = { group = "org.jetbrains.kotlinx", name = "kotlinx-serialization-json", version.ref = "kotlinxSerialization" }
+androidx-glance-appwidget = { group = "androidx.glance", name = "glance-appwidget", version.ref = "glance" }
+androidx-work-runtime-ktx = { group = "androidx.work", name = "work-runtime-ktx", version.ref = "work" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

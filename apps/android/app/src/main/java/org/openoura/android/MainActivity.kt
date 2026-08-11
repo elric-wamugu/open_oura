@@ -46,6 +46,7 @@ class MainActivity : ComponentActivity() {
         // cached. A full recompute is an explicit user action (and, from Phase 4, a
         // post-sync step) rather than something that blocks every launch.
         lifecycleScope.launch { repo.load(refresh = false) }
+        org.openoura.android.widget.WidgetUpdates.schedulePeriodic(applicationContext)
 
         setContent {
             OpenOuraTheme {

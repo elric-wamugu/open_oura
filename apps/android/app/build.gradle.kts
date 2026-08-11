@@ -62,6 +62,8 @@ dependencies {
     // apps/android/build-aar.sh — run it before the first Gradle sync.
     implementation(variantOf(libs.jna) { artifactType("aar") })
     implementation(libs.kotlinx.serialization.json)
+    implementation(libs.androidx.glance.appwidget)
+    implementation(libs.androidx.work.runtime.ktx)
     testImplementation(libs.junit)
     androidTestImplementation(platform(libs.androidx.compose.bom))
     androidTestImplementation(libs.androidx.compose.ui.test.junit4)

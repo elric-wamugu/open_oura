@@ -249,7 +249,7 @@ painful.
 
 ---
 
-## Phase 3 — Glance home-screen widgets
+## Phase 3 — Glance home-screen widgets — **BUILT**
 
 **Goal:** widgets on the home screen, updating after each sync.
 **Exit criteria:** three widgets, correct data, no jank, no battery complaints.
@@ -259,14 +259,23 @@ painful.
    - **Small** — resting HR + HRV vs baseline.
    - **Medium** — last night: efficiency, stage bar, SpO₂.
    - **Medium** — today: steps, peak HR.
-3. **[agent]** Charts in widgets: App Widgets are `RemoteViews`, so there is **no WebView and
-   no Canvas**. Any stage bar or sparkline must be rendered to a `Bitmap` in the app process
-   and passed to Glance as an `Image` (this is why Phase 2 factors the drawing logic out).
+3. **[agent] — CONFIRMED, and sharper than expected.** App Widgets are `RemoteViews`: no
+   Canvas, so anything proportional must be drawn into a `Bitmap` and passed as an `Image`.
+   The binding constraint turned out not to be Canvas but **weights**: Glance exposes only
+   `defaultWeight()` (equal shares, no numeric weight), so a four-segment stage bar built
+   from boxes renders four *equal* blocks whatever the percentages are — wrong in a way that
+   looks deliberate. `stageBarBitmap` draws it instead.
 4. **[agent]** Update triggers — explicit, never `updatePeriodMillis` (30-minute floor and
    unreliable): after a sync completes, from a periodic `WorkManager` job, and on
    `ACTION_APPWIDGET_UPDATE`.
-5. **[you]** Add each widget to your home screen and live with them for a day.
+5. **[you]** Add each widget to your home screen — placement cannot be driven over adb.
 6. **[you]** Check *Settings → Battery → App battery usage* after ~24 h.
+
+**Data path:** widgets read `widget.json` (~600 bytes) written by `SummaryRepository` after
+each successful recompute, never the 207 KB summary and never the Rust core — a widget
+update can fire with the app closed and must be cheap. `WidgetUpdates.refreshAll` repaints
+on refresh; a six-hourly `WorkManager` job is the backstop. `updatePeriodMillis` is 0 by
+design: 30-minute floor, coalesced, and impossible to trigger on demand.
 
 ---
 
