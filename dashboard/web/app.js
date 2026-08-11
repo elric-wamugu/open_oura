@@ -980,9 +980,14 @@ function renderBattery(d) {
     box.append(el("div", "error", "No battery log yet — the ring emits these as it discharges."));
     return;
   }
-  const last = series[series.length - 1];
+  // Use the reconciled device figure, not the tail of the series: the brain already picked
+  // whichever source is freshest, and reading the series tail here is what made this panel
+  // disagree with the top bar.
+  const dv = d.device || {};
+  const pct = dv.battery_pct != null ? dv.battery_pct : series[series.length - 1].pct;
+  const volts = dv.battery_v != null ? dv.battery_v : series[series.length - 1].mv / 1000;
   box.append(el("div", "big-metric",
-    `<span class="n">${last.pct}</span><span class="u">% · ${(last.mv / 1000).toFixed(2)} V</span>`));
+    `<span class="n">${pct}</span><span class="u">% · ${Number(volts).toFixed(2)} V</span>`));
 
   const wrap = el("div", "batt-wrap");
   wrap.innerHTML = batteryChart(series, 1000, 90) +
