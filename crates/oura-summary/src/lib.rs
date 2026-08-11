@@ -1503,9 +1503,6 @@ pub fn build_summary(db: &Path, tz: i64, runner: &dyn ModelRunner) -> Result<Val
     let live_batt = dev
         .as_ref()
         .and_then(|d| store.latest_reading(&d.0, "battery_percent").ok().flatten());
-    let battery_pct = live_batt.map(|(v, _)| v.round() as i64).or(dbg_batt.map(|b| b.0));
-    let battery_as_of = live_batt.map(|(_, t)| t);
-    let battery_v = dbg_batt.map(|b| (b.1 as f64 / 1000.0 * 100.0).round() / 100.0);
 
     let last_sync = dev.as_ref().map(|d| d.6).filter(|&t| t > 0);
     let synced_unix = last_sync.map(|t| t as f64);
@@ -1530,6 +1527,41 @@ pub fn build_summary(db: &Path, tz: i64, runner: &dyn ModelRunner) -> Result<Val
         }
         battery_history(pts)
     };
+
+    // ONE battery figure, so the top bar and the battery panel cannot disagree.
+    //
+    // There are two sources and neither is reliably fresher, so take whichever carries the
+    // later timestamp rather than hard-wiring a preference:
+    //   * the live read `sync` performs (`readings`, kind "battery_percent"), taken at the
+    //     moment of the sync — but only ever as recent as your last sync;
+    //   * the newest point in the ring's own log, which is the last time the level actually
+    //     *changed*, so it lags whenever the level has been steady.
+    // Measured on real data the live read won by 18 min (69% at 10:15 vs 74% at 09:56),
+    // which is why the panel showing the log's last point disagreed with the top bar.
+    // Voltage only exists in the log, so it comes from there regardless.
+    let log_batt = battery_series
+        .last()
+        .and_then(|p| Some((p["pct"].as_i64()?, p["mv"].as_i64()?, p["t"].as_f64()?)));
+    let live_newer = match (live_batt, log_batt) {
+        (Some((_, lt)), Some((_, _, gt))) => lt as f64 >= gt,
+        (Some(_), None) => true,
+        _ => false,
+    };
+    let (battery_pct, battery_as_of) = if live_newer {
+        (
+            live_batt.map(|(v, _)| v.round() as i64),
+            live_batt.map(|(_, t)| t),
+        )
+    } else {
+        (
+            log_batt.map(|b| b.0).or(dbg_batt.map(|b| b.0)),
+            log_batt.map(|b| b.2 as i64),
+        )
+    };
+    let battery_v = log_batt
+        .map(|b| b.1)
+        .or(dbg_batt.map(|b| b.1))
+        .map(|mv| (mv as f64 / 1000.0 * 100.0).round() / 100.0);
 
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
