@@ -333,11 +333,17 @@ Ring GATT identifiers (from `BLETransport.swift`):
    frame collector must start **before** `sync()`, because the transport buffers from
    connect and setup-phase frames would otherwise be lost.
 
-   **Known gap:** `RingSession::sync` does not capture the live battery, but the CLI's
-   `cmd_sync` does (`store.insert_battery`). So a phone-only sync leaves `battery_as_of` /
-   `fresh_hours` / `synced_hm` frozen at whatever the desktop last wrote, and the device
-   panel and top-bar battery pill slowly go stale even though syncs are succeeding. Fix is
-   a few lines in `oura-core` plus an AAR rebuild.
+   **Two bugs found and fixed by syncing for real, both of which looked fine:**
+   - `RingSession::sync` never captured the live battery the way the CLI's `cmd_sync` does,
+     so a phone-only sync left `battery_pct`/`battery_as_of` frozen at whatever the desktop
+     last wrote. Fixed in `oura-core`; the reading now stamps at the moment of the sync
+     (`battery_as_of` 21:29:09 for a sync that finished 21:29:09). `synced_hm`/`fresh_hours`
+     were never affected — they come from `sync_state.last_sync_unix`, which `set_cursor`
+     already updates.
+   - The service built its **own** `SummaryRepository`, so it refreshed the cache file and
+     its own `StateFlow` while the Activity kept rendering an older one: `summary.json` on
+     disk said 21:18 / cursor 28366777 while the screen still showed 18:04. Now a process
+     singleton, which also stops two instances racing on `summary.json`.
 4. **[agent] — DONE.** Key storage: `RingKeyStore` + `RingKeyScreen`, reached from the
    profile screen. **Deviation:** not `EncryptedSharedPreferences` — `androidx.security:
    security-crypto` deprecated that API and pulls in Tink for one 32-character string.
