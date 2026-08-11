@@ -13,7 +13,10 @@ import android.bluetooth.BluetoothStatusCodes
 import android.bluetooth.le.ScanCallback
 import android.bluetooth.le.ScanResult
 import android.bluetooth.le.ScanSettings
+import android.content.BroadcastReceiver
 import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.os.Build
 import android.util.Log
@@ -55,12 +58,14 @@ private const val CONNECT_ATTEMPTS = 3
 private const val RETRY_BACKOFF_MS = 700L
 
 /**
- * Below this, an advertisement is strong enough to *find* the ring but usually too weak to
- * complete a GATT connect — the link drops mid-handshake and surfaces as a bare status 133,
- * which looks like a software fault and is not one. Worth saying out loud, because the fix
- * (move the ring closer) is nothing like the fix for a real 133.
+ * Below this the link is on the weak side and worth mentioning in a failure — but only as a
+ * footnote. A connect that *establishes* and is then dropped by the ring is not a range
+ * problem however tempting the low number looks; see [ensureBonded].
  */
 private const val WEAK_RSSI_DBM = -80
+
+/** Pairing can surface a system dialog, so it gets a human-scale deadline. */
+private const val BOND_TIMEOUT_MS = 30_000L
 
 private const val CONNECT_TIMEOUT_MS = 30_000L
 private const val DISCOVER_TIMEOUT_MS = 15_000L
@@ -232,6 +237,13 @@ class BleTransport private constructor(
             // is still tearing the scan down and fails the connection outright.
             delay(SCAN_SETTLE_MS)
 
+            // Bond first. `docs/sync-orchestration.md` opens the ring's handshake with
+            // "CONNECT (BLE connect + bond)", and an unbonded central gets the link accepted
+            // and then dropped by the ring ~100 ms later — which the stack reports as a bare
+            // status 133, indistinguishable from a dozen unrelated failures. CoreBluetooth
+            // bonds implicitly, which is why the desktop client never had to do this.
+            ensureBonded(ctx, device, onStage)
+
             // 133 is famously transient: it means "generic GATT failure", commonly a losing
             // race inside the stack rather than anything about the ring, and a retry after a
             // clean close usually succeeds. Retrying beats surfacing a scary error the user
@@ -252,18 +264,72 @@ class BleTransport private constructor(
                     Log.w(TAG, "connect attempt ${attempt + 1} failed: ${t.message}")
                 }
             }
-            // A weak signal is the most common cause of a connect that finds the ring and
-            // then dies, so lead with it rather than leaving a bare GATT status to be
-            // mistaken for a bug in the transport.
-            if (found.rssi < WEAK_RSSI_DBM) {
-                throw BleException(
-                    "the ring answered the scan at ${found.rssi} dBm, which is too weak to " +
-                        "hold a connection (anything below $WEAK_RSSI_DBM usually fails). " +
-                        "Put the ring next to the phone — wearing it also keeps it awake — " +
-                        "and try again. Underlying failure: ${last?.message}",
-                )
+            // Signal strength is a footnote, not the headline. It was briefly mistaken for
+            // the cause of a 133 here, and the real answer was a missing bond — so report
+            // the actual failure first and mention RSSI only as a contributing factor.
+            val note = if (found.rssi < WEAK_RSSI_DBM) {
+                " (signal was ${found.rssi} dBm, on the weak side, which can contribute)"
+            } else {
+                ""
             }
-            throw last ?: BleException("could not connect to the ring")
+            throw BleException("${last?.message ?: "could not connect to the ring"}$note")
+        }
+
+        /**
+         * Make sure the phone is bonded to the ring, pairing if it is not.
+         *
+         * A bond is *not* the ring's auth key — it is a link-layer pairing held by the
+         * Bluetooth stack, entirely separate from the 16-byte key in [RingKeyStore]. Adding
+         * one here cannot invalidate the desktop client's key; at worst the ring's bond table
+         * is full and the desktop has to re-bond on its next connect.
+         */
+        @SuppressLint("MissingPermission")
+        private suspend fun ensureBonded(
+            ctx: Context,
+            device: BluetoothDevice,
+            onStage: (String) -> Unit,
+        ) {
+            if (device.bondState == BluetoothDevice.BOND_BONDED) return
+
+            onStage("pairing")
+            val settled = CompletableDeferred<Int>()
+            val receiver = object : BroadcastReceiver() {
+                override fun onReceive(context: Context, intent: Intent) {
+                    if (intent.action != BluetoothDevice.ACTION_BOND_STATE_CHANGED) return
+                    @Suppress("DEPRECATION")
+                    val subject = intent.getParcelableExtra<BluetoothDevice>(
+                        BluetoothDevice.EXTRA_DEVICE,
+                    )
+                    if (subject?.address != device.address) return
+                    when (val state = intent.getIntExtra(BluetoothDevice.EXTRA_BOND_STATE, -1)) {
+                        BluetoothDevice.BOND_BONDED, BluetoothDevice.BOND_NONE -> {
+                            Log.i(TAG, "bond state settled at $state")
+                            settled.complete(state)
+                        }
+                        // BOND_BONDING is progress, not an outcome — keep waiting.
+                    }
+                }
+            }
+            ContextCompat.registerReceiver(
+                ctx,
+                receiver,
+                IntentFilter(BluetoothDevice.ACTION_BOND_STATE_CHANGED),
+                ContextCompat.RECEIVER_NOT_EXPORTED,
+            )
+            try {
+                if (!device.createBond()) throw BleException("could not start pairing with the ring")
+                val state = withTimeoutOrNull(BOND_TIMEOUT_MS) { settled.await() }
+                    ?: throw BleException(
+                        "timed out pairing with the ring — if a system pairing prompt " +
+                            "appeared, accept it and try again",
+                    )
+                if (state != BluetoothDevice.BOND_BONDED) {
+                    throw BleException("the ring refused pairing, or it was cancelled")
+                }
+                Log.i(TAG, "bonded")
+            } finally {
+                runCatching { ctx.unregisterReceiver(receiver) }
+            }
         }
 
         /** One connect attempt: GATT open → MTU → discovery → subscriptions. */

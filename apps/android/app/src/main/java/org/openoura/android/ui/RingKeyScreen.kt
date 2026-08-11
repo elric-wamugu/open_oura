@@ -179,15 +179,17 @@ fun RingKeyScreen(
             enabled = !probing,
             modifier = Modifier.fillMaxWidth(),
         ) {
-            Text(if (probing) "Testing…" else "Test ring connection")
+            Text(if (probing) "Testing…" else "Pair & test connection")
         }
         if (probeStatus != null) {
             Text(probeStatus, color = c.muted, fontSize = 12.sp, fontFamily = FontFamily.Monospace)
         }
 
         Text(
-            "The connection test needs no key — it only asks the ring for its firmware. " +
-                "Syncing history does need one, and is still to come.",
+            "The test needs no key — it only asks the ring for its firmware. The first run " +
+                "creates a Bluetooth pairing with the ring, which the ring requires before " +
+                "it will hold a connection. That pairing is separate from the auth key and " +
+                "does not affect the desktop client's.",
             color = c.faint,
             fontSize = 11.sp,
         )
