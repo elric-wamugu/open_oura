@@ -7,58 +7,99 @@ Tested live against a Ring 3 Horizon and a Ring 5 (pairing, auth, and event sync
 confirmed on both). Designed for Ring 3/4/5, which share the same GATT layout,
 packet framing, and authentication flow.
 
-## Fork: dashboard improvements (`dashboard-improvements` branch)
+## Fork: two clients, one Rust brain
 
-This fork extends the web dashboard so more of it works **without Oura's
-proprietary PyTorch models** (which aren't bundled), plus performance, UX, and
-correctness work. Validated on a Ring 3 Heritage (`BLB_03`).
+Two branches, both forks of `Th0rgal/open_oura` and both synced with upstream `main`:
+
+| Branch | What it holds |
+| --- | --- |
+| `dashboard-improvements` | The web dashboard + everything in `crates/` (the shared brain) |
+| `android-client` | Branches off the above and adds `apps/android/` — the native Compose client |
+
+Every computed metric lives once in **`crates/oura-summary`** and both clients render the
+same JSON. Validated end to end on a Ring 3 Heritage (`BLB_03`) and a Pixel 5. See
+`docs/clients-web-and-ios.md` for the feature ↔ feature map and
+`docs/android-client-plan.md` for the Android phases.
 
 ### Changes (new capabilities)
 
-- **Native sleep staging** — when no SleepNet output is available, the hypnogram
-  is assembled from the ring's own `sleep_phase_data` events (logged as a burst
-  a couple of hours after wake, matched to each night by wake time). Unblocks the
-  sleep-stages view, sleep efficiency, the overnight polysomnograph, and sleep
-  architecture — no model needed.
-- **Native blood oxygen** — rings that emit `spo2_event` (summarized SpO₂ %)
-  rather than the `spo2_r_pi_event` R-ratio now render Blood Oxygen from those
-  percentages directly.
-- **Streaming sync progress** — `POST /api/sync` streams Server-Sent Events; the
-  header shows a live determinate progress bar ("N events · X KB left on ring")
-  instead of a spinner.
-- **Private remote access** — `OURA_DASH_ALLOWED_HOSTS` opts extra `Host` values
-  past the loopback guard, for reaching the dashboard over **Tailscale** (default
-  stays loopback-only; never expose it publicly — no auth, health data + ring key).
-- **Material Design 3 theme** with a persisted light/dark toggle.
-- **Live battery** — captured at each sync and shown with its age (`98% · 2h`),
-  instead of a stale value scraped from old `debug_data` events.
+- **Native sleep staging** — with no SleepNet output the hypnogram is assembled from the
+  ring's own `sleep_phase_data`, unblocking stages, efficiency, the polysomnograph and
+  sleep architecture with no model.
+- **Native blood oxygen** — rings emitting `spo2_event` (direct %) rather than the
+  `spo2_r_pi_event` R-ratio render Blood Oxygen from those percentages.
+- **Native Android client** (`apps/android/`) — Jetpack Compose on the same Rust core
+  through UniFFI Kotlin. Day card, sleep and activity reports, day browser, profile editor,
+  battery panel, effort sessions. No Rust changes were needed: `oura-core` already declared
+  `cdylib` and `oura-link` already delegated BLE to the platform.
+- **Home-screen widgets** (Android) — three Glance widgets: Vitals, Last night, Today. They
+  read a ~600-byte projection written after each recompute, never the core.
+- **Per-bucket steps + movement scrubber** — `activity_steps` gives 96 × 15-min step counts
+  from the same per-minute rate as the daily total, so a hover (web) or drag (Android)
+  reports "14:30–14:45 · 525 steps · 1.32 MET" and cannot contradict the day figure.
+- **Peak sustained heart rate** — the largest 30-second rolling median of the quality-gated
+  beat series, reported against a Tanaka age-predicted maximum. Not a raw daily max, which
+  would only ever report the worst PPG artefact.
+- **Battery log + discharge runs** — the ring's own `battery_level_changed` events (percent
+  *and* voltage) charted across charge cycles, with per-run %/h and a normalised "hours from
+  full". Far richer than the handful of sync-time samples.
+- **Effort sessions** — `ehr_trace_event` fires while the ring believes you are exercising.
+  Its payload is undecoded, but *when* it fires is the signal, so clustering it yields
+  sessions with HR and intensity. This fills a list that was otherwise permanently empty,
+  since labelled sessions need Oura's AAD model.
+- **Streaming sync progress**, **private remote access** via `OURA_DASH_ALLOWED_HOSTS`,
+  **Material Design 3** with a persisted light/dark toggle, and **live battery** captured at
+  sync with its age.
 
 ### Improvements
 
-- **Sync speed** — SQLite WAL + `synchronous=NORMAL`: fsync per checkpoint, not per
-  INSERT (~20× faster on a large drain; the dashboard can also read while syncing).
-- **Timestamp accuracy** — the activity/sleep timeline is anchored by mapping the
-  ring's counter (`ds`) back from each boot-epoch's newest event at ~10 ds/sec.
-  Sleep and activity now land at the right hours (e.g. sleep `23:03–09:09`, not a
-  compressed afternoon window). See the note on the ring having no real clock below.
-- **Activity ridge** now uses a 12-hour AM/PM hour axis (`12AM · 3AM … 12AM`,
-  thinned to every 6 h on narrow screens) instead of a raw `0–24` scale.
-- **Honest gating** — Cardiovascular age says "needs Oura's CVA model, which isn't
-  bundled" instead of the misleading "enable cva_ppg"; the SpO₂ subtitle no longer
-  claims R-ratio calibration when the data is a direct percentage.
+- **Timestamps stop moving.** The old model pinned each boot epoch to its newest event and
+  extrapolated back at 10 ds/sec, so a sync that stopped before draining the buffer slid
+  every earlier timestamp forward — the same night could read `10:02–20:56` in one view and
+  `23:57–09:47` in the next. `build_summary` now fits an offset per epoch
+  (`fit_ds_offsets`): each sync bounds the offset from above, and the fit is the running
+  minimum from the newest ds backwards. Partial drains self-correct, and today's sync cannot
+  move last week's night. Verified: 0 of 15 shared nights move between an early and a
+  complete view. Unit-tested.
+- **A bedtime period under 90 minutes is not a night.** The ring logs one for any stillness,
+  so a quiet evening produced 10–40 minute "nights" — 20 of 33 were junk, and since
+  `nights[0]` drives the sleep tile, the HRV/RHR baselines and sleep debt, a fragment
+  landing after the real sleep corrupted all of them. Excluded periods are published as
+  `device.short_periods_excluded` rather than quietly dropped.
+- **Fitness leads with resting HR.** VO₂max is a Jackson regression on age, sex and weight —
+  no ring data reaches it, so it cannot respond to training. It is now a labelled
+  demographic baseline beneath the resting-HR trend, which is measured and does move.
+  Vascular age folds inside the Cardiovascular panel.
+- **One battery figure.** The top bar and the battery panel disagreed (69% vs 74%) because
+  percent came from the sync-time read and voltage from a debug event. The brain now takes
+  whichever source carries the later timestamp, and both travel together.
+- **Sync speed** — SQLite WAL + `synchronous=NORMAL`: fsync per checkpoint, not per INSERT,
+  and the dashboard can read while a sync writes.
+- **Collapsible reference panels** (Battery, Device & data health) with the choice
+  remembered, and a day browser that reads identically on both clients.
+- **Honest gating throughout** — CVA says "needs Oura's CVA model, which isn't bundled";
+  per-bucket steps say they are estimated from movement intensity; effort sessions are never
+  dressed up as labelled workouts.
+
+### Corrections worth knowing
+
+Two things this fork previously asserted turned out to be wrong. The code and docs now say so:
+
+- **The `ds` counter does not pause when the ring is off.** Measured over a month of real
+  data it runs at **9.96 ds/sec** and tracks wall clock. The apparent pausing was partial
+  drains — sync-to-sync rates alternate between ~3 and ~500 ds/sec, which is a sync that
+  stopped short followed by one that caught up.
+- **Battery life did not degrade.** Full-charge runs fell from ~165 h to ~77 h, but nothing
+  was switched on: every sensor stream has emitted since day one. The ring is simply working
+  3.5× harder (12,530 → 44,413 events/day), and the flattering early runs span days it was
+  barely worn.
 
 ### Still needs the proprietary model
 
-**Cardiovascular / vascular age (CVA)** is a learned neural net on raw PPG — there
-is no formula substitute, so it stays gated until you supply Oura's model + a torch
-venv. The raw `cva_raw_ppg_data` is captured regardless.
-
-> **Note — the ring has no reliable clock.** It emits no `time_sync`/`rtc_beacon`
-> anchor and its `ds` counter pauses when the ring is off/dead. Timestamps are
-> accurate for continuously-worn stretches; history spanning a power loss or a day
-> off the wrist can still compress. Wear it continuously and sync often for the best
-> results. (A per-sync-batch `captured_unix` anchor was tried and reverted — it
-> compressed every buffered overnight sleep into the morning sync window.)
+**Cardiovascular / vascular age (CVA)** is a learned net on raw PPG with no formula
+substitute, so it stays gated until you supply Oura's model and a torch venv. Note that
+`cva_raw_ppg_data` is ~5.7% of synced bytes and yields **no metric at all** without it — the
+cheapest feature to switch off if you want the battery back.
 
 ## What you can recover
 
