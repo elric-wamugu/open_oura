@@ -1645,6 +1645,22 @@ async function load() {
   });
 }
 
+// Remember which reference panels the user left open. They are collapsed on a first
+// visit (they are reference, not the daily read), but a choice to open one should not
+// be undone by every reload.
+function foldState() {
+  document.querySelectorAll("details.fold[data-fold]").forEach((d) => {
+    const key = "fold:" + d.dataset.fold;
+    let saved = null;
+    try { saved = localStorage.getItem(key); } catch { /* private mode: just don't persist */ }
+    if (saved !== null) d.open = saved === "1";
+    d.addEventListener("toggle", () => {
+      try { localStorage.setItem(key, d.open ? "1" : "0"); } catch { /* ignore */ }
+    });
+  });
+}
+foldState();
+
 $("sync-btn").addEventListener("click", doSync);
 $("profile-btn").addEventListener("click", openProfile);
 $("profile-form").addEventListener("submit", saveProfile);

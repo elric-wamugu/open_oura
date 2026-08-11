@@ -81,14 +81,20 @@
       </section>
     </div>
 
+    <!-- Reference panels: collapsible, and the open/closed choice is remembered
+         (see foldState in app.js) so it survives a reload. -->
     <section class="panel" id="battery-panel">
-      <div class="panel-head"><h2><span class="ic" style="--i:url(/icons/battery-high.svg)"></span>Battery</h2></div>
-      <div id="battery" class="battery-body"><div class="skeleton skeleton-block"></div></div>
+      <details class="fold" data-fold="battery">
+        <summary class="panel-head"><h2><span class="ic" style="--i:url(/icons/battery-high.svg)"></span>Battery</h2><span class="chev"></span></summary>
+        <div id="battery" class="battery-body"><div class="skeleton skeleton-block"></div></div>
+      </details>
     </section>
 
     <section class="panel" id="device-panel">
-      <div class="panel-head"><h2><span class="ic" style="--i:url(/icons/cpu.svg)"></span>Device &amp; data health</h2></div>
-      <div id="device" class="device"><div class="skeleton skeleton-block"></div></div>
+      <details class="fold" data-fold="device">
+        <summary class="panel-head"><h2><span class="ic" style="--i:url(/icons/cpu.svg)"></span>Device &amp; data health</h2><span class="chev"></span></summary>
+        <div id="device" class="device"><div class="skeleton skeleton-block"></div></div>
+      </details>
     </section>
 
     <footer class="foot">
