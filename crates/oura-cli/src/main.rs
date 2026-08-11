@@ -80,6 +80,19 @@ enum Command {
         /// How many events to ask for (kept small — this is a probe, not a sync).
         #[arg(long, default_value_t = 10)]
         max: u16,
+        /// Skip the extended-path attempt, so the timing matches a steady-state drain
+        /// batch on a ring that only answers legacy `GetEvent`.
+        #[arg(long)]
+        legacy: bool,
+        /// Also send the post-batch ack and time it — the one phase a plain probe skips
+        /// and the prime suspect for a slow drain.
+        #[arg(long)]
+        ack: bool,
+        /// Run N sequential batches, advancing the cursor each time, WITHOUT acking.
+        /// This is a drain with the ack removed: if per-batch time stays flat, the ring
+        /// is not busy during those 21 s and the ack can simply go.
+        #[arg(long, default_value_t = 1)]
+        repeat: u32,
     },
     /// Read the ring's latest cached HR / SpO2 values.
     Latest,
@@ -362,7 +375,13 @@ async fn main() -> Result<()> {
         Command::Pair => cmd_pair(&cli).await,
         Command::Info => cmd_info(&cli, &key).await,
         Command::Sync { sync_time } => cmd_sync(&cli, &key, *sync_time).await,
-        Command::Peek { from, max } => cmd_peek(&cli, &key, *from, *max).await,
+        Command::Peek {
+            from,
+            max,
+            legacy,
+            ack,
+            repeat,
+        } => cmd_peek(&cli, &key, *from, *max, *legacy, *ack, *repeat).await,
         Command::Latest => cmd_latest(&cli, &key).await,
         Command::LiveHr { seconds, raw } => cmd_live_hr(&cli, &key, *seconds, *raw).await,
         Command::Accel { seconds } => cmd_accel(&cli, &key, *seconds).await,
@@ -836,7 +855,15 @@ async fn cmd_info(cli: &Cli, key: &Option<[u8; 16]>) -> Result<()> {
 /// Read-only history probe — see [`Command::Peek`]. Authenticates and registers
 /// the stream exactly as `sync` does, asks for one small batch, and stops: no
 /// ack is sent and no database is written, so the ring's state is unchanged.
-async fn cmd_peek(cli: &Cli, key: &Option<[u8; 16]>, from: u32, max: u16) -> Result<()> {
+async fn cmd_peek(
+    cli: &Cli,
+    key: &Option<[u8; 16]>,
+    from: u32,
+    max: u16,
+    legacy: bool,
+    send_ack: bool,
+    repeat: u32,
+) -> Result<()> {
     let key = key
         .as_ref()
         .ok_or_else(|| anyhow!("peek requires --key-file (history events are auth-gated)"))?;
@@ -862,8 +889,45 @@ async fn cmd_peek(cli: &Cli, key: &Option<[u8; 16]>, from: u32, max: u16) -> Res
     }
     println!("Probing from cursor {from} for up to {max} event(s) — no ack, no writes ...");
 
+    // Repeat mode: a drain with the ack taken out, to find out whether the ring is
+    // actually busy for those 21 s or just slow to answer that one request.
+    if repeat > 1 {
+        let mut cursor = from;
+        let mut total_events = 0usize;
+        let run = std::time::Instant::now();
+        for i in 1..=repeat {
+            let started = std::time::Instant::now();
+            let o = client
+                .peek_events(cursor, max, legacy, false)
+                .await
+                .context("probing history")?;
+            let next = o.events.iter().map(|e| e.timestamp).max().unwrap_or(cursor) + 1;
+            println!(
+                "  batch {i:>3}: flush {:>4} ms · fetch {:>5} ms · {:>4} events · \
+                 {:>5} ms total · cursor → {next}",
+                o.flush_ms,
+                o.fetch_ms,
+                o.events.len(),
+                started.elapsed().as_millis(),
+            );
+            total_events += o.events.len();
+            if o.events.is_empty() {
+                println!("  (drained)");
+                break;
+            }
+            cursor = next;
+        }
+        let secs = run.elapsed().as_secs_f64();
+        println!(
+            "\n{total_events} events in {secs:.1} s = {:.0} events/sec, no acks sent",
+            total_events as f64 / secs.max(0.001),
+        );
+        let _ = client.transport().disconnect().await;
+        return Ok(());
+    }
+
     let out = client
-        .peek_events(from, max)
+        .peek_events(from, max, legacy, send_ack)
         .await
         .context("probing history")?;
 
@@ -875,7 +939,27 @@ async fn cmd_peek(cli: &Cli, key: &Option<[u8; 16]>, from: u32, max: u16) -> Res
             "legacy (GetEvent)"
         }
     );
-    println!("Events    : {}", out.events.len());
+    // The whole point of the probe when chasing a slow drain: which phase actually costs.
+    // A fixed per-batch overhead and a ring that is slow to produce old records look
+    // identical from the outside and need opposite fixes.
+    let rate = if out.fetch_ms > 0 {
+        out.events.len() as f64 / (out.fetch_ms as f64 / 1000.0)
+    } else {
+        0.0
+    };
+    println!(
+        "Timing    : flush {} ms · fetch {} ms{} · total {} ms",
+        out.flush_ms,
+        out.fetch_ms,
+        out.ack_ms
+            .map(|a| format!(
+                " · ack {a} ms ({})",
+                if out.ack_answered { "answered" } else { "NO REPLY — waited out the window" }
+            ))
+            .unwrap_or_default(),
+        out.flush_ms + out.fetch_ms + out.ack_ms.unwrap_or(0)
+    );
+    println!("Events    : {} ({rate:.1} events/sec during the fetch)", out.events.len());
     match out.bytes_left {
         Some(b) => println!("Bytes left: {b}"),
         None => println!("Bytes left: <no summary packet from the ring>"),

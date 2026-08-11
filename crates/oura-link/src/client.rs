@@ -89,6 +89,18 @@ pub struct PeekOutcome {
     pub bytes_left: Option<u32>,
     /// Whether the extended (`ExtGetEvent`) path answered, or it fell back to legacy.
     pub extended: bool,
+    /// Time spent on the `DataFlush` round trip.
+    pub flush_ms: u128,
+    /// Time spent on the post-fetch ack round trip, when the probe was asked to send
+    /// one, and whether the ring answered it at all.
+    pub ack_ms: Option<u128>,
+    pub ack_answered: bool,
+    /// Time spent on the event fetch itself, from request to terminal packet.
+    ///
+    /// Split out because a slow drain has two very different possible causes — fixed
+    /// per-batch round-trip overhead, or the ring being slow to actually produce the
+    /// records — and only the second is a property of the data being asked for.
+    pub fetch_ms: u128,
 }
 
 /// Progress after each fully-processed event batch: the checkpointed cursor,
@@ -497,9 +509,12 @@ impl<T: Transport> OuraClient<T> {
         };
         // Safety bound against a misbehaving ring that never reports drained.
         for _ in 0..100_000 {
+            let t_flush = std::time::Instant::now();
             let mut packets = self
                 .request_tag(&protocol::req_data_flush(), 0x29)
                 .await?;
+            let flush_ms = t_flush.elapsed().as_millis();
+            let t_fetch = std::time::Instant::now();
             if use_extended {
                 let ext = self
                     .request_batch(
@@ -529,6 +544,8 @@ impl<T: Transport> OuraClient<T> {
                         .await?,
                 );
             }
+
+            let fetch_ms = t_fetch.elapsed().as_millis();
 
             let mut summary: Option<u32> = None;
             let mut max_ts = start;
@@ -574,11 +591,21 @@ impl<T: Transport> OuraClient<T> {
             let progressed = batch_events > 0 && next > start;
             if progressed {
                 start = next;
-                let _ = self
-                    .request_tag(&protocol::req_get_event_ack(start), 0x11)
-                    .await;
             }
             let progress = drain_progress.observe(bytes_left);
+
+            // Where the wall-clock actually goes, per batch. A drain that crawls is either
+            // paying fixed round-trip overhead or waiting on the ring to produce records,
+            // and those call for completely different fixes.
+            tracing::debug!(
+                batch_events,
+                flush_ms,
+                fetch_ms,
+                bytes_left,
+                events_per_sec =
+                    (batch_events as f64 / (fetch_ms.max(1) as f64 / 1000.0)) as u32,
+                "batch timing"
+            );
 
             // Report every batch (even an empty terminal one) so callers can
             // persist the cursor and show progress.
@@ -598,6 +625,25 @@ impl<T: Transport> OuraClient<T> {
                 )));
             }
         }
+        // One ack at the end, written but never awaited.
+        //
+        // The official app acks after every batch, and copying that cost 21 s per batch —
+        // measured, and 99.2% of a drain's wall clock. The ring answers it, just very
+        // slowly, and it is not busy meanwhile: ten back-to-back batches with no acks held
+        // a flat ~155 ms each (1,611 events/sec, vs ~12 with them). Nothing we rely on
+        // depends on it either — `bytes_left` is computed from the cursor we ask with, the
+        // cursor itself lives in our database, and the ring demonstrably re-serves acked
+        // history. So it is sent once, for whatever bookkeeping it does on the ring, and
+        // deliberately not awaited.
+        //
+        // Not awaiting is only safe *here*, after the last batch: a reply arriving 21 s
+        // later would otherwise land inside the next batch's collection window, and since
+        // it is a `0x11` it would be mistaken for that batch's summary and truncate it.
+        // Callers issue no further requests after a drain.
+        if total > 0 {
+            let _ = self.transport.write(&protocol::req_get_event_ack(start)).await;
+        }
+
         Ok(SyncOutcome {
             events_synced: total,
             next_cursor: start,
@@ -613,28 +659,44 @@ impl<T: Transport> OuraClient<T> {
     /// point at a cursor a real sync has already passed, which is the only way to
     /// answer "does the ring still hold events it has already handed over?" —
     /// e.g. before letting a second client sync the same ring.
-    pub async fn peek_events(&self, cursor: u32, max_events: u16) -> Result<PeekOutcome> {
+    /// `force_legacy` skips the extended-path attempt. A real drain only tries that on
+    /// its first batch, so leaving it in makes a probe look slower than the steady state
+    /// it is meant to represent.
+    pub async fn peek_events(
+        &self,
+        cursor: u32,
+        max_events: u16,
+        force_legacy: bool,
+        send_ack: bool,
+    ) -> Result<PeekOutcome> {
         let batch_terminal = |p: &Packet| {
             p.tag == 0x11
                 || (p.tag == 0x2f && matches!(p.payload.first(), Some(0x42) | Some(0x00)))
         };
 
+        let t_flush = std::time::Instant::now();
         let mut packets = self
             .request_tag(&protocol::req_data_flush(), 0x29)
             .await?;
+        let flush_ms = t_flush.elapsed().as_millis();
 
         // Prefer the extended path, exactly as the drain does, so the probe
         // exercises the same code the real sync would.
-        let mut extended = true;
-        let ext = self
-            .request_batch(
+        let t_fetch = std::time::Instant::now();
+        let mut extended = !force_legacy;
+        let ext = if force_legacy {
+            Vec::new()
+        } else {
+            self.request_batch(
                 &protocol::req_ext_get_event((cursor as u64) * 100, max_events, 0),
                 batch_terminal,
             )
-            .await?;
-        let unsupported = ext
-            .iter()
-            .any(|p| p.tag == 0x2f && p.payload.first().copied() == Some(0x00));
+            .await?
+        };
+        let unsupported = force_legacy
+            || ext
+                .iter()
+                .any(|p| p.tag == 0x2f && p.payload.first().copied() == Some(0x00));
         if unsupported {
             extended = false;
             packets.extend(
@@ -647,6 +709,7 @@ impl<T: Transport> OuraClient<T> {
         } else {
             packets.extend(ext);
         }
+        let fetch_ms = t_fetch.elapsed().as_millis();
 
         let mut summary: Option<u32> = None;
         let mut events = Vec::new();
@@ -670,10 +733,32 @@ impl<T: Transport> OuraClient<T> {
         // Unlike the drain, a missing summary is not fatal here: "the ring said
         // nothing" is itself a meaningful probe result, so report it as unknown
         // rather than erroring out and losing the events we did see.
+        // Optionally exercise the ack the real drain sends after every batch. It is the
+        // one phase a plain probe never pays, and the arithmetic against a real sync says
+        // it is where the wall-clock goes.
+        let (ack_ms, ack_answered) = if send_ack {
+            let next = events.iter().map(|e| e.timestamp).max().unwrap_or(cursor) + 1;
+            let t = std::time::Instant::now();
+            let replies = self
+                .request_tag(&protocol::req_get_event_ack(next), 0x11)
+                .await
+                .unwrap_or_default();
+            (
+                Some(t.elapsed().as_millis()),
+                replies.iter().any(|p| p.tag == 0x11),
+            )
+        } else {
+            (None, false)
+        };
+
         Ok(PeekOutcome {
             events,
             bytes_left: summary,
             extended,
+            flush_ms,
+            fetch_ms,
+            ack_ms,
+            ack_answered,
         })
     }
 
