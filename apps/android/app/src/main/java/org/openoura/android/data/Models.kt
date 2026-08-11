@@ -161,6 +161,28 @@ data class Battery(
     val cycles: List<BatteryCycle> = emptyList(),
 )
 
+/**
+ * A stretch the ring recorded an exercise-HR trace for.
+ *
+ * Deliberately unlabelled: naming a session ("running") is what Oura's AAD model does, and
+ * that model isn't bundled. This only knows the ring was recording effort, so it must never
+ * be rendered as a named workout.
+ *
+ * `hrPeak` is absent whenever it wouldn't exceed `hrMean` — see effort_sessions() in
+ * oura-summary for why that can legitimately happen during movement.
+ */
+@Serializable
+data class EffortSession(
+    val start: Double,
+    val end: Double,
+    @SerialName("duration_min") val durationMin: Double = 0.0,
+    @SerialName("hr_mean") val hrMean: Double? = null,
+    @SerialName("hr_peak") val hrPeak: Double? = null,
+    @SerialName("intensity_mean") val intensityMean: Double? = null,
+    @SerialName("intensity_peak") val intensityPeak: Double? = null,
+    val traces: Int = 0,
+)
+
 @Serializable
 data class Summary(
     val digest: String? = null,
@@ -173,6 +195,7 @@ data class Summary(
     @SerialName("activity_steps") val activitySteps: Map<String, List<Double>> = emptyMap(),
     @SerialName("activity_daily") val activityDaily: Map<String, DailyStat> = emptyMap(),
     val battery: Battery = Battery(),
+    val effort: List<EffortSession> = emptyList(),
     val profile: Profile? = null,
     val cardio: Cardio? = null,
     val fitness: Fitness? = null,
@@ -199,6 +222,10 @@ data class Summary(
         get() = (activityProfile.keys + nights.mapNotNull { wakeYmd(it) })
             .toSortedSet(reverseOrder()).toList()
 
+    /** Ring-detected effort falling on `day`, earliest first. Mirrors the web effortForDay(). */
+    fun effortForDay(day: String): List<EffortSession> =
+        effort.filter { localYmd(it.start) == day }.sortedBy { it.start }
+
     /** The primary sleep you woke from on `day` — the longest in-bed night beats a nap. */
     fun nightForDay(day: String): NightRow? =
         nights.filter { wakeYmd(it) == day }.maxByOrNull { it.inBedH ?: 0.0 }
@@ -215,4 +242,10 @@ internal fun nextCivilDay(y: Int, m: Int, d: Int): String {
     if (dd > dim[mm - 1]) { dd = 1; mm++ }
     if (mm > 12) { mm = 1; yy++ }
     return "%04d-%02d-%02d".format(yy, mm, dd)
+}
+
+/** Local calendar date of a unix instant, in the device's own zone. */
+internal fun localYmd(unix: Double): String {
+    val d = java.time.Instant.ofEpochSecond(unix.toLong()).atZone(java.time.ZoneId.systemDefault())
+    return "%04d-%02d-%02d".format(d.year, d.monthValue, d.dayOfMonth)
 }

@@ -51,7 +51,7 @@ metric there once and both clients receive it in the JSON.
 | **Peak sustained HR** (daily) | `activityReport` metric + note | `ActivityReport` readout + note | `activity_daily[].peak_hr`, `fitness.hr_max_predicted` | — |
 | Movement ridge | `ridgeSvg` | `MovementRidge` | `activity_profile` | — (MET, model-free) |
 | **Activity sessions / workouts** | `openActDetail` (session) | workouts section | `activity` | AAD (web: Python · iOS: `ActivityModel`) |
-| **Ring-detected effort** (fallback when AAD is absent) | `effortForDay` + effort rows | *not yet ported* | `effort` | — (exercise-HR trace timing) |
+| **Ring-detected effort** (fallback when AAD is absent) | `effortForDay` + effort rows | `EffortSessions` (DayReportScreen.kt) | `effort` | — (exercise-HR trace timing) |
 | Steps / active calories / **distance** | activity report stats | activity day stats | `activity_daily` (incl. `distance_m`) | — |
 | Previous days browser | `openDaysBrowser` → `openDayPage` | `AllDaysView` → `DayDetailView` | day keys | — |
 | Device & data health | `renderDevice` | device section | `device`, `streams` | — |

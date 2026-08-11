@@ -26,6 +26,10 @@ import org.openoura.android.data.NightRow
 import org.openoura.android.data.Summary
 import org.openoura.android.ui.theme.Oura
 import org.openoura.android.ui.theme.OuraColors
+import androidx.compose.runtime.remember
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 import kotlin.math.roundToInt
 
 /**
@@ -220,9 +224,12 @@ private fun ActivityReport(s: Summary, ymd: String, c: OuraColors) {
             "${lightMin.roundToInt()} min" to "lightly active",
             "%.1f MET".format(peakMet) to "peak intensity",
             (peakHr?.let { "${it.roundToInt()} bpm" } ?: "—") to "peak hr",
+            "${s.effortForDay(ymd).size}" to "sessions",
         ),
         c,
     )
+    EffortSessions(s, ymd, c)
+
     if (peakHr != null) {
         val hrMax = s.fitness?.hrMaxPredicted
         val pct = hrMax?.let { (peakHr / it * 100).roundToInt() }
@@ -237,6 +244,58 @@ private fun ActivityReport(s: Summary, ymd: String, c: OuraColors) {
             color = c.faint, fontSize = 11.sp,
         )
     }
+}
+
+/**
+ * Sessions the ring recorded an exercise-HR trace for.
+ *
+ * Shown as "effort", never as a named workout: labelling is what Oura's AAD model does and
+ * it isn't bundled, so `activity[]` stays empty. Mirrors the web's effort rows.
+ */
+@Composable
+private fun EffortSessions(s: Summary, ymd: String, c: OuraColors) {
+    val sessions = s.effortForDay(ymd)
+    Section("Sessions", c)
+    if (sessions.isEmpty()) {
+        Text("No sessions detected this day.", color = c.muted, fontSize = 12.sp)
+        return
+    }
+    val clock = remember { DateTimeFormatter.ofPattern("HH:mm") }
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        sessions.forEach { e ->
+            val bits = buildList {
+                add("${e.durationMin.roundToInt()} min")
+                e.hrMean?.let { add("${it.roundToInt()} bpm avg") }
+                e.hrPeak?.let { add("${it.roundToInt()} peak") }
+                e.intensityPeak?.let { add("intensity ${it.roundToInt()}") }
+            }
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(c.surface)
+                    .border(1.dp, c.line, RoundedCornerShape(8.dp))
+                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                verticalArrangement = Arrangement.spacedBy(3.dp),
+            ) {
+                Text(
+                    "effort · ${clock.format(
+                        Instant.ofEpochSecond(e.start.toLong()).atZone(ZoneId.systemDefault()),
+                    )}",
+                    color = c.text, fontSize = 13.sp, fontFamily = FontFamily.Monospace,
+                )
+                Text(bits.joinToString(" · "), color = c.faint, fontSize = 11.sp)
+            }
+        }
+    }
+    Text(
+        "Detected from the ring's own exercise-HR trace — it records while the ring thinks " +
+            "you're working, so these are start/stop and effort, not labelled workouts. " +
+            "Naming them needs Oura's activity model, which isn't bundled. Heart rate is " +
+            "missing from some because motion corrupts the optical signal, which is exactly " +
+            "when the ring is least able to read a clean beat.",
+        color = c.faint, fontSize = 10.sp,
+    )
 }
 
 /** Shared with the web `peakHrVerdict` in app.js — keep the 95/85 thresholds in step. */
