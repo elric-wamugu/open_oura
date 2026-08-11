@@ -361,20 +361,39 @@ function renderCardio(d) {
   }
 }
 
+// Vascular age lives *inside* the Cardiovascular panel as a fold, the way Advanced &
+// debugging nests inside Device & data health. It's the same subject as the panel above
+// it, but it's gated on a model that isn't bundled — so it shouldn't compete for
+// attention with the resting-HR trend, which is the number that actually moves.
 function renderVascular(d) {
-  const box = $("vascular");
+  const host = $("cardio");
+  if (!host) return;
   const cv = d.cardio;
-  box.innerHTML = "";
-  if (!cv || cv.vascular_age == null) {
-    box.append(el("div", "error", "Cardiovascular age needs Oura's CVA model, which isn't bundled. The raw PPG is captured — scoring it requires that model."));
-    return;
+  const gated = !cv || cv.vascular_age == null;
+
+  const fold = el("details", "subfold");
+  fold.dataset.fold = "vascular";
+  const sum = el("summary");
+  sum.innerHTML = `<span class="ic" style="--i:url(/icons/dna.svg)"></span>Vascular age` +
+    `<span class="subfold-hint">${gated ? "needs Oura's CVA model" : num(cv.vascular_age) + " yr"}</span>` +
+    `<span class="chev"></span>`;
+  fold.append(sum);
+
+  const body = el("div", "subfold-body");
+  if (gated) {
+    body.append(el("div", "error", "Cardiovascular age needs Oura's CVA model, which isn't bundled. The raw PPG is captured — scoring it requires that model."));
+  } else {
+    body.append(el("div", "big-metric", `<span class="n">${cv.vascular_age}</span><span class="u">years vascular age</span>`));
+    body.append(el("div", "sub", `${relAge(cv.vascular_age - cv.chronological_age).long} your age (${cv.chronological_age})`));
+    const kvs = el("div", "kvs");
+    kvs.append(el("div", "kv", `<div class="k">Pulse-wave velocity</div><div class="v">${cv.pwv_ms != null ? cv.pwv_ms + " m/s" : "—"}</div>`));
+    kvs.append(el("div", "kv", `<div class="k">Segments analysed</div><div class="v">${num(cv.segments)}</div>`));
+    body.append(kvs);
   }
-  box.append(el("div", "big-metric", `<span class="n">${cv.vascular_age}</span><span class="u">years vascular age</span>`));
-  box.append(el("div", "sub", `${relAge(cv.vascular_age - cv.chronological_age).long} your age (${cv.chronological_age})`));
-  const kvs = el("div", "kvs");
-  kvs.append(el("div", "kv", `<div class="k">Pulse-wave velocity</div><div class="v">${cv.pwv_ms != null ? cv.pwv_ms + " m/s" : "—"}</div>`));
-  kvs.append(el("div", "kv", `<div class="k">Segments analysed</div><div class="v">${num(cv.segments)}</div>`));
-  box.append(kvs);
+  fold.append(body);
+  host.append(fold);
+  // Built after the initial foldState() pass, so restore this one's saved state here.
+  restoreFold(fold);
 }
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -926,6 +945,91 @@ async function doFeature(feature, name, currentOn, row) {
   }
   row.classList.remove("busy");
 }
+
+// Battery: the ring's own `battery_level_changed` log, not the handful of samples taken
+// at sync time. Percent and volts are drawn together on purpose — the gauge is
+// voltage-derived, so below ~3.6 V the curve goes near-vertical and the last quarter
+// appears to vanish, and voltage sags under radio load then recovers at rest. Seeing both
+// is the difference between "the battery died" and "the reading dipped during a sync".
+const MV_LO = 3300, MV_HI = 4250;
+
+function batteryChart(series, w, h) {
+  if (!series || series.length < 2) return "";
+  const t0 = series[0].t, t1 = series[series.length - 1].t, span = Math.max(1, t1 - t0);
+  const x = (t) => ((t - t0) / span) * w;
+  const yPct = (p) => h - (Math.max(0, Math.min(100, p)) / 100) * h;
+  const yMv = (mv) => h - ((Math.max(MV_LO, Math.min(MV_HI, mv)) - MV_LO) / (MV_HI - MV_LO)) * h;
+  const path = (fn, key) => series.map((s, i) => `${i ? "L" : "M"}${x(s.t).toFixed(1)} ${fn(s[key]).toFixed(1)}`).join(" ");
+  let grid = "";
+  // a tick per day, so the discharge slope can be read against real time
+  const DAY = 86400;
+  for (let t = Math.ceil(t0 / DAY) * DAY; t < t1; t += DAY) {
+    grid += `<line x1="${x(t).toFixed(1)}" y1="0" x2="${x(t).toFixed(1)}" y2="${h}" stroke="var(--line-soft)" stroke-width="0.5"/>`;
+  }
+  return `<svg class="batt-svg" viewBox="0 0 ${w} ${h}" preserveAspectRatio="none">${grid}` +
+    `<path d="${path(yMv, "mv")}" fill="none" stroke="var(--muted)" stroke-width="1" opacity="0.55" vector-effect="non-scaling-stroke"/>` +
+    `<path d="${path(yPct, "pct")}" fill="none" stroke="var(--accent)" stroke-width="1.5" vector-effect="non-scaling-stroke"/></svg>`;
+}
+
+function renderBattery(d) {
+  const box = $("battery");
+  box.innerHTML = "";
+  const b = d.battery || {};
+  const series = b.series || [], cycles = b.cycles || [];
+  if (!series.length) {
+    box.append(el("div", "error", "No battery log yet — the ring emits these as it discharges."));
+    return;
+  }
+  const last = series[series.length - 1];
+  box.append(el("div", "big-metric",
+    `<span class="n">${last.pct}</span><span class="u">% · ${(last.mv / 1000).toFixed(2)} V</span>`));
+
+  const wrap = el("div", "batt-wrap");
+  wrap.innerHTML = batteryChart(series, 1000, 90) +
+    `<div class="batt-legend"><span><i class="sw" style="background:var(--accent)"></i>charge</span>` +
+    `<span><i class="sw" style="background:var(--muted)"></i>volts (${MV_LO / 1000}–${MV_HI / 1000} V)</span></div>`;
+  box.append(wrap);
+
+  if (cycles.length) {
+    // "From full" normalises runs that started at different levels, so they're comparable.
+    const recent = cycles.slice(-6).reverse();
+    box.append(el("p", "subhead", "Discharge runs"));
+    const list = el("div", "batt-cycles");
+    recent.forEach((c) => {
+      const row = el("div", "batt-cycle");
+      row.innerHTML =
+        `<span class="bc-when">${fmtDay(ymdOf(c.start))}</span>` +
+        `<span class="bc-drop">${c.from_pct}→${c.to_pct}%</span>` +
+        `<span class="bc-dur">${c.hours}h</span>` +
+        `<span class="bc-rate">${c.pct_per_hour}%/h</span>` +
+        `<span class="bc-full">≈${Math.round(c.projected_full_h)}h from full</span>`;
+      list.append(row);
+    });
+    box.append(list);
+
+    // Compare the newest runs against the oldest: a drift here is the whole point of the
+    // panel, and it's easy to miss reading the rows one at a time.
+    const mean = (a) => a.reduce((s, c) => s + c.projected_full_h, 0) / a.length;
+    if (cycles.length >= 4) {
+      const early = mean(cycles.slice(0, 2)), now = mean(cycles.slice(-2));
+      const pctChange = Math.round(((now - early) / early) * 100);
+      if (Math.abs(pctChange) >= 15) {
+        box.append(el("p", "batt-note",
+          `A full charge now lasts about ${Math.round(now)} h, against ${Math.round(early)} h across the earliest runs here — ` +
+          `${pctChange < 0 ? "down" : "up"} ${Math.abs(pctChange)}%. Compare like with like before reading that as wear on the cell: ` +
+          `drain tracks how much the ring actually measures, so a stretch spent off the finger will always look like excellent battery life.`));
+      }
+    }
+  }
+  box.append(el("p", "batt-note",
+    "Percent comes from voltage, so the last quarter falls away quickly and a reading taken " +
+    "mid-sync can dip well below the resting level — watch the volts line for that."));
+}
+
+const ymdOf = (unix) => {
+  const dt = new Date(unix * 1000);
+  return `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, "0")}-${String(dt.getDate()).padStart(2, "0")}`;
+};
 
 function renderDevice(d) {
   const box = $("device");
@@ -1553,12 +1657,32 @@ async function load() {
   renderDay(d);
   renderCardio(d);
   renderVascular(d);
+  renderBattery(d);
   renderDevice(d);
   document.querySelectorAll(".panel").forEach((p, i) => {
     p.classList.add("reveal");
     p.style.setProperty("--d", i * 60 + "ms");
   });
 }
+
+// Remember which reference panels the user left open. They are collapsed on a first
+// visit (they are reference, not the daily read), but a choice to open one should not
+// be undone by every reload.
+function restoreFold(d) {
+  if (!d || !d.dataset.fold) return;
+  const key = "fold:" + d.dataset.fold;
+  let saved = null;
+  try { saved = localStorage.getItem(key); } catch { /* private mode: just don't persist */ }
+  if (saved !== null) d.open = saved === "1";
+  d.addEventListener("toggle", () => {
+    try { localStorage.setItem(key, d.open ? "1" : "0"); } catch { /* ignore */ }
+  });
+}
+
+function foldState() {
+  document.querySelectorAll("details.fold[data-fold], details.subfold[data-fold]").forEach(restoreFold);
+}
+foldState();
 
 $("sync-btn").addEventListener("click", doSync);
 $("profile-btn").addEventListener("click", openProfile);

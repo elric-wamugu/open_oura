@@ -69,21 +69,28 @@
       <article class="tile skeleton"></article>
     </section>
 
-    <div class="cols-2">
-      <section class="panel" id="cardio-panel">
-        <div class="panel-head"><h2><span class="ic" style="--i:url(/icons/heartbeat.svg)"></span>Cardiovascular</h2></div>
-        <div id="cardio" class="cardio-body"><div class="skeleton skeleton-block"></div></div>
-      </section>
+    <!-- Cardiovascular owns the whole story: the resting-HR trend that actually responds
+         to training up top, with vascular age folded in beneath it (built by
+         renderVascular) the way Advanced & debugging nests inside Device & data health. -->
+    <section class="panel" id="cardio-panel">
+      <div class="panel-head"><h2><span class="ic" style="--i:url(/icons/heartbeat.svg)"></span>Cardiovascular</h2></div>
+      <div id="cardio" class="cardio-body"><div class="skeleton skeleton-block"></div></div>
+    </section>
 
-      <section class="panel" id="vascular-panel">
-        <div class="panel-head"><h2><span class="ic" style="--i:url(/icons/dna.svg)"></span>Vascular age</h2></div>
-        <div id="vascular" class="vascular-body"><div class="skeleton skeleton-block"></div></div>
-      </section>
-    </div>
+    <!-- Reference panels: collapsible, and the open/closed choice is remembered
+         (see foldState in app.js) so it survives a reload. -->
+    <section class="panel" id="battery-panel">
+      <details class="fold" data-fold="battery">
+        <summary class="panel-head"><h2><span class="ic" style="--i:url(/icons/battery-high.svg)"></span>Battery</h2><span class="chev"></span></summary>
+        <div id="battery" class="battery-body"><div class="skeleton skeleton-block"></div></div>
+      </details>
+    </section>
 
     <section class="panel" id="device-panel">
-      <div class="panel-head"><h2><span class="ic" style="--i:url(/icons/cpu.svg)"></span>Device &amp; data health</h2></div>
-      <div id="device" class="device"><div class="skeleton skeleton-block"></div></div>
+      <details class="fold" data-fold="device">
+        <summary class="panel-head"><h2><span class="ic" style="--i:url(/icons/cpu.svg)"></span>Device &amp; data health</h2><span class="chev"></span></summary>
+        <div id="device" class="device"><div class="skeleton skeleton-block"></div></div>
+      </details>
     </section>
 
     <footer class="foot">

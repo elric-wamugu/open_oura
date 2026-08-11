@@ -385,7 +385,7 @@ body {
 @media (max-width: 760px) { .breakdown { flex-wrap: wrap; gap: 10px 14px; } }
 
 /* ── cardio ─────────────────────────────────────────────── */
-.cardio-body, .vascular-body { min-height: 150px; }
+.cardio-body { min-height: 150px; }
 .cardio-note { margin: 12px 0 0; font-size: 11px; line-height: 1.55; color: var(--faint); }
 .big-metric {
   display: flex; align-items: baseline; gap: 8px;
@@ -886,3 +886,65 @@ body.page-open { overflow: hidden; }
 
 /* Toasts — rounded, elevated */
 .toast { border-radius: var(--radius-sm); background: var(--surface); box-shadow: var(--elev-3); -webkit-backdrop-filter: none; backdrop-filter: none; }
+
+/* ── battery ────────────────────────────────────────────── */
+.battery-body { min-height: 120px; }
+.batt-wrap { margin-top: 14px; }
+.batt-svg { display: block; width: 100%; height: 90px; overflow: visible; }
+.batt-legend { display: flex; gap: 16px; margin-top: 6px; font-size: 11px; color: var(--faint); }
+.batt-legend span { display: inline-flex; align-items: center; gap: 6px; }
+.batt-cycles { display: flex; flex-direction: column; gap: 2px; }
+.batt-cycle {
+  display: grid; grid-template-columns: 4.5rem 5.5rem 3.5rem 4rem 1fr;
+  gap: 10px; padding: 7px 0; border-top: 1px solid var(--line-soft);
+  font-family: var(--mono); font-variant-numeric: tabular-nums; font-size: 12px;
+}
+.batt-cycle .bc-when { color: var(--muted); }
+.batt-cycle .bc-full { color: var(--faint); text-align: right; }
+@media (max-width: 560px) {
+  .batt-cycle { grid-template-columns: 1fr 1fr; }
+  .batt-cycle .bc-full { text-align: left; }
+}
+.batt-note { margin: 12px 0 0; font-size: 11px; line-height: 1.55; color: var(--faint); }
+
+/* ── collapsible reference panels (Battery, Device & data health) ─────────
+   Same idiom as the Advanced & debugging fold, but applied to a whole panel:
+   the panel head IS the summary, so the hairline under it stays put whether
+   open or closed. */
+.fold > summary { cursor: pointer; list-style: none; user-select: none; }
+.fold > summary::-webkit-details-marker { display: none; }
+.fold > summary:hover h2 { color: var(--text); }
+.fold > summary h2 { transition: color 0.14s ease; }
+.fold:not([open]) > summary { margin-bottom: 0; padding-bottom: 0; border-bottom: none; }
+.fold > summary .chev {
+  width: 6px; height: 6px; flex: none; color: var(--faint);
+  border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor;
+  transform: rotate(45deg); margin-bottom: 3px; transition: transform 0.2s ease;
+}
+.fold[open] > summary .chev { transform: rotate(-135deg); margin-bottom: 0; }
+@media (prefers-reduced-motion: reduce) { .fold > summary .chev { transition: none; } }
+
+/* ── a fold nested inside a panel (Vascular age within Cardiovascular) ────
+   Same idiom as .dh-advanced, minus its grid-column: the host body here is a
+   plain block, not a grid. The summary carries a value hint so the fold says
+   something useful while closed. */
+.subfold { margin-top: 18px; border-top: 1px solid var(--line-soft); padding-top: 14px; }
+.subfold > summary {
+  display: flex; align-items: center; gap: 8px; cursor: pointer; list-style: none; user-select: none;
+  font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--faint); font-weight: 600;
+}
+.subfold > summary::-webkit-details-marker { display: none; }
+.subfold > summary:hover { color: var(--muted); }
+.subfold > summary .ic { font-size: 14px; }
+.subfold-hint {
+  margin-left: auto; font-family: var(--mono); font-variant-numeric: tabular-nums;
+  font-size: 11px; letter-spacing: 0; text-transform: none; color: var(--faint); font-weight: 400;
+}
+.subfold > summary .chev {
+  width: 6px; height: 6px; flex: none;
+  border-right: 1.5px solid currentColor; border-bottom: 1.5px solid currentColor;
+  transform: rotate(45deg); margin-bottom: 3px; transition: transform 0.2s ease;
+}
+.subfold[open] > summary .chev { transform: rotate(-135deg); margin-bottom: 0; }
+.subfold-body { margin-top: 14px; }
+@media (prefers-reduced-motion: reduce) { .subfold > summary .chev { transition: none; } }

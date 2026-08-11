@@ -45,7 +45,7 @@ metric there once and both clients receive it in the JSON.
 | **Movement-chart scrubber** (per-bucket steps + MET) | `metProfileChart` hover crosshair | `MetProfile` drag scrubber | `activity_steps` | — |
 | Stage breakdown | `stageBar` | `StageBreakdown` | `nights[].{deep,light,rem,wake}_pct` | SleepNet |
 | **Autonomic recovery by stage** (mean HR/HRV in deep/light/REM) | `sleepReport` autonomic grid | `SleepReport` `autonomicGrid` | `nights[].autonomic` | SleepNet (needs hypnogram) |
-| **Cardiovascular age** | `renderVascular` (own panel) | Cardio section | `cardio` | CVA (web: Python · iOS: `CvaModel`) |
+| **Cardiovascular age** | `renderVascular` — a fold *inside* the Cardiovascular panel | Cardio section | `cardio` | CVA (web: Python · iOS: `CvaModel`) |
 | **Fitness = resting-HR trend** (headline) | `renderCardio` | Fitness section | `vitals.rhr` | — |
 | **VO₂max estimate** (demoted baseline) | `renderCardio` kv | Fitness section | `fitness.vo2max` | — (Jackson, model-free) |
 | **Peak sustained HR** (daily) | `activityReport` metric + note | `ActivityReport` readout + note | `activity_daily[].peak_hr`, `fitness.hr_max_predicted` | — |
@@ -54,6 +54,7 @@ metric there once and both clients receive it in the JSON.
 | Steps / active calories / **distance** | activity report stats | activity day stats | `activity_daily` (incl. `distance_m`) | — |
 | Previous days browser | `openDaysBrowser` → `openDayPage` | `AllDaysView` → `DayDetailView` | day keys | — |
 | Device & data health | `renderDevice` | device section | `device`, `streams` | — |
+| **Battery log + discharge runs** | `renderBattery`, `batteryChart` | *not yet ported* | `battery.{series,cycles}` | — |
 | Excluded-period note | `renderDevice` (`.dh-note`) | device section stat | `device.short_periods_excluded` | — |
 
 ## The day is one unit — pair night + activity by *wake date*
@@ -136,6 +137,29 @@ HRmax would fix that, which is what `activity_daily[].peak_hr` exists to surface
   only 4 of 14 exercise episodes had usable 60-second recovery coverage, and just 41
   MET-minutes across all history fall in the 2.5–4 MET band with concurrent HR. The ring
   samples PPG when you are still, so daytime effort data is scarce by design.
+
+## Battery: read the ring's own log, not the sync-time samples
+
+`readings` only holds a battery sample per sync — a sparse subsample. The ring itself emits
+`debug_data { kind: "battery_level_changed", battery_pct, voltage_mv }` about once a minute
+whenever the level moves, which is what `battery.series` and `battery.cycles` are built
+from (`battery_history`).
+
+Percent and volts are surfaced **together** deliberately. The gauge is voltage-derived, so
+below ~3.6 V the lithium curve is near-vertical and the last quarter appears to vanish; and
+voltage sags under radio load and recovers at rest, so a percentage read during a long sync
+understates what is left. Observed on real data: 24% → 12% in ten minutes as the voltage
+fell 3679 → 3449 mV, then recovering to 3505 mV at rest with no charger.
+
+`cycles` are discharge runs found by a zigzag with hysteresis (a 5-point rise confirms the
+charger went on; runs dropping less than 15 points are ignored). `projected_full_h` — what a
+100 → 0 run would take at that run's rate — is the number to compare across runs, since runs
+start from different levels. On this ring it fell from ~165 h in early July to ~77 h by August — but that is NOT
+degradation. All sensor streams have been emitting since 8 Jul, and `feature_modes.json`
+shows nothing was switched on mid-month. What changed is workload: mean events/day went
+from 12 530 (8–17 Jul) to 44 413 (22 Jul on), 3.5x, and the flattering 163 h run spans
+12–14 Jul at ~2 270 events/day — the ring was barely being worn. Always check measurement
+volume before reading a long run as good battery life.
 
 ## Sleep metrics: two code paths, one algorithm — keep them in sync
 

@@ -707,6 +707,82 @@ fn unix_from_offsets(offsets: &[(i64, f64)], ds: i64) -> Option<f64> {
     Some(offsets[i].1 + ds as f64 / 10.0)
 }
 
+/// Discharge runs and the raw curve from the ring's own battery log.
+///
+/// The ring emits `debug_data { kind: "battery_level_changed", battery_pct, voltage_mv }`
+/// roughly once a minute whenever the level moves — a far better record than the handful
+/// of samples taken at sync time, which is all `readings` holds.
+///
+/// Reading both percent *and* voltage matters. The gauge is voltage-derived, and below
+/// ~3.6 V the lithium discharge curve is nearly vertical, so the last quarter appears to
+/// vanish in minutes. Some of that is not real capacity: voltage sags under radio load and
+/// recovers at rest, so a percentage read during a long sync understates the charge left.
+/// Showing the volts alongside lets that be seen rather than guessed at.
+///
+/// `points` must be `(unix, pct, mv)`. Returns `(series, cycles)`.
+fn battery_history(mut points: Vec<(f64, i64, i64)>) -> (Vec<Value>, Vec<Value>) {
+    points.sort_by(|a, b| a.0.total_cmp(&b.0));
+    points.dedup_by_key(|p| p.0 as i64);
+    if points.len() < 2 {
+        return (Vec::new(), Vec::new());
+    }
+    // Zigzag with hysteresis: a rise of this many points confirms the charger went on and
+    // closes the discharge run, so ordinary jitter doesn't chop a run into fragments.
+    const RISE_CONFIRMS_CHARGE: i64 = 5;
+    // Ignore runs that never dropped far enough to say anything about battery life.
+    const MIN_RUN_DROP: i64 = 15;
+
+    let pct = |i: usize| points[i].1;
+    let mut cycles = Vec::new();
+    let (mut peak, mut trough) = (0usize, 0usize);
+    let close = |peak: usize, trough: usize, out: &mut Vec<Value>| {
+        if pct(peak) - pct(trough) < MIN_RUN_DROP {
+            return;
+        }
+        let hours = (points[trough].0 - points[peak].0) / 3600.0;
+        if hours <= 0.0 {
+            return;
+        }
+        let drop = (pct(peak) - pct(trough)) as f64;
+        out.push(json!({
+            "start": points[peak].0.round(),
+            "end": points[trough].0.round(),
+            "from_pct": pct(peak),
+            "to_pct": pct(trough),
+            "from_mv": points[peak].2,
+            "to_mv": points[trough].2,
+            "hours": (hours * 10.0).round() / 10.0,
+            "pct_per_hour": (drop / hours * 100.0).round() / 100.0,
+            // What a full 100 → 0 run would take at this rate — the comparable number
+            // across runs that start from different levels.
+            "projected_full_h": ((100.0 / (drop / hours)) * 10.0).round() / 10.0,
+        }));
+    };
+    for i in 1..points.len() {
+        if pct(i) >= pct(peak) && trough == peak {
+            peak = i;
+            trough = i;
+        } else if pct(i) <= pct(trough) {
+            trough = i;
+        } else if pct(i) - pct(trough) >= RISE_CONFIRMS_CHARGE {
+            close(peak, trough, &mut cycles);
+            peak = i;
+            trough = i;
+        }
+    }
+    close(peak, trough, &mut cycles);
+
+    // Cap the charted curve so the payload can't grow without bound as history piles up.
+    const MAX_POINTS: usize = 600;
+    let step = points.len().div_ceil(MAX_POINTS).max(1);
+    let series: Vec<Value> = points
+        .iter()
+        .step_by(step)
+        .map(|(t, p, mv)| json!({ "t": t.round(), "pct": p, "mv": mv }))
+        .collect();
+    (series, cycles)
+}
+
 /// Assemble the full dashboard summary as a JSON value. The torch models are
 /// supplied by `runner` (Python subprocess on desktop, `.ptl` on-device).
 pub fn build_summary(db: &Path, tz: i64, runner: &dyn ModelRunner) -> Result<Value> {
@@ -1434,6 +1510,27 @@ pub fn build_summary(db: &Path, tz: i64, runner: &dyn ModelRunner) -> Result<Val
     let last_sync = dev.as_ref().map(|d| d.6).filter(|&t| t > 0);
     let synced_unix = last_sync.map(|t| t as f64);
 
+    // The ring's own battery log, on the wall clock.
+    let (battery_series, battery_cycles) = {
+        let mut pts: Vec<(f64, i64, i64)> = Vec::new();
+        for (event_idx, (ds, tag, jstr, _)) in events.iter().enumerate() {
+            if name_of(*tag) != "debug_data" || !jstr.contains("battery_level_changed") {
+                continue;
+            }
+            let Ok(v) = serde_json::from_str::<Value>(jstr) else {
+                continue;
+            };
+            if let Some(p) = v["battery_pct"].as_i64() {
+                pts.push((
+                    unix_in_epoch(*ds, event_epochs[event_idx]),
+                    p,
+                    v["voltage_mv"].as_i64().unwrap_or(0),
+                ));
+            }
+        }
+        battery_history(pts)
+    };
+
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs() as f64)
@@ -1481,6 +1578,7 @@ pub fn build_summary(db: &Path, tz: i64, runner: &dyn ModelRunner) -> Result<Val
         "activity": activity,
         "activity_profile": activity_profile,
         "activity_steps": activity_steps,
+        "battery": { "series": battery_series, "cycles": battery_cycles },
         "activity_daily": activity_daily,
         "vitals": { "hrv": trend(&hrv_stat), "rhr": trend(&rhr_stat) },
     }))
