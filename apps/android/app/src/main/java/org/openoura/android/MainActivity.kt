@@ -1,6 +1,8 @@
 package org.openoura.android
 
+import android.Manifest
 import android.content.Context
+import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -22,6 +24,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.openoura.android.ble.BlePermissions
+import org.openoura.android.ble.RingSyncService
+import org.openoura.android.ble.SyncPhase
 import org.openoura.android.ble.probeRing
 import org.openoura.android.data.ProfileStore
 import org.openoura.android.data.RingKeyStore
@@ -128,6 +132,28 @@ class MainActivity : ComponentActivity() {
                         probeStatus = "Bluetooth permission denied — can't reach the ring."
                     }
                 }
+
+                // Ring sync. The service owns the work and publishes progress, so this
+                // survives the screen going off and a returning Activity picks up the
+                // current phase rather than showing a stale one.
+                val syncPhase by RingSyncService.phase.collectAsState()
+                val askSyncPermissions = rememberLauncherForActivityResult(
+                    ActivityResultContracts.RequestMultiplePermissions(),
+                ) { granted ->
+                    // POST_NOTIFICATIONS may be refused without blocking the sync — only
+                    // the progress notification is lost — so the Bluetooth ones decide.
+                    if (BlePermissions.granted(applicationContext)) {
+                        RingSyncService.start(applicationContext)
+                    }
+                }
+                fun startRingSync() {
+                    if (BlePermissions.granted(applicationContext)) {
+                        RingSyncService.start(applicationContext)
+                    } else {
+                        val wanted = BlePermissions.required() + notificationPermission()
+                        askSyncPermissions.launch(wanted)
+                    }
+                }
                 var batteryOpen by remember { mutableStateOf(prefs.getBoolean("fold_battery", false)) }
 
                 Scaffold(modifier = Modifier.fillMaxSize()) { inner ->
@@ -191,13 +217,19 @@ class MainActivity : ComponentActivity() {
                     } else {
                         HomeScreen(
                             state = state,
-                            busy = busy,
+                            busy = busy || syncPhase is SyncPhase.Running,
                             onRefresh = {
                                 scope.launch {
                                     busy = true
                                     repo.recompute()
                                     busy = false
                                 }
+                            },
+                            onSyncFromRing = { startRingSync() },
+                            syncStatus = if (syncPhase is SyncPhase.Idle) {
+                                null
+                            } else {
+                                RingSyncService.describe(syncPhase)
                             },
                             onImportDatabase = { pickDatabase.launch(arrayOf("*/*")) },
                             onOpenDay = { day, sleep -> openDay = day to sleep },
@@ -216,3 +248,14 @@ class MainActivity : ComponentActivity() {
         }
     }
 }
+
+/**
+ * POST_NOTIFICATIONS only exists from API 33. Requesting it below that throws, and the
+ * sync's progress notification is the only thing it gates.
+ */
+private fun notificationPermission(): Array<String> =
+    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+        arrayOf(Manifest.permission.POST_NOTIFICATIONS)
+    } else {
+        emptyArray()
+    }

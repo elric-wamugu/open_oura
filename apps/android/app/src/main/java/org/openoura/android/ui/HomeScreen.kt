@@ -38,6 +38,10 @@ fun HomeScreen(
     state: SummaryState,
     busy: Boolean,
     onRefresh: () -> Unit,
+    /** Pull new history off the ring over BLE. The top bar's primary action. */
+    onSyncFromRing: () -> Unit,
+    /** One line of live sync state, or null when nothing is happening. */
+    syncStatus: String? = null,
     onImportDatabase: () -> Unit,
     onOpenDay: (String, Boolean) -> Unit,
     onBrowseDays: () -> Unit,
@@ -56,7 +60,21 @@ fun HomeScreen(
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
         // Order: top bar → day card → key vitals.
-        TopBar(device = ready?.summary?.device, busy = busy, onSync = onRefresh, onProfile = onProfile)
+        TopBar(
+            device = ready?.summary?.device,
+            busy = busy,
+            onSync = onSyncFromRing,
+            onProfile = onProfile,
+        )
+
+        if (syncStatus != null) {
+            Text(
+                syncStatus,
+                color = c.muted,
+                fontSize = 12.sp,
+                fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace,
+            )
+        }
 
         when (state) {
             is SummaryState.Loading -> Notice(

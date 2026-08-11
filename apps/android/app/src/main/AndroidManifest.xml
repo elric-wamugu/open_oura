@@ -22,6 +22,18 @@
         android:name="android.permission.ACCESS_FINE_LOCATION"
         android:maxSdkVersion="30" />
 
+    <!--
+        A drain runs for minutes and must survive the screen going off, so it lives in a
+        foreground service. On API 34 the `connectedDevice` type is mandatory — startForeground
+        throws without it — and the type needs its own matching permission.
+    -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission
+        android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE"
+        tools:targetApi="34" />
+    <!-- API 33+. Without it the sync still runs, but its progress notification is hidden. -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+
     <!-- No BLE, no ring: this app has nothing to offer a device without it. -->
     <uses-feature android:name="android.hardware.bluetooth_le" android:required="true" />
 
@@ -46,6 +58,11 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
+
+        <service
+            android:name=".ble.RingSyncService"
+            android:exported="false"
+            android:foregroundServiceType="connectedDevice" />
 
         <receiver
             android:name=".widget.VitalsWidgetReceiver"
