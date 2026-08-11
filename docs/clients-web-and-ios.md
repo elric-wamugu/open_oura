@@ -45,7 +45,7 @@ metric there once and both clients receive it in the JSON.
 | **Movement-chart scrubber** (per-bucket steps + MET) | `metProfileChart` hover crosshair | `MetProfile` drag scrubber | `activity_steps` | — |
 | Stage breakdown | `stageBar` | `StageBreakdown` | `nights[].{deep,light,rem,wake}_pct` | SleepNet |
 | **Autonomic recovery by stage** (mean HR/HRV in deep/light/REM) | `sleepReport` autonomic grid | `SleepReport` `autonomicGrid` | `nights[].autonomic` | SleepNet (needs hypnogram) |
-| **Cardiovascular age** | `renderVascular` (own panel) | Cardio section | `cardio` | CVA (web: Python · iOS: `CvaModel`) |
+| **Cardiovascular age** | `renderVascular` — a fold *inside* the Cardiovascular panel | Cardio section | `cardio` | CVA (web: Python · iOS: `CvaModel`) |
 | **Fitness = resting-HR trend** (headline) | `renderCardio` | Fitness section | `vitals.rhr` | — |
 | **VO₂max estimate** (demoted baseline) | `renderCardio` kv | Fitness section | `fitness.vo2max` | — (Jackson, model-free) |
 | **Peak sustained HR** (daily) | `activityReport` metric + note | `ActivityReport` readout + note | `activity_daily[].peak_hr`, `fitness.hr_max_predicted` | — |

@@ -361,20 +361,39 @@ function renderCardio(d) {
   }
 }
 
+// Vascular age lives *inside* the Cardiovascular panel as a fold, the way Advanced &
+// debugging nests inside Device & data health. It's the same subject as the panel above
+// it, but it's gated on a model that isn't bundled — so it shouldn't compete for
+// attention with the resting-HR trend, which is the number that actually moves.
 function renderVascular(d) {
-  const box = $("vascular");
+  const host = $("cardio");
+  if (!host) return;
   const cv = d.cardio;
-  box.innerHTML = "";
-  if (!cv || cv.vascular_age == null) {
-    box.append(el("div", "error", "Cardiovascular age needs Oura's CVA model, which isn't bundled. The raw PPG is captured — scoring it requires that model."));
-    return;
+  const gated = !cv || cv.vascular_age == null;
+
+  const fold = el("details", "subfold");
+  fold.dataset.fold = "vascular";
+  const sum = el("summary");
+  sum.innerHTML = `<span class="ic" style="--i:url(/icons/dna.svg)"></span>Vascular age` +
+    `<span class="subfold-hint">${gated ? "needs Oura's CVA model" : num(cv.vascular_age) + " yr"}</span>` +
+    `<span class="chev"></span>`;
+  fold.append(sum);
+
+  const body = el("div", "subfold-body");
+  if (gated) {
+    body.append(el("div", "error", "Cardiovascular age needs Oura's CVA model, which isn't bundled. The raw PPG is captured — scoring it requires that model."));
+  } else {
+    body.append(el("div", "big-metric", `<span class="n">${cv.vascular_age}</span><span class="u">years vascular age</span>`));
+    body.append(el("div", "sub", `${relAge(cv.vascular_age - cv.chronological_age).long} your age (${cv.chronological_age})`));
+    const kvs = el("div", "kvs");
+    kvs.append(el("div", "kv", `<div class="k">Pulse-wave velocity</div><div class="v">${cv.pwv_ms != null ? cv.pwv_ms + " m/s" : "—"}</div>`));
+    kvs.append(el("div", "kv", `<div class="k">Segments analysed</div><div class="v">${num(cv.segments)}</div>`));
+    body.append(kvs);
   }
-  box.append(el("div", "big-metric", `<span class="n">${cv.vascular_age}</span><span class="u">years vascular age</span>`));
-  box.append(el("div", "sub", `${relAge(cv.vascular_age - cv.chronological_age).long} your age (${cv.chronological_age})`));
-  const kvs = el("div", "kvs");
-  kvs.append(el("div", "kv", `<div class="k">Pulse-wave velocity</div><div class="v">${cv.pwv_ms != null ? cv.pwv_ms + " m/s" : "—"}</div>`));
-  kvs.append(el("div", "kv", `<div class="k">Segments analysed</div><div class="v">${num(cv.segments)}</div>`));
-  box.append(kvs);
+  fold.append(body);
+  host.append(fold);
+  // Built after the initial foldState() pass, so restore this one's saved state here.
+  restoreFold(fold);
 }
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
@@ -1649,16 +1668,19 @@ async function load() {
 // Remember which reference panels the user left open. They are collapsed on a first
 // visit (they are reference, not the daily read), but a choice to open one should not
 // be undone by every reload.
-function foldState() {
-  document.querySelectorAll("details.fold[data-fold]").forEach((d) => {
-    const key = "fold:" + d.dataset.fold;
-    let saved = null;
-    try { saved = localStorage.getItem(key); } catch { /* private mode: just don't persist */ }
-    if (saved !== null) d.open = saved === "1";
-    d.addEventListener("toggle", () => {
-      try { localStorage.setItem(key, d.open ? "1" : "0"); } catch { /* ignore */ }
-    });
+function restoreFold(d) {
+  if (!d || !d.dataset.fold) return;
+  const key = "fold:" + d.dataset.fold;
+  let saved = null;
+  try { saved = localStorage.getItem(key); } catch { /* private mode: just don't persist */ }
+  if (saved !== null) d.open = saved === "1";
+  d.addEventListener("toggle", () => {
+    try { localStorage.setItem(key, d.open ? "1" : "0"); } catch { /* ignore */ }
   });
+}
+
+function foldState() {
+  document.querySelectorAll("details.fold[data-fold], details.subfold[data-fold]").forEach(restoreFold);
 }
 foldState();
 
