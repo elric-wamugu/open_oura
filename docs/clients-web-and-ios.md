@@ -269,6 +269,30 @@ which is why Oura's own app has no per-night HRV trend either.
 
 When you close one of these gaps, update this section.
 
+## Known gaps (Android-only, by nature)
+
+Two Android features have no web or iOS counterpart, and are not omissions to close:
+
+- **Unattended sync** (`apps/android/.../sync/AutoSync.kt`): a 3-hour WorkManager floor plus
+  a sync when the app is opened, with quiet hours derived from the user's own nightly
+  `start`/`end` times. The desktop client has no equivalent need — it syncs when its owner
+  runs `oura sync` or opens the dashboard, and a laptop is not carrying the ring around.
+  Two findings worth keeping: `ACTION_USER_PRESENT` cannot be received from the manifest
+  (Android drops it — `dumpsys activity broadcasts` says `skipped by policy at enqueue:
+  Background execution not allowed`), and a background scan must supply a `ScanFilter`
+  because Android discards unfiltered results with the screen off. The ring does advertise
+  its service UUID, so that filter matches.
+
+- **Low-battery warnings** (`apps/android/.../battery/BatteryAlerts.kt`): notifications at
+  10% and 3%, checked after every sync because that is the only moment the level can have
+  changed. The thresholds and the hysteresis are Android-side policy, but the trap they
+  work around is not: the gauge is voltage-derived and **sags under radio load**, so the
+  freshest reading is always the least trustworthy one. See "Battery: read the ring's own
+  log, not the sync-time samples" above — the same caution the web dashboard already
+  applies to its battery panel. **The web dashboard could reasonably colour its battery
+  tile at these thresholds; it does not yet.**
+
+
 ## Ring clock resets → epoch-aware time mapping (all three code paths)
 
 `ring_timestamp` (ds) is a **per-boot relative deciseconds counter**: it resets to ~0
