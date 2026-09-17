@@ -673,7 +673,11 @@ fn fit_ds_offsets(rows: &mut [(i64, i64)]) -> Vec<(i64, f64)> {
     let mut last_cu = i64::MIN;
     let (mut sess_d, mut sess_t) = (i64::MIN, 0i64);
     for &(cu, ds) in rows.iter() {
-        if cu - last_cu > SYNC_GAP_S && sess_d != i64::MIN {
+        // saturating: `last_cu` starts at i64::MIN, and the plain subtraction panics on
+        // the first row of a debug build — which is every `cargo test`. Release wrapped
+        // instead, and the `sess_d` guard made the wrapped value harmless, so the bug
+        // only ever showed up as a red test suite.
+        if cu.saturating_sub(last_cu) > SYNC_GAP_S && sess_d != i64::MIN {
             obs.push((sess_d, sess_t as f64 - sess_d as f64 / 10.0));
             sess_d = i64::MIN;
         }
