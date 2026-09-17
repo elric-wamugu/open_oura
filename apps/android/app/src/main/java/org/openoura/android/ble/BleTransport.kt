@@ -70,6 +70,17 @@ private const val BOND_TIMEOUT_MS = 30_000L
 /** How often the bond state is re-read while pairing; see [BleTransport.Companion]. */
 private const val BOND_POLL_MS = 200L
 
+/**
+ * How many consecutive BOND_NONE readings it takes to call a pairing refused.
+ *
+ * One is not enough. The ring advertises under a rotating private address, so the device
+ * being polled is addressed by an RPA while the stack resolves it to the ring's identity,
+ * and a momentary BOND_NONE during that hand-over would otherwise be reported as a flat
+ * "the ring refused pairing" — a confident wrong answer, which is worse than the timeout
+ * this polling replaced. A real refusal stays NONE, so the confirmation costs it ~600 ms.
+ */
+internal const val BOND_REFUSAL_CONFIRMATIONS = 3
+
 private const val CONNECT_TIMEOUT_MS = 30_000L
 private const val DISCOVER_TIMEOUT_MS = 15_000L
 private const val MTU_TIMEOUT_MS = 5_000L
@@ -89,16 +100,26 @@ internal enum class BondPoll { WAITING, BONDED, REFUSED }
  * yet" and "the ring said no", so a refusal is only certain once BOND_BONDING has been seen.
  * A bond can also complete between two polls without BONDING ever being observed.
  */
-internal class BondWatch {
+internal class BondWatch(
+    private val confirmations: Int = BOND_REFUSAL_CONFIRMATIONS,
+) {
     private var sawBonding = false
+    private var consecutiveNone = 0
 
-    fun poll(state: Int): BondPoll = when (state) {
-        BluetoothDevice.BOND_BONDED -> BondPoll.BONDED
-        BluetoothDevice.BOND_BONDING -> {
-            sawBonding = true
-            BondPoll.WAITING
+    fun poll(state: Int): BondPoll {
+        when (state) {
+            BluetoothDevice.BOND_BONDED -> return BondPoll.BONDED
+            BluetoothDevice.BOND_BONDING -> {
+                sawBonding = true
+                consecutiveNone = 0
+                return BondPoll.WAITING
+            }
         }
-        else -> if (sawBonding) BondPoll.REFUSED else BondPoll.WAITING
+        // BOND_NONE, or anything unrecognised: indistinguishable from "not started" until
+        // BOND_BONDING has been seen, and even then only trusted once it has held.
+        if (!sawBonding) return BondPoll.WAITING
+        consecutiveNone++
+        return if (consecutiveNone >= confirmations) BondPoll.REFUSED else BondPoll.WAITING
     }
 }
 
