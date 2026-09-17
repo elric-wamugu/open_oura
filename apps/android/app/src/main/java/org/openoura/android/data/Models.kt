@@ -191,6 +191,15 @@ data class EffortSession(
     val traces: Int = 0,
 )
 
+/** Accumulated sleep debt against a nightly need, computed in Rust. */
+@Serializable
+data class SleepDebt(
+    @SerialName("debt_min") val debtMin: Double? = null,
+    @SerialName("recent_shortfall_min") val recentShortfallMin: Double? = null,
+    val valid: Boolean = false,
+    @SerialName("need_h") val needH: Double? = null,
+)
+
 @Serializable
 data class Summary(
     val digest: String? = null,
@@ -207,6 +216,7 @@ data class Summary(
     val profile: Profile? = null,
     val cardio: Cardio? = null,
     val fitness: Fitness? = null,
+    @SerialName("sleep_debt") val sleepDebt: SleepDebt? = null,
     val error: String? = null,
 ) {
     /**

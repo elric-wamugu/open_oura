@@ -127,9 +127,11 @@ private fun SleepReport(s: Summary, ymd: String, c: OuraColors) {
         c,
     )
 
-    Section("Hypnogram", c)
-    n.stages?.takeIf { it.isNotEmpty() }?.let { Hypnogram(it, c, height = 60.dp) }
-        ?: Text("No hypnogram for this night.", color = c.muted, fontSize = 12.sp)
+    Section("Overnight polysomnograph", c)
+    StageLegend()
+    Polysomnograph(n)
+
+    Section("Sleep architecture", c)
     Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
         StagePct("Deep", n.deepPct, c); StagePct("Light", n.lightPct, c)
         StagePct("REM", n.remPct, c); StagePct("Awake", n.wakePct, c)
@@ -171,6 +173,27 @@ private fun SleepReport(s: Summary, ymd: String, c: OuraColors) {
                     "not recovery.",
                 color = c.faint, fontSize = 11.sp,
             )
+        }
+    }
+
+    val interpretation = SleepInterpretation.lines(n)
+    val debt = SleepInterpretation.debtNote(s.sleepDebt)
+    if (interpretation.isNotEmpty() || debt != null) {
+        Section("Interpretation", c)
+        interpretation.forEach { Text(it, color = c.muted, fontSize = 12.sp, lineHeight = 17.sp) }
+        debt?.let { (value, caption) ->
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(c.surface)
+                    .border(1.dp, c.line, RoundedCornerShape(10.dp))
+                    .padding(12.dp),
+                verticalArrangement = Arrangement.spacedBy(2.dp),
+            ) {
+                Text(value, color = c.text, fontSize = 20.sp, fontWeight = FontWeight.Medium)
+                Text(caption, color = c.faint, fontSize = 11.sp, lineHeight = 15.sp)
+            }
         }
     }
 }
