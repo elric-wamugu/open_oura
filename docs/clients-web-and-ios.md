@@ -283,14 +283,17 @@ Two Android features have no web or iOS counterpart, and are not omissions to cl
   because Android discards unfiltered results with the screen off. The ring does advertise
   its service UUID, so that filter matches.
 
-- **Low-battery warnings** (`apps/android/.../battery/BatteryAlerts.kt`): notifications at
-  10% and 3%, checked after every sync because that is the only moment the level can have
-  changed. The thresholds and the hysteresis are Android-side policy, but the trap they
-  work around is not: the gauge is voltage-derived and **sags under radio load**, so the
-  freshest reading is always the least trustworthy one. See "Battery: read the ring's own
-  log, not the sync-time samples" above — the same caution the web dashboard already
-  applies to its battery panel. **The web dashboard could reasonably colour its battery
-  tile at these thresholds; it does not yet.**
+- **Low-battery notifications** (`apps/android/.../battery/BatteryAlerts.kt`): raised after
+  every sync, because that is the only moment the level can have changed. Only the
+  *notifying* is Android-only — **what counts as low is shared**. `oura-summary` owns
+  `BATTERY_LOW_PCT` / `BATTERY_CRITICAL_PCT` and ships `battery_status` plus
+  `battery_rested_pct`; the web pill colours on the first (`.batt.low` / `.batt.critical`)
+  and the Android app notifies on it. Neither re-derives it, and neither should: the gauge
+  is voltage-derived and **sags under radio load**, so the band is judged on a rested level
+  rather than the freshest one — see "Battery: read the ring's own log, not the sync-time
+  samples" above. They briefly did disagree (web warned below 20%, Android at 10% and 3%),
+  which is what prompted moving it into the brain. What stays client-side is when to bother
+  someone: the escalate-once/never-repeat hysteresis, and `CLEAR_PCT`.
 
 
 ## Ring clock resets → epoch-aware time mapping (all three code paths)
