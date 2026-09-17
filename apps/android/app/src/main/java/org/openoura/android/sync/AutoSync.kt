@@ -11,6 +11,7 @@ import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import androidx.work.workDataOf
+import org.openoura.android.battery.BatteryAlerts
 import org.openoura.android.ble.RingSyncService
 import org.openoura.android.ble.SyncPhase
 import org.openoura.android.ble.runRingSync
@@ -245,6 +246,7 @@ class AutoSyncWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(c
                 Log.i(TAG, "$trigger: ${phase.events} events, ${phase.inserted} new")
                 runCatching { repo.recompute() }
                     .onFailure { Log.e(TAG, "post-sync recompute failed", it) }
+                repo.cached()?.let { BatteryAlerts.check(ctx, it) }
                 Result.success()
             }
             else -> {

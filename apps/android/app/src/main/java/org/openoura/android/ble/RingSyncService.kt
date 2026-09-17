@@ -21,6 +21,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import org.openoura.android.MainActivity
 import org.openoura.android.R
+import org.openoura.android.battery.BatteryAlerts
 import org.openoura.android.data.SummaryRepository
 
 private const val TAG = "OpenOuraBle"
@@ -81,8 +82,11 @@ class RingSyncService : Service() {
                 // Only now is the database newer than the cached summary. recompute()
                 // rewrites the widget projection and repaints the widgets itself.
                 notify("Rebuilding the summary…")
-                runCatching { SummaryRepository.get(applicationContext).recompute() }
+                val repo = SummaryRepository.get(applicationContext)
+                runCatching { repo.recompute() }
                     .onFailure { Log.e(TAG, "post-sync recompute failed", it) }
+                // A sync is the only moment the ring's level can have changed.
+                repo.cached()?.let { BatteryAlerts.check(applicationContext, it) }
             }
 
             running = false
