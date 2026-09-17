@@ -127,6 +127,14 @@ data class Device(
     @SerialName("short_periods_excluded") val shortPeriodsExcluded: Int? = null,
     @SerialName("total_events") val totalEvents: Long? = null,
     @SerialName("battery_v") val batteryV: Double? = null,
+    /**
+     * The level to *judge* by, and the band the brain judged. Not the same as
+     * [batteryPct]: the freshest reading is taken mid-sync with the radio pulling the
+     * voltage down, so `oura-summary` bands on a rested level instead. Never re-derive
+     * these — the web pill renders the same two fields.
+     */
+    @SerialName("battery_rested_pct") val batteryRestedPct: Int? = null,
+    @SerialName("battery_status") val batteryStatus: String? = null,
     /** Hours since the reading was captured — drives the freshness suffix on the pill. */
     @SerialName("fresh_hours") val freshHours: Double? = null,
     val synced: String? = null,

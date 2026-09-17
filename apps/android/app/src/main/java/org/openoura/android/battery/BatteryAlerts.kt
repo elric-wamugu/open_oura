@@ -9,7 +9,6 @@ import android.util.Log
 import androidx.core.app.NotificationCompat
 import org.openoura.android.MainActivity
 import org.openoura.android.R
-import org.openoura.android.data.BatteryPoint
 import org.openoura.android.data.Summary
 
 private const val TAG = "OpenOuraBattery"
@@ -33,84 +32,70 @@ data class BatteryAlert(val notify: BatteryLevel?, val state: BatteryLevel)
  * this is checked after every sync and nowhere else — there is no other moment when the
  * number can have changed.
  *
- * **The gauge cannot be read naively.** It is derived from voltage, and voltage sags under
- * radio load: a level measured during a drain reads far below the rested truth (24% → 12%
- * inside ten minutes of syncing, recovering once the radio went quiet). The freshest
- * reading is therefore always the least trustworthy one, because it was taken while the
- * ring was busy talking to this phone. [restedPct] is the answer to that.
+ * **What counts as low is not decided here.** `oura-summary` bands the level and ships
+ * `battery_status`, which the web dashboard's pill renders from too. That matters because
+ * the gauge is voltage-derived and sags under radio load — a level measured during a drain
+ * reads far below the rested truth — so the band is judged on a rested reading rather than
+ * the freshest one, and getting that right in two languages independently is how the two
+ * clients would come to disagree.
+ *
+ * What is left here is notification policy: when a band is worth interrupting someone for,
+ * and when it has already been said.
  */
 object BatteryAlerts {
 
-    const val LOW_PCT = 10
-    const val CRITICAL_PCT = 3
-
     /**
-     * Clear back to [BatteryLevel.OK] only above this, not at [LOW_PCT] + 1. Without the
-     * gap, a ring sitting at 10–11% would cross the line every few syncs and warn again
-     * each time.
+     * Re-arm the warning only above this, not the moment the brain says `ok` again.
+     *
+     * Purely a notification concern, which is why it lives here and the thresholds do not:
+     * the rested level is a rolling maximum, so a ring sitting near the line can read 10
+     * then 11 then 10 again, and a client that cleared on the first `ok` would warn afresh
+     * every time it did.
      */
     const val CLEAR_PCT = 15
-
-    /** How far back to look for a reading taken while the ring was not transmitting. */
-    const val RESTED_WINDOW_SEC = 30L * 60
 
     private const val PREFS = "battery_alerts"
     private const val KEY_STATE = "last_level"
 
+    /** The brain's `battery_status` as a band. Unknown stays unknown, never `OK`. */
+    fun bandOf(status: String?): BatteryLevel? = when (status) {
+        "critical" -> BatteryLevel.CRITICAL
+        "low" -> BatteryLevel.LOW
+        "ok" -> BatteryLevel.OK
+        else -> null
+    }
+
     /**
-     * Whether this reading deserves a notification, and the band to remember.
+     * Whether this band deserves a notification, and what to remember.
      *
-     * Only a *worsening* announces itself. Between [LOW_PCT] and [CLEAR_PCT] the previous
-     * band is held rather than recomputed, which is what stops a level hovering on the
-     * boundary from warning over and over.
+     * Only a *worsening* announces itself, and `ok` clears the memory only once [pct] is
+     * clearly above the line — see [CLEAR_PCT]. A null [pct] with an `ok` band is taken at
+     * face value, since there is nothing better to go on.
      */
-    fun evaluate(pct: Int, last: BatteryLevel): BatteryAlert {
+    fun evaluate(band: BatteryLevel, pct: Int?, last: BatteryLevel): BatteryAlert {
         val now = when {
-            pct <= CRITICAL_PCT -> BatteryLevel.CRITICAL
-            pct <= LOW_PCT -> BatteryLevel.LOW
-            pct >= CLEAR_PCT -> BatteryLevel.OK
-            else -> last
+            band != BatteryLevel.OK -> band
+            pct != null && pct < CLEAR_PCT -> last
+            else -> BatteryLevel.OK
         }
         return BatteryAlert(notify = if (now > last) now else null, state = now)
     }
 
     /**
-     * The highest level the ring logged in the last [RESTED_WINDOW_SEC], which is the best
-     * available stand-in for a rested reading.
-     *
-     * A sync's own points are all depressed by the radio it is using to fetch them, so the
-     * last point in the series is the sagged one by construction. Taking the maximum over a
-     * window that also covers the quiet half hour before the sync rejects that dip, while
-     * still tracking a genuine discharge down — at this ring's 1.3–2.2%/h a half-hour
-     * window costs at most a point of lag.
-     *
-     * Null when the window holds nothing; the ring only logs while the level is moving, so
-     * that is normal rather than an error.
-     */
-    fun restedPct(
-        series: List<BatteryPoint>,
-        nowUnix: Long,
-        windowSec: Long = RESTED_WINDOW_SEC,
-    ): Int? = series
-        .filter { it.t >= nowUnix - windowSec }
-        .maxOfOrNull { it.pct }
-
-    /** Read the ring's level the careful way, falling back to the headline figure. */
-    fun levelFrom(summary: Summary, nowUnix: Long): Int? =
-        restedPct(summary.battery.series, nowUnix) ?: summary.device?.batteryPct
-
-    /**
      * Check a freshly computed summary and warn if the ring is low. Safe to call when
      * notifications are denied — [NotificationManager] simply drops it.
      */
-    fun check(ctx: Context, summary: Summary, nowUnix: Long = System.currentTimeMillis() / 1000) {
-        val pct = levelFrom(summary, nowUnix) ?: return
-        val alert = evaluate(pct, stored(ctx))
+    fun check(ctx: Context, summary: Summary) {
+        val device = summary.device ?: return
+        val band = bandOf(device.batteryStatus) ?: return
+        val pct = device.batteryRestedPct ?: device.batteryPct
+        val alert = evaluate(band, pct, stored(ctx))
         store(ctx, alert.state)
+        val level = pct?.let { "$it%" } ?: "unknown"
         when (alert.notify) {
-            null -> Log.i(TAG, "ring at $pct% (${alert.state})")
+            null -> Log.i(TAG, "ring at $level (${alert.state})")
             else -> {
-                Log.i(TAG, "ring at $pct% — warning ${alert.notify}")
+                Log.i(TAG, "ring at $level — warning ${alert.notify}")
                 post(ctx, alert.notify, pct)
             }
         }
@@ -128,7 +113,7 @@ object BatteryAlerts {
             .edit().putString(KEY_STATE, level.name).apply()
     }
 
-    private fun post(ctx: Context, level: BatteryLevel, pct: Int) {
+    private fun post(ctx: Context, level: BatteryLevel, pct: Int?) {
         val manager = ctx.getSystemService(NotificationManager::class.java) ?: return
         ensureChannels(manager)
 
@@ -144,7 +129,10 @@ object BatteryAlerts {
             if (critical) CHANNEL_CRITICAL else CHANNEL_LOW,
         )
             .setContentTitle(
-                if (critical) "Ring battery critical — $pct%" else "Ring battery low — $pct%",
+                buildString {
+                    append(if (critical) "Ring battery critical" else "Ring battery low")
+                    pct?.let { append(" — $it%") }
+                },
             )
             .setContentText(
                 if (critical) {
@@ -174,14 +162,14 @@ object BatteryAlerts {
                 CHANNEL_LOW,
                 "Ring battery low",
                 NotificationManager.IMPORTANCE_DEFAULT,
-            ).apply { description = "Shown once the ring drops to $LOW_PCT%." },
+            ).apply { description = "Shown once the ring is running low." },
         )
         manager.createNotificationChannel(
             NotificationChannel(
                 CHANNEL_CRITICAL,
                 "Ring battery critical",
                 NotificationManager.IMPORTANCE_HIGH,
-            ).apply { description = "Shown once the ring drops to $CRITICAL_PCT%." },
+            ).apply { description = "Shown once the ring is nearly empty." },
         )
     }
 }
