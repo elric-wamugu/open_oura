@@ -11,11 +11,13 @@ import android.bluetooth.BluetoothManager
 import android.bluetooth.BluetoothProfile
 import android.bluetooth.BluetoothStatusCodes
 import android.bluetooth.le.ScanCallback
+import android.bluetooth.le.ScanFilter
 import android.bluetooth.le.ScanResult
 import android.bluetooth.le.ScanSettings
 import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Build
+import android.os.ParcelUuid
 import android.os.SystemClock
 import android.util.Log
 import androidx.core.content.ContextCompat
@@ -222,6 +224,13 @@ class BleTransport private constructor(
             ctx: Context,
             nameContains: String = "Oura",
             scanTimeoutMs: Long = 25_000,
+            /**
+             * Scan with a service-UUID [ScanFilter] instead of sifting every advertisement
+             * in the callback. Required with the screen off — Android delivers only filtered
+             * results to a background scan — and harmless with it on. Off by default so the
+             * interactive path keeps the more forgiving unfiltered scan.
+             */
+            filtered: Boolean = false,
             onStage: (String) -> Unit = {},
         ): BleTransport {
             if (!BlePermissions.granted(ctx)) {
@@ -239,23 +248,35 @@ class BleTransport private constructor(
             // apart from "the scan returned nothing at all" — one means the ring is away or
             // already connected elsewhere, the other means the scan itself is broken.
             val alsoSeen = linkedSetOf<String>()
-            val found = scanForRing(ctx, nameContains, scanTimeoutMs, alsoSeen)
+            val found = scanForRing(ctx, nameContains, scanTimeoutMs, filtered, alsoSeen)
                 ?: throw BleException(
                     buildString {
                         append("no ring advertisement in ${scanTimeoutMs / 1000}s")
-                        if (alsoSeen.isEmpty()) {
-                            append(" — and no other BLE device either, so the scan itself saw ")
-                            append("nothing. Check that Bluetooth and Location are on.")
-                        } else {
-                            append(" — but ${alsoSeen.size} other device(s) were seen, so the ")
-                            append("radio works. The ring is out of range, on a charger, or ")
-                            append("already connected to another phone or the desktop client.")
+                        when {
+                            // A filtered scan reports nothing but the ring, so an empty
+                            // `alsoSeen` says nothing about the radio and must not be read
+                            // as "the scan saw nothing at all".
+                            filtered ->
+                                append(" — filtered scan, so nothing else is reported either. ")
+                            alsoSeen.isEmpty() -> {
+                                append(" — and no other BLE device either, so the scan itself ")
+                                append("saw nothing. Check that Bluetooth and Location are on.")
+                                return@buildString
+                            }
+                            else ->
+                                append(" — but ${alsoSeen.size} other device(s) were seen, so ")
                         }
+                        append("the ring is out of range, on a charger, or already connected ")
+                        append("to another phone or the desktop client.")
                     },
                 )
             val device = found.device
             val name = found.scanRecord?.deviceName ?: runCatching { device.name }.getOrNull() ?: "ring"
-            Log.i(TAG, "found $name rssi=${found.rssi}")
+            // The advertised service list decides whether a background scan is possible at
+            // all: with the screen off Android only reports results that a ScanFilter
+            // matched, and the ring's name arrives too late in the scan response to filter
+            // on. Empty here means a filtered scan would never see the ring.
+            Log.i(TAG, "found $name rssi=${found.rssi} services=${found.scanRecord?.serviceUuids}")
 
             // Let the scan actually stop before opening a link. Issuing connectGatt in the
             // same breath as stopScan is a well-documented source of status 133 — the stack
@@ -493,6 +514,7 @@ class BleTransport private constructor(
             ctx: Context,
             nameContains: String,
             timeoutMs: Long,
+            filtered: Boolean,
             alsoSeen: MutableSet<String>,
         ): ScanResult? {
             val manager = ctx.getSystemService(BluetoothManager::class.java) ?: return null
@@ -526,12 +548,23 @@ class BleTransport private constructor(
                     val settings = ScanSettings.Builder()
                         .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
                         .build()
-                    // Unfiltered, and matched in the callback: the ring's name often arrives
-                    // late in a scan response rather than the initial advertisement, so a
-                    // ScanFilter can miss it entirely. This is fine while the app is in the
-                    // foreground; a background scan would have to supply filters, because
-                    // Android drops unfiltered results once the screen is off.
-                    runCatching { scanner.startScan(null, settings, cb) }
+                    // Unfiltered by default, and matched in the callback: the ring's name
+                    // often arrives late in a scan response rather than the initial
+                    // advertisement, so filtering on it can miss the ring entirely. That is
+                    // fine in the foreground. A background scan has no choice — Android
+                    // drops unfiltered results once the screen is off — so it filters on the
+                    // service UUID, which this ring does advertise (measured 2026-09-17:
+                    // `services=[98ed0001-a541-11e4-b6a0-0002a5d5c51b]`).
+                    val filters = if (filtered) {
+                        listOf(
+                            ScanFilter.Builder()
+                                .setServiceUuid(ParcelUuid(SERVICE_UUID))
+                                .build(),
+                        )
+                    } else {
+                        null
+                    }
+                    runCatching { scanner.startScan(filters, settings, cb) }
                         .onFailure { if (cont.isActive) cont.resume(null) }
                 }
             }

@@ -75,6 +75,8 @@ fun describeSync(phase: SyncPhase): String = when (phase) {
  */
 suspend fun runRingSync(
     ctx: Context,
+    /** Scan with a service-UUID filter — required when the screen may be off. */
+    filteredScan: Boolean = false,
     onPhase: (SyncPhase) -> Unit,
 ): SyncPhase {
     val keyHex = RingKeyStore(ctx).read()
@@ -87,7 +89,9 @@ suspend fun runRingSync(
     var transport: BleTransport? = null
     return try {
         onPhase(SyncPhase.Running("connecting"))
-        val link = BleTransport.connect(ctx) { stage -> onPhase(SyncPhase.Running(stage)) }
+        val link = BleTransport.connect(ctx, filtered = filteredScan) { stage ->
+            onPhase(SyncPhase.Running(stage))
+        }
         transport = link
 
         coroutineScope {
