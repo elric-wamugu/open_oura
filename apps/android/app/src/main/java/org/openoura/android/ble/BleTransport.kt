@@ -13,12 +13,10 @@ import android.bluetooth.BluetoothStatusCodes
 import android.bluetooth.le.ScanCallback
 import android.bluetooth.le.ScanResult
 import android.bluetooth.le.ScanSettings
-import android.content.BroadcastReceiver
 import android.content.Context
-import android.content.Intent
-import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.os.Build
+import android.os.SystemClock
 import android.util.Log
 import androidx.core.content.ContextCompat
 import kotlinx.coroutines.CompletableDeferred
@@ -67,6 +65,9 @@ private const val WEAK_RSSI_DBM = -80
 /** Pairing can surface a system dialog, so it gets a human-scale deadline. */
 private const val BOND_TIMEOUT_MS = 30_000L
 
+/** How often the bond state is re-read while pairing; see [BleTransport.Companion]. */
+private const val BOND_POLL_MS = 200L
+
 private const val CONNECT_TIMEOUT_MS = 30_000L
 private const val DISCOVER_TIMEOUT_MS = 15_000L
 private const val MTU_TIMEOUT_MS = 5_000L
@@ -74,6 +75,30 @@ private const val DESCRIPTOR_TIMEOUT_MS = 5_000L
 private const val WRITE_TIMEOUT_MS = 10_000L
 
 class BleException(message: String) : Exception(message)
+
+/** What one reading of [BluetoothDevice.getBondState] means while a pairing is in flight. */
+internal enum class BondPoll { WAITING, BONDED, REFUSED }
+
+/**
+ * Reads a sequence of bond states and says when pairing has settled.
+ *
+ * Kept apart from the BLE plumbing because the one thing that is easy to get wrong here is
+ * pure logic: [BluetoothDevice.BOND_NONE] means both "the request has not been picked up
+ * yet" and "the ring said no", so a refusal is only certain once BOND_BONDING has been seen.
+ * A bond can also complete between two polls without BONDING ever being observed.
+ */
+internal class BondWatch {
+    private var sawBonding = false
+
+    fun poll(state: Int): BondPoll = when (state) {
+        BluetoothDevice.BOND_BONDED -> BondPoll.BONDED
+        BluetoothDevice.BOND_BONDING -> {
+            sawBonding = true
+            BondPoll.WAITING
+        }
+        else -> if (sawBonding) BondPoll.REFUSED else BondPoll.WAITING
+    }
+}
 
 /** Runtime permissions the scan/connect path needs, which differ sharply across API levels. */
 object BlePermissions {
@@ -242,7 +267,7 @@ class BleTransport private constructor(
             // and then dropped by the ring ~100 ms later — which the stack reports as a bare
             // status 133, indistinguishable from a dozen unrelated failures. CoreBluetooth
             // bonds implicitly, which is why the desktop client never had to do this.
-            ensureBonded(ctx, device, onStage)
+            ensureBonded(device, onStage)
 
             // 133 is famously transient: it means "generic GATT failure", commonly a losing
             // race inside the stack rather than anything about the ring, and a retry after a
@@ -282,54 +307,48 @@ class BleTransport private constructor(
          * Bluetooth stack, entirely separate from the 16-byte key in [RingKeyStore]. Adding
          * one here cannot invalidate the desktop client's key; at worst the ring's bond table
          * is full and the desktop has to re-bond on its next connect.
+         *
+         * **The outcome is polled, not listened for.** This used to wait on an
+         * `ACTION_BOND_STATE_CHANGED` broadcast, which never arrived at all on Android 17
+         * (Pixel 9a, 2026-09-17) — pass or fail. The stack logged `SMP Pairing success` and
+         * `BT_BOND_STATE_BONDED` while this function sat out its full 30 s and then reported
+         * a failure for a bond that had just worked, which is about the most misleading thing
+         * it could have done: the next attempt then succeeded instantly, because the bond was
+         * there all along. [BluetoothDevice.getBondState] was correct throughout, so read
+         * that instead — it cannot be undelivered.
+         *
+         * Note the ring only accepts a *new* bond while it sits on its charger. Worn, it
+         * refuses in well under a second (`SMP_FAIL` in `dumpsys bluetooth_manager`), which
+         * now surfaces as "refused" rather than as a timeout. Reconnecting on an existing
+         * bond works anywhere.
          */
         @SuppressLint("MissingPermission")
         private suspend fun ensureBonded(
-            ctx: Context,
             device: BluetoothDevice,
             onStage: (String) -> Unit,
         ) {
             if (device.bondState == BluetoothDevice.BOND_BONDED) return
 
             onStage("pairing")
-            val settled = CompletableDeferred<Int>()
-            val receiver = object : BroadcastReceiver() {
-                override fun onReceive(context: Context, intent: Intent) {
-                    if (intent.action != BluetoothDevice.ACTION_BOND_STATE_CHANGED) return
-                    @Suppress("DEPRECATION")
-                    val subject = intent.getParcelableExtra<BluetoothDevice>(
-                        BluetoothDevice.EXTRA_DEVICE,
-                    )
-                    if (subject?.address != device.address) return
-                    when (val state = intent.getIntExtra(BluetoothDevice.EXTRA_BOND_STATE, -1)) {
-                        BluetoothDevice.BOND_BONDED, BluetoothDevice.BOND_NONE -> {
-                            Log.i(TAG, "bond state settled at $state")
-                            settled.complete(state)
-                        }
-                        // BOND_BONDING is progress, not an outcome — keep waiting.
+            if (!device.createBond()) throw BleException("could not start pairing with the ring")
+
+            val watch = BondWatch()
+            val deadline = SystemClock.elapsedRealtime() + BOND_TIMEOUT_MS
+            while (SystemClock.elapsedRealtime() < deadline) {
+                when (watch.poll(device.bondState)) {
+                    BondPoll.BONDED -> {
+                        Log.i(TAG, "bonded")
+                        return
                     }
+                    BondPoll.REFUSED ->
+                        throw BleException("the ring refused pairing, or it was cancelled")
+                    BondPoll.WAITING -> delay(BOND_POLL_MS)
                 }
             }
-            ContextCompat.registerReceiver(
-                ctx,
-                receiver,
-                IntentFilter(BluetoothDevice.ACTION_BOND_STATE_CHANGED),
-                ContextCompat.RECEIVER_NOT_EXPORTED,
+            throw BleException(
+                "timed out pairing with the ring — if a system pairing prompt appeared, " +
+                    "accept it and try again",
             )
-            try {
-                if (!device.createBond()) throw BleException("could not start pairing with the ring")
-                val state = withTimeoutOrNull(BOND_TIMEOUT_MS) { settled.await() }
-                    ?: throw BleException(
-                        "timed out pairing with the ring — if a system pairing prompt " +
-                            "appeared, accept it and try again",
-                    )
-                if (state != BluetoothDevice.BOND_BONDED) {
-                    throw BleException("the ring refused pairing, or it was cancelled")
-                }
-                Log.i(TAG, "bonded")
-            } finally {
-                runCatching { ctx.unregisterReceiver(receiver) }
-            }
         }
 
         /** One connect attempt: GATT open → MTU → discovery → subscriptions. */
