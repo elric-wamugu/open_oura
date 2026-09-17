@@ -711,6 +711,52 @@ fn unix_from_offsets(offsets: &[(i64, f64)], ds: i64) -> Option<f64> {
     Some(offsets[i].1 + ds as f64 / 10.0)
 }
 
+/// The levels at which the ring needs charging, owned here so every client agrees.
+///
+/// The web dashboard colours its battery pill on these and the Android app raises its
+/// notifications on them. They were briefly duplicated — web warning below 20%, Android at
+/// 10% and 3% — which is exactly the drift `CLAUDE.md` exists to prevent.
+pub const BATTERY_LOW_PCT: i64 = 10;
+pub const BATTERY_CRITICAL_PCT: i64 = 3;
+
+/// How far back to look for a level the ring reported while it was *not* transmitting.
+const BATTERY_RESTED_WINDOW_S: f64 = 30.0 * 60.0;
+
+/// `"ok"` / `"low"` / `"critical"`, or `None` when the level is unknown.
+///
+/// Unknown is deliberately not `"ok"`: a client with no reading should say nothing rather
+/// than imply the ring is fine.
+pub fn battery_band(pct: Option<i64>) -> Option<&'static str> {
+    let pct = pct?;
+    Some(if pct <= BATTERY_CRITICAL_PCT {
+        "critical"
+    } else if pct <= BATTERY_LOW_PCT {
+        "low"
+    } else {
+        "ok"
+    })
+}
+
+/// The highest level the ring logged in the last [`BATTERY_RESTED_WINDOW_S`], which stands
+/// in for a reading taken at rest.
+///
+/// Judging the band on the freshest point would be the worst possible choice: the newest
+/// entries are the ones logged *during* the sync that fetched them, with the voltage
+/// pulled down by the radio. Taking the maximum over a window that also covers the quiet
+/// stretch before the sync rejects that dip, while still following a real discharge down —
+/// at this ring's 1.3–2.2%/h it costs at most a point of lag.
+pub fn battery_rested_pct(series: &[Value], now: f64) -> Option<i64> {
+    series
+        .iter()
+        .filter(|p| {
+            p["t"]
+                .as_f64()
+                .is_some_and(|ts| ts >= now - BATTERY_RESTED_WINDOW_S)
+        })
+        .filter_map(|p| p["pct"].as_i64())
+        .max()
+}
+
 /// Discharge runs and the raw curve from the ring's own battery log.
 ///
 /// The ring emits `debug_data { kind: "battery_level_changed", battery_pct, voltage_mv }`
@@ -1674,6 +1720,7 @@ pub fn build_summary(db: &Path, tz: i64, runner: &dyn ModelRunner) -> Result<Val
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs() as f64)
         .unwrap_or(anchor_unix as f64);
+    let battery_rested = battery_rested_pct(&battery_series, now);
     let device = json!({
         "serial": dev.as_ref().map(|d| d.0.clone()),
         "hardware_id": dev.as_ref().map(|d| d.1.clone()).filter(|s| !s.is_empty()),
@@ -1692,6 +1739,10 @@ pub fn build_summary(db: &Path, tz: i64, runner: &dyn ModelRunner) -> Result<Val
         "battery_pct": battery_pct,
         "battery_v": battery_v,
         "battery_as_of": battery_as_of,
+        // The level to *judge* by, which is not always the level to show: see
+        // `battery_rested_pct`. Clients render `battery_status`; none of them re-derive it.
+        "battery_rested_pct": battery_rested,
+        "battery_status": battery_band(battery_rested.or(battery_pct)),
         "measuring": measuring,
         "streams": streams,
         "event_counts": event_counts,
@@ -1727,7 +1778,71 @@ pub fn build_summary(db: &Path, tz: i64, runner: &dyn ModelRunner) -> Result<Val
 
 #[cfg(test)]
 mod tests {
-    use super::{fit_ds_offsets, unix_from_offsets};
+    use super::{
+        battery_band, battery_rested_pct, fit_ds_offsets, unix_from_offsets, BATTERY_CRITICAL_PCT,
+        BATTERY_LOW_PCT,
+    };
+    use serde_json::json;
+
+    #[test]
+    fn battery_bands_sit_where_the_constants_say() {
+        assert_eq!(battery_band(Some(100)), Some("ok"));
+        assert_eq!(battery_band(Some(BATTERY_LOW_PCT + 1)), Some("ok"));
+        assert_eq!(battery_band(Some(BATTERY_LOW_PCT)), Some("low"));
+        assert_eq!(battery_band(Some(BATTERY_CRITICAL_PCT + 1)), Some("low"));
+        assert_eq!(battery_band(Some(BATTERY_CRITICAL_PCT)), Some("critical"));
+        assert_eq!(battery_band(Some(0)), Some("critical"));
+    }
+
+    #[test]
+    fn an_unknown_level_is_not_reported_as_fine() {
+        assert_eq!(battery_band(None), None);
+    }
+
+    #[test]
+    fn the_sync_s_own_sagged_readings_do_not_set_the_band() {
+        // Measured on this ring: 24% at rest collapsing to 6% while the radio worked, then
+        // recovering. Judging on the newest point would call a healthy ring critical.
+        let now = 1_000_000.0;
+        let series = vec![
+            json!({ "t": now - 1500.0, "pct": 24, "mv": 3679 }),
+            json!({ "t": now - 1200.0, "pct": 24, "mv": 3670 }),
+            json!({ "t": now - 120.0, "pct": 12, "mv": 3500 }),
+            json!({ "t": now - 30.0, "pct": 6, "mv": 3449 }),
+        ];
+        assert_eq!(battery_rested_pct(&series, now), Some(24));
+        assert_eq!(battery_band(battery_rested_pct(&series, now)), Some("ok"));
+    }
+
+    #[test]
+    fn a_genuinely_flat_ring_still_reads_flat() {
+        let now = 1_000_000.0;
+        let series = vec![
+            json!({ "t": now - 1500.0, "pct": 4, "mv": 3460 }),
+            json!({ "t": now - 60.0, "pct": 2, "mv": 3400 }),
+        ];
+        assert_eq!(battery_rested_pct(&series, now), Some(4));
+        assert_eq!(battery_band(battery_rested_pct(&series, now)), Some("low"));
+    }
+
+    #[test]
+    fn readings_outside_the_window_cannot_mask_todays() {
+        let now = 1_000_000.0;
+        let series = vec![
+            json!({ "t": now - 7200.0, "pct": 90, "mv": 4100 }),
+            json!({ "t": now - 300.0, "pct": 9, "mv": 3480 }),
+        ];
+        assert_eq!(battery_rested_pct(&series, now), Some(9));
+    }
+
+    #[test]
+    fn an_empty_window_is_unknown_rather_than_zero() {
+        let now = 1_000_000.0;
+        let stale = vec![json!({ "t": now - 99_999.0, "pct": 50, "mv": 3900 })];
+        assert_eq!(battery_rested_pct(&stale, now), None);
+        assert_eq!(battery_rested_pct(&[], now), None);
+    }
+
 
     /// Build one sync session: `n` events ending at counter `end_ds`, drained starting at
     /// host time `t0` at one event per second (so capture times track transfer, not
