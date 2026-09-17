@@ -40,7 +40,7 @@ metric there once and both clients receive it in the JSON.
 | Digest headline | `load()` digest | `RootView` digest | `digest` | — |
 | Vitals (HRV/RHR/temp/SpO₂) | `renderTiles` / `VitalCell`-like | `VitalCell` | `vitals`, `nights[]` | — |
 | **Unified day (night + activity)** | `renderDay`, `dayCard` | `TodayCard` | `nights[]`, `activity*` | — |
-| **Full-page sleep report** (polysomnograph + clinical metrics + interpretation) | `openDayPage`→`sleepReport`, `polysomnograph`, `hypnoSvg` | `DayReportView`→`SleepReport`, `Polysomnograph` (Reports.swift) | `nights[].{stages_full,series,metrics}`, `sleep_debt` | SleepNet |
+| **Full-page sleep report** (polysomnograph + clinical metrics + interpretation) | `openDayPage`→`sleepReport`, `polysomnograph`, `hypnoSvg` | `SleepReport` + `Polysomnograph`/`SleepInterpretation` (Android) / `DayReportView`→`SleepReport`, `Polysomnograph` in Reports.swift (iOS) | `nights[].{stages_full,series,metrics}`, `sleep_debt` | SleepNet |
 | **Full-page activity report** (24h MET profile + intensity metrics) | `openDayPage`→`activityReport`, `metProfileSvg` | `DayReportView`→`ActivityReport`, `MetProfile` (Reports.swift) | `activity_profile`, `activity_daily`, `activity` | AAD |
 | **Movement-chart scrubber** (per-bucket steps + MET) | `metProfileChart` hover crosshair | `MetProfile` drag scrubber | `activity_steps` | — |
 | Stage breakdown | `stageBar` | `StageBreakdown` | `nights[].{deep,light,rem,wake}_pct` | SleepNet |
@@ -268,6 +268,25 @@ which is why Oura's own app has no per-night HRV trend either.
   Same data, same honesty about the CVA gate; only the layout differs.
 
 When you close one of these gaps, update this section.
+
+### Closed 2026-09-17: Android's sleep report was a stage strip
+
+Android drew the hypnogram alone — no HR, HRV, SpO₂, skin-temp or motion lane, no time
+axis, nothing to scrub, and no interpretation. It now carries the same six-lane
+polysomnograph on one shared cursor, plus the same four interpretation sentences and the
+sleep-debt note.
+
+Two deliberate differences from the web, both forced by phone width and touch:
+
+- **No left gutter.** The web puts each lane's label and value beside its plot; at ~360 dp
+  that would cost a fifth of the chart, so on Android they sit in a thin header row above
+  each lane and the plots run full width.
+- **Horizontal-only drag.** The chart is most of the screen, so a gesture handler claiming
+  every direction made the page unscrollable over it. `detectHorizontalDragGestures` scrubs
+  and lets a vertical drag reach the scrolling parent.
+
+One thing Android gets right that the web does not: the sleep-debt line reads "an 8 h
+nightly need" but "a 7.5 h need". `app.js` hardcodes "an".
 
 ## Known gaps (Android-only, by nature)
 
