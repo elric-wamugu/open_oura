@@ -168,6 +168,13 @@ body {
 }
 .batt .ic { font-size: 15px; }
 .batt.low { color: var(--warn); }
+/* Critical reads louder without reaching for a red the palette does not have: the same
+   warn hue, but filled, so it separates from `.low` at a glance. */
+.batt.critical {
+  color: var(--warn); font-weight: 560;
+  border-color: color-mix(in oklab, var(--warn) 45%, var(--line));
+  background: color-mix(in oklab, var(--warn) 10%, var(--surface));
+}
 .batt { white-space: nowrap; }
 .batt-age { color: var(--faint); font-size: 11px; margin-left: -3px; flex: none; white-space: nowrap; }
 .action {
