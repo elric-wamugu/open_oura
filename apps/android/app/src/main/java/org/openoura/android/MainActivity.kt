@@ -62,6 +62,13 @@ class MainActivity : ComponentActivity() {
         // post-sync step) rather than something that blocks every launch.
         lifecycleScope.launch { repo.load(refresh = false) }
         org.openoura.android.widget.WidgetUpdates.schedulePeriodic(applicationContext)
+        org.openoura.android.sync.AutoSync.schedulePeriodic(applicationContext)
+        // Opening the app is the opportunistic trigger; AutoSync.decide still applies
+        // the 3-hour floor, so launching repeatedly costs enqueues, not syncs.
+        org.openoura.android.sync.AutoSync.requestSync(
+            applicationContext,
+            org.openoura.android.sync.SyncTrigger.APP_OPEN,
+        )
 
         setContent {
             OpenOuraTheme {

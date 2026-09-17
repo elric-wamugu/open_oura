@@ -135,6 +135,15 @@ class SummaryRepository private constructor(private val ctx: Context) {
         )
     }
 
+    /**
+     * The last computed snapshot, straight off disk and without touching [state].
+     *
+     * For callers with no UI to drive — the auto-sync worker reads the nightly times to
+     * work out quiet hours, and would otherwise have to wait out a recompute to learn
+     * something it already has on disk.
+     */
+    fun cached(): Summary? = readCache()
+
     private fun readCache(): Summary? = runCatching {
         if (!cacheFile.exists()) return null
         json.decodeFromString<Summary>(cacheFile.readText())
