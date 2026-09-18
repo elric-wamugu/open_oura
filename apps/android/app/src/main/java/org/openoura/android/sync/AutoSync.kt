@@ -11,6 +11,7 @@ import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import androidx.work.workDataOf
+import kotlinx.coroutines.CancellationException
 import org.openoura.android.battery.BatteryAlerts
 import org.openoura.android.ble.RingSyncService
 import org.openoura.android.ble.SyncPhase
@@ -39,6 +40,13 @@ data class SleepWindow(val startMin: Int, val endMin: Int) {
 enum class SyncTrigger { PERIODIC, APP_OPEN }
 
 enum class SyncDecision { SYNC, TOO_SOON, ASLEEP }
+
+/** How a run ended, as far as the scheduler cares. */
+enum class SyncOutcome { DONE, FAILED, CANCELLED }
+
+/** What a finished run leaves behind: whether to rebuild the summary, and whether the
+ *  3-hour interval has been spent. */
+data class SyncAftermath(val recompute: Boolean, val consumeInterval: Boolean)
 
 /**
  * When to sync from the ring without being asked.
@@ -103,6 +111,32 @@ object AutoSync {
             window?.contains(minuteOfDay) == true -> SyncDecision.ASLEEP
             else -> SyncDecision.SYNC
         }
+    }
+
+    /**
+     * What to do once a run has ended.
+     *
+     * The overnight test on 2026-09-18 is the reason this exists. WorkManager stopped a
+     * background drain 59 s in, after it had already checkpointed 20,256 events; the
+     * interval had been marked spent before the attempt, so the immediate re-run was
+     * refused and the phone sat four hours behind a ring it had been talking to seconds
+     * earlier.
+     *
+     * So a *cancelled but productive* run does not spend the interval: it was making
+     * progress and deserves to carry on at the next opportunity. A cancelled *unproductive*
+     * one does spend it, because retrying in a tight loop against a system that keeps
+     * stopping us would only cost battery.
+     *
+     * A cancelled run never recomputes. The coroutine is already being torn down, and the
+     * drain's own checkpoints mean the database is consistent — [SummaryRepository.load]
+     * notices the summary is behind it and rebuilds on the next launch instead.
+     */
+    fun aftermath(outcome: SyncOutcome, eventsDrained: Long): SyncAftermath = when (outcome) {
+        SyncOutcome.DONE -> SyncAftermath(recompute = true, consumeInterval = true)
+        // A drain that died on a dropped link still moved the cursor; rebuild over what it
+        // did manage, but let the interval stand rather than chasing a ring that just left.
+        SyncOutcome.FAILED -> SyncAftermath(eventsDrained > 0, consumeInterval = true)
+        SyncOutcome.CANCELLED -> SyncAftermath(recompute = false, consumeInterval = eventsDrained == 0L)
     }
 
     /**
@@ -187,6 +221,12 @@ object AutoSync {
         ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             .edit().putLong(KEY_LAST_ATTEMPT, unix).apply()
     }
+
+    /** Give the interval back, so the next trigger may pick up where a stop left off. */
+    internal fun clearAttempt(ctx: Context) {
+        ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .edit().remove(KEY_LAST_ATTEMPT).apply()
+    }
 }
 
 /**
@@ -235,27 +275,44 @@ class AutoSyncWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(c
             }
         }
 
-        AutoSync.markAttempt(ctx, now)
+        val attemptedAt = now
+        AutoSync.markAttempt(ctx, attemptedAt)
         Log.i(TAG, "$trigger: syncing")
-        // Filtered scan: with the screen off Android drops results a ScanFilter did not
-        // match, and the ring's name arrives too late in the scan response to filter on.
-        // Measured 2026-09-17 — it does advertise the service UUID, so this matches.
-        val phase = runRingSync(ctx, filteredScan = true) { }
-        return when (phase) {
-            is SyncPhase.Done -> {
-                Log.i(TAG, "$trigger: ${phase.events} events, ${phase.inserted} new")
-                runCatching { repo.recompute() }
-                    .onFailure { Log.e(TAG, "post-sync recompute failed", it) }
-                repo.cached()?.let { BatteryAlerts.check(ctx, it) }
-                Result.success()
+
+        // The drain reports its running total, which is the only way to tell a stop that
+        // achieved nothing from one that checkpointed thousands of events.
+        var drained = 0L
+        val phase = try {
+            // Filtered scan: with the screen off Android drops results a ScanFilter did not
+            // match, and the ring's name arrives too late in the scan response to filter on.
+            // Measured 2026-09-17 — it does advertise the service UUID, so this matches.
+            runRingSync(ctx, filteredScan = true) { p ->
+                if (p is SyncPhase.Running) drained = maxOf(drained, p.eventsSynced)
             }
-            else -> {
-                // Not Result.retry(): a failure is usually the ring being out of range, and
-                // retrying with backoff would spend the radio on a scan that cannot succeed.
-                // The next trigger is the retry.
-                Log.w(TAG, "$trigger: ${(phase as? SyncPhase.Failed)?.message ?: phase}")
-                Result.success()
-            }
+        } catch (c: CancellationException) {
+            // Everything the drain checkpointed is already committed. Decide whether this
+            // run spent the interval, then get out of the way — the marker is a synchronous
+            // preference write, so it still lands while the coroutine is being torn down.
+            val after = AutoSync.aftermath(SyncOutcome.CANCELLED, drained)
+            if (!after.consumeInterval) AutoSync.clearAttempt(ctx)
+            Log.i(TAG, "$trigger: stopped after $drained events (retry=${!after.consumeInterval})")
+            throw c
         }
+
+        val outcome = if (phase is SyncPhase.Done) SyncOutcome.DONE else SyncOutcome.FAILED
+        val after = AutoSync.aftermath(outcome, drained)
+        when (phase) {
+            is SyncPhase.Done -> Log.i(TAG, "$trigger: ${phase.events} events, ${phase.inserted} new")
+            else -> Log.w(TAG, "$trigger: ${(phase as? SyncPhase.Failed)?.message ?: phase}")
+        }
+        if (after.recompute) {
+            runCatching { repo.recompute() }
+                .onFailure { Log.e(TAG, "post-sync recompute failed", it) }
+            repo.cached()?.let { BatteryAlerts.check(ctx, it) }
+        }
+        // Not Result.retry(): a failure is usually the ring being out of range, and retrying
+        // with backoff would spend the radio on a scan that cannot succeed. The next trigger
+        // is the retry.
+        return Result.success()
     }
 }

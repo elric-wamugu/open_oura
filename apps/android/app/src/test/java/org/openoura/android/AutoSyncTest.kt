@@ -7,7 +7,9 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.openoura.android.sync.AutoSync
 import org.openoura.android.sync.SleepWindow
+import org.openoura.android.sync.SyncAftermath
 import org.openoura.android.sync.SyncDecision
+import org.openoura.android.sync.SyncOutcome
 import org.openoura.android.sync.SyncTrigger
 
 private const val HOUR = 3600L
@@ -123,6 +125,47 @@ class AutoSyncTest {
     fun `unparseable times are not counted towards the night total`() {
         val nights = List(6) { "23:00" to "07:00" } + listOf("" to "07:00")
         assertNull(AutoSync.deriveSleepWindow(nights))
+    }
+
+    @Test
+    fun `a finished sync rebuilds the summary and spends the interval`() {
+        assertEquals(
+            SyncAftermath(recompute = true, consumeInterval = true),
+            AutoSync.aftermath(SyncOutcome.DONE, 4827),
+        )
+    }
+
+    @Test
+    fun `a stop that achieved nothing still spends the interval`() {
+        // Otherwise a system that keeps stopping us turns into a retry loop on the radio.
+        assertEquals(
+            SyncAftermath(recompute = false, consumeInterval = true),
+            AutoSync.aftermath(SyncOutcome.CANCELLED, 0),
+        )
+    }
+
+    @Test
+    fun `a stop mid-drain gives the interval back so the next trigger continues`() {
+        // The 2026-09-18 failure: WorkManager stopped a drain 59 s in, after 20,256 events
+        // were already checkpointed, and the spent interval left the phone four hours
+        // behind a ring it had just been talking to.
+        val after = AutoSync.aftermath(SyncOutcome.CANCELLED, 20_256)
+        assertEquals(false, after.consumeInterval)
+        // And it does not recompute: the coroutine is being torn down, and the repository
+        // notices the summary is behind the database on the next launch instead.
+        assertEquals(false, after.recompute)
+    }
+
+    @Test
+    fun `a failed drain rebuilds over whatever it managed`() {
+        assertEquals(
+            SyncAftermath(recompute = true, consumeInterval = true),
+            AutoSync.aftermath(SyncOutcome.FAILED, 1_200),
+        )
+        assertEquals(
+            SyncAftermath(recompute = false, consumeInterval = true),
+            AutoSync.aftermath(SyncOutcome.FAILED, 0),
+        )
     }
 
     @Test
