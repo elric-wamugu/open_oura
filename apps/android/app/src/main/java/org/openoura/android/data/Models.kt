@@ -41,7 +41,9 @@ data class SleepMetrics(
     val cycles: Int? = null,
     @SerialName("frag_index") val fragIndex: Double? = null,
     @SerialName("rem_latency_min") val remLatencyMin: Double? = null,
-    @SerialName("onset_min") val onsetMin: Double? = null,
+    /** Sleep onset latency. The brain calls it `sol_min`; this was declared as
+     *  `onset_min`, so the tile had silently never rendered. */
+    @SerialName("sol_min") val onsetMin: Double? = null,
     @SerialName("waso_min") val wasoMin: Double? = null,
 )
 
