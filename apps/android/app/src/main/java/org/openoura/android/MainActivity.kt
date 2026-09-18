@@ -194,6 +194,7 @@ class MainActivity : ComponentActivity() {
                     }
                 }
                 var batteryOpen by remember { mutableStateOf(prefs.getBoolean("fold_battery", false)) }
+                var deviceOpen by remember { mutableStateOf(prefs.getBoolean("fold_device", false)) }
 
                 Scaffold(modifier = Modifier.fillMaxSize()) { inner ->
                     val ready = state as? SummaryState.Ready
@@ -280,6 +281,11 @@ class MainActivity : ComponentActivity() {
                             onToggleBattery = {
                                 batteryOpen = !batteryOpen
                                 prefs.edit().putBoolean("fold_battery", batteryOpen).apply()
+                            },
+                            deviceExpanded = deviceOpen,
+                            onToggleDevice = {
+                                deviceOpen = !deviceOpen
+                                prefs.edit().putBoolean("fold_device", deviceOpen).apply()
                             },
                             modifier = Modifier.padding(inner),
                         )

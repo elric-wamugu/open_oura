@@ -56,6 +56,8 @@ fun HomeScreen(
     onProfile: () -> Unit,
     batteryExpanded: Boolean,
     onToggleBattery: () -> Unit,
+    deviceExpanded: Boolean,
+    onToggleDevice: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val c = Oura.colors
@@ -168,6 +170,11 @@ fun HomeScreen(
                         device = state.summary.device,
                         expanded = batteryExpanded,
                         onToggle = onToggleBattery,
+                    )
+                    DeviceHealthPanel(
+                        device = state.summary.device,
+                        expanded = deviceExpanded,
+                        onToggle = onToggleDevice,
                     )
                     if (state.stale) {
                         Text("Showing the cached snapshot.", color = c.faint, fontSize = 11.sp)

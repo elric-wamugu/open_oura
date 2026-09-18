@@ -117,6 +117,21 @@ data class Fitness(
     @SerialName("hr_max_predicted") val hrMaxPredicted: Double? = null,
 )
 
+/** One event family the ring is recording, and how much of it has been captured. */
+@Serializable
+data class Stream(val name: String = "", val count: Long = 0)
+
+/** A derived metric, and whether the data to compute it is present. */
+@Serializable
+data class Insight(val name: String = "", val status: String = "", val why: String = "") {
+    val gated: Boolean get() = status == "gated"
+}
+
+/** An on-ring capability. `feature` is the toggle id the web client can flip; Android
+ *  shows these read-only, so it is carried but unused. */
+@Serializable
+data class Capability(val name: String = "", val on: Boolean = false, val feature: String = "")
+
 @Serializable
 data class Device(
     val serial: String? = null,
@@ -135,6 +150,14 @@ data class Device(
      */
     @SerialName("battery_rested_pct") val batteryRestedPct: Int? = null,
     @SerialName("battery_status") val batteryStatus: String? = null,
+    @SerialName("hardware_id") val hardwareId: String? = null,
+    @SerialName("api_version") val apiVersion: String? = null,
+    val mac: String? = null,
+    @SerialName("next_cursor") val nextCursor: Long? = null,
+    /** What the ring is recording, what can be derived from it, and what is switched on. */
+    val streams: List<Stream> = emptyList(),
+    val insights: List<Insight> = emptyList(),
+    val measuring: List<Capability> = emptyList(),
     /** Hours since the reading was captured — drives the freshness suffix on the pill. */
     @SerialName("fresh_hours") val freshHours: Double? = null,
     val synced: String? = null,
