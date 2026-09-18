@@ -54,9 +54,9 @@ metric there once and both clients receive it in the JSON.
 | **Ring-detected effort** (fallback when AAD is absent) | `effortForDay` + effort rows | `EffortSessions` (DayReportScreen.kt) | `effort` | — (exercise-HR trace timing) |
 | Steps / active calories / **distance** | activity report stats | activity day stats | `activity_daily` (incl. `distance_m`) | — |
 | Previous days browser (date · sleep h · eff % · steps) | `openDaysBrowser` → `openDayPage` | `DaysBrowser` (Android) / `AllDaysView` (iOS) | day keys | — |
-| Device & data health | `renderDevice` | device section | `device`, `streams` | — |
+| Device & data health | `renderDevice` | `DeviceHealthPanel` (Android, read-only) / device section (iOS) | `device.{streams,insights,measuring,…}` | — |
 | **Battery log + discharge runs** | `renderBattery`, `batteryChart` | `BatteryPanel`, `drawBatteryChart` | `battery.{series,cycles}` | — |
-| Excluded-period note | `renderDevice` (`.dh-note`) | device section stat | `device.short_periods_excluded` | — |
+| Excluded-period note | `renderDevice` (`.dh-note`) | `DeviceHealthPanel` (Android) / device section stat (iOS) | `device.short_periods_excluded` | — |
 
 ## The day is one unit — pair night + activity by *wake date*
 
@@ -209,8 +209,11 @@ which is why Oura's own app has no per-night HRV trend either.
 
 ## Known gaps (web-only, not yet on iOS)
 
-- **Advanced & debugging**: on-ring feature toggles (`/api/feature`), the per-type event
-  stream, profile editing.
+- **Advanced & debugging**: on-ring feature **toggling** (`/api/feature` — Android shows the
+  same capabilities read-only), the per-type `event_counts` table, and the ring-key
+  export/QR tools (Android has its own Ring key screen instead). The rest of Device & data
+  health — the stat row, the excluded-period note, `streams`, `insights` and the device
+  identity block — is on Android as of 2026-09-18.
 - **Polysomnograph crosshair**: web has a hover crosshair; iOS uses a touch scrubber
   (drag across the lanes) — same idea, adapted to the input.
 - **DNA explorer** (`/dna`): reads genome `*.vcf.gz` files and scores single-SNP **traits**
