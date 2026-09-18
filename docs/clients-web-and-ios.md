@@ -209,11 +209,19 @@ which is why Oura's own app has no per-night HRV trend either.
 
 ## Known gaps (web-only, not yet on iOS)
 
-- **Advanced & debugging**: on-ring feature **toggling** (`/api/feature` — Android shows the
-  same capabilities read-only), the per-type `event_counts` table, and the ring-key
-  export/QR tools (Android has its own Ring key screen instead). The rest of Device & data
-  health — the stat row, the excluded-period note, `streams`, `insights` and the device
-  identity block — is on Android as of 2026-09-18.
+- **Advanced & debugging**: the per-type `event_counts` table, and the ring-key export/QR
+  tools (Android has its own Ring key screen instead). Everything else in Device & data
+  health crossed over on 2026-09-18 — the stat row, the excluded-period note, `streams`,
+  `insights`, the device identity block, and **capability toggling**. The web posts
+  `/api/feature`, which shells out to `oura feature-mode`; Android calls
+  `RingSession.set_feature_mode` over UniFFI. Both end at the same protocol call, and the
+  name→id table they share is `oura_protocol::protocol::feature_id`.
+
+  Two behaviours worth keeping in step if either side is touched: the ring answers `0x20`
+  when asked for a mode it is already in, which is a rejection meaning "nothing to do" and
+  must not surface as an error; and whichever client made the change has to write
+  `feature_modes.json`, because the summary reads the recording state from there and only a
+  sync otherwise refreshes it.
 - **Polysomnograph crosshair**: web has a hover crosshair; iOS uses a touch scrubber
   (drag across the lanes) — same idea, adapted to the input.
 - **DNA explorer** (`/dna`): reads genome `*.vcf.gz` files and scores single-SNP **traits**
