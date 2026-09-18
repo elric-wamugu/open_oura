@@ -286,6 +286,67 @@ impl RingSession {
             next_cursor: outcome.next_cursor,
         })
     }
+
+    /// Turn one on-ring capability on or off, and record the new mode next to the DB.
+    ///
+    /// The same operation the web dashboard offers, over the same protocol call — but
+    /// directly, where the dashboard shells out to `oura feature-mode` and greps its
+    /// stdout for "SUCCESS". `feature` is a name from
+    /// [`oura_protocol::protocol::feature_id`]; the ring is always put in `AUTOMATIC` or
+    /// `OFF`, the only two modes a user-facing switch should express.
+    ///
+    /// Writing `feature_modes.json` matters as much as the write to the ring. The summary
+    /// reads that file for the "Recording" state, and it is otherwise only refreshed by a
+    /// sync — so without this the switch would flip back the moment the panel redrew.
+    ///
+    /// Returns a sentence to show the user, because the interesting case is not failure:
+    /// the ring answers `0x20` when asked for the mode it is already in, which is a
+    /// rejection that means "nothing to do" and must not be reported as an error.
+    pub async fn set_feature_mode(
+        &self,
+        db_path: String,
+        key_hex: String,
+        feature: String,
+        on: bool,
+    ) -> Result<String, SyncError> {
+        use oura_protocol::protocol::{feature_id, feature_mode};
+
+        let fail = |e: String| SyncError::Failed(e);
+        let key =
+            parse_key(&key_hex).ok_or_else(|| fail("auth key must be 32 hex chars".into()))?;
+        let id = feature_id(&feature).ok_or_else(|| fail(format!("unknown feature {feature}")))?;
+        let mode = if on {
+            feature_mode::AUTOMATIC
+        } else {
+            feature_mode::OFF
+        };
+        let label = if on { "on" } else { "off" };
+
+        let transport = FfiTransport {
+            tx: self.tx.clone(),
+            writer: self.writer.clone(),
+        };
+        let client = OuraClient::new(transport);
+        client
+            .authenticate(&key)
+            .await
+            .map_err(|e| fail(e.to_string()))?;
+
+        let db = std::path::Path::new(&db_path);
+        match client.set_feature_mode(id, mode).await {
+            Ok(()) => {
+                oura_summary::write_feature_mode(db, &feature, if on { 1 } else { 0 });
+                Ok(format!("{feature} turned {label}"))
+            }
+            // 0x20 is the ring declining to re-enter a mode it is already in. The user's
+            // intent is satisfied, so record it and say so rather than showing a failure.
+            Err(e) if e.to_string().contains("0x20") => {
+                oura_summary::write_feature_mode(db, &feature, if on { 1 } else { 0 });
+                Ok(format!("{feature} was already {label}"))
+            }
+            Err(e) => Err(fail(e.to_string())),
+        }
+    }
 }
 
 fn parse_key(hex: &str) -> Option<[u8; 16]> {
