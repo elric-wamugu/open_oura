@@ -47,6 +47,26 @@ class MainActivity : ComponentActivity() {
     private lateinit var profiles: ProfileStore
     private lateinit var ringKeys: RingKeyStore
 
+    /**
+     * Opening the app is the opportunistic sync trigger, and it belongs here rather than in
+     * [onCreate].
+     *
+     * In onCreate it only fired on a cold start. Returning to an Activity the system had
+     * kept alive — which is most of the time someone opens this app — created nothing at
+     * all; verified on 2026-09-18 by bringing the existing task to the front and watching
+     * the log stay empty, then force-stopping and seeing it fire at once.
+     *
+     * [AutoSync.decide] still applies the 3-hour floor, so this costs an enqueue per
+     * resume, not a sync.
+     */
+    override fun onResume() {
+        super.onResume()
+        org.openoura.android.sync.AutoSync.requestSync(
+            applicationContext,
+            org.openoura.android.sync.SyncTrigger.APP_OPEN,
+        )
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
@@ -63,12 +83,6 @@ class MainActivity : ComponentActivity() {
         lifecycleScope.launch { repo.load(refresh = false) }
         org.openoura.android.widget.WidgetUpdates.schedulePeriodic(applicationContext)
         org.openoura.android.sync.AutoSync.schedulePeriodic(applicationContext)
-        // Opening the app is the opportunistic trigger; AutoSync.decide still applies
-        // the 3-hour floor, so launching repeatedly costs enqueues, not syncs.
-        org.openoura.android.sync.AutoSync.requestSync(
-            applicationContext,
-            org.openoura.android.sync.SyncTrigger.APP_OPEN,
-        )
 
         setContent {
             OpenOuraTheme {
