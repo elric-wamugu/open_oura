@@ -2,6 +2,7 @@ package org.openoura.android.ble
 
 import android.content.Context
 import android.util.Log
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.coroutineScope
@@ -161,6 +162,14 @@ suspend fun runRingSync(
                 session.close()
             }
         }
+    } catch (c: CancellationException) {
+        // Cancellation is not a sync failure and must not be reported as one. Catching it
+        // here used to turn "the system stopped us" into SyncPhase.Failed("Job was
+        // cancelled"), which broke structured concurrency and — worse — told the caller a
+        // drain had failed when it had in fact checkpointed thousands of events and could
+        // resume immediately. The caller decides what a stop means; this only re-throws.
+        Log.i(TAG, "sync cancelled")
+        throw c
     } catch (t: Throwable) {
         Log.e(TAG, "sync failed", t)
         SyncPhase.Failed(t.message ?: t::class.java.simpleName)

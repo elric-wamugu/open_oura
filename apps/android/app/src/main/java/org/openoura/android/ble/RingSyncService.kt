@@ -72,25 +72,30 @@ class RingSyncService : Service() {
         running = true
 
         scope.launch {
-            val result = runRingSync(applicationContext) { phase ->
-                _phase.value = phase
-                if (phase is SyncPhase.Running) notify(describeSync(phase))
-            }
-            _phase.value = result
+            // try/finally, because runRingSync now lets cancellation through: without it a
+            // cancelled scope would skip the reset and leave `running` true forever, and
+            // every later sync would be refused as already in flight.
+            try {
+                val result = runRingSync(applicationContext) { phase ->
+                    _phase.value = phase
+                    if (phase is SyncPhase.Running) notify(describeSync(phase))
+                }
+                _phase.value = result
 
-            if (result is SyncPhase.Done) {
-                // Only now is the database newer than the cached summary. recompute()
-                // rewrites the widget projection and repaints the widgets itself.
-                notify("Rebuilding the summary…")
-                val repo = SummaryRepository.get(applicationContext)
-                runCatching { repo.recompute() }
-                    .onFailure { Log.e(TAG, "post-sync recompute failed", it) }
-                // A sync is the only moment the ring's level can have changed.
-                repo.cached()?.let { BatteryAlerts.check(applicationContext, it) }
+                if (result is SyncPhase.Done) {
+                    // Only now is the database newer than the cached summary. recompute()
+                    // rewrites the widget projection and repaints the widgets itself.
+                    notify("Rebuilding the summary…")
+                    val repo = SummaryRepository.get(applicationContext)
+                    runCatching { repo.recompute() }
+                        .onFailure { Log.e(TAG, "post-sync recompute failed", it) }
+                    // A sync is the only moment the ring's level can have changed.
+                    repo.cached()?.let { BatteryAlerts.check(applicationContext, it) }
+                }
+            } finally {
+                running = false
+                stopSelf()
             }
-
-            running = false
-            stopSelf()
         }
         // START_NOT_STICKY: if the process dies mid-sync, silently restarting a BLE drain
         // the user cannot see is worse than doing nothing. The cursor is checkpointed, so
