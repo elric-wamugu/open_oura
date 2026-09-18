@@ -641,6 +641,10 @@ function sleepInterpretation(d, n, m) {
       : `Deep sleep ${n.deep_pct}% (target ~13–23%), the physically-restorative stage.`);
   if (n.rem_pct != null && m.rem_latency_min != null)
     out.push(`REM was ${n.rem_pct}% with first REM ${Math.round(m.rem_latency_min)} min after onset (a short REM latency can signal REM pressure or sleep debt).`);
+  // "2 cycles" is the one figure on this page that means nothing without being told what
+  // a cycle is, and the bare number invites reading more into it than it holds.
+  if (m.cycles != null)
+    out.push(`You went through ${m.cycles} sleep cycle${m.cycles === 1 ? "" : "s"} — one cycle is a pass from light sleep down into deep and back up into REM, around 90 minutes. Four to six is typical, and the earliest ones carry most of the deep sleep.`);
   if (m.waso_min != null && m.awakenings != null)
     out.push(`You spent ${Math.round(m.waso_min)} min awake across ${m.awakenings} awakening${m.awakenings === 1 ? "" : "s"} after first falling asleep.`);
   out.forEach((t) => wrap.append(el("p", "interp-p", t)));
