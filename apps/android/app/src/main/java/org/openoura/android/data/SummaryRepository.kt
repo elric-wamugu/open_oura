@@ -89,8 +89,20 @@ class SummaryRepository private constructor(private val ctx: Context) {
             }
             return
         }
-        if (refresh || cached == null) recompute()
+        if (refresh || cached == null || cacheIsBehindDatabase()) recompute()
     }
+
+    /**
+     * True when the database has moved since the summary was last built.
+     *
+     * A sync that does not reach the end never recomputes — a background drain stopped
+     * mid-flight on 2026-09-18 left the cursor 234,743 ahead of a summary still showing the
+     * previous evening. That is worse than being visibly behind, because the screen looks
+     * current. Comparing the two files catches it regardless of *why* they diverged, so
+     * this covers a killed worker, a crash, or a database swapped in underneath us.
+     */
+    private fun cacheIsBehindDatabase(): Boolean =
+        hasDatabase && cacheFile.exists() && dbFile.lastModified() > cacheFile.lastModified()
 
     /** Runs the Rust core off the main thread and replaces the cache. */
     suspend fun recompute() {
