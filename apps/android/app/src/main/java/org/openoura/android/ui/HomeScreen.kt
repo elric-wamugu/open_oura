@@ -58,6 +58,9 @@ fun HomeScreen(
     onToggleBattery: () -> Unit,
     deviceExpanded: Boolean,
     onToggleDevice: () -> Unit,
+    onToggleCapability: (org.openoura.android.data.Capability) -> Unit,
+    busyCapability: String? = null,
+    capabilityMessage: String? = null,
     modifier: Modifier = Modifier,
 ) {
     val c = Oura.colors
@@ -175,6 +178,9 @@ fun HomeScreen(
                         device = state.summary.device,
                         expanded = deviceExpanded,
                         onToggle = onToggleDevice,
+                        onToggleCapability = onToggleCapability,
+                        busyCapability = busyCapability,
+                        capabilityMessage = capabilityMessage,
                     )
                     if (state.stale) {
                         Text("Showing the cached snapshot.", color = c.faint, fontSize = 11.sp)

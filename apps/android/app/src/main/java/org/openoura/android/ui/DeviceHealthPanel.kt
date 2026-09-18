@@ -11,17 +11,23 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import org.openoura.android.data.Capability
 import org.openoura.android.data.Device
 import org.openoura.android.ui.theme.Oura
 import org.openoura.android.ui.theme.OuraColors
@@ -34,17 +40,22 @@ import kotlin.math.roundToInt
  * a vital in sight: how much history exists, which event families are arriving and in what
  * volume, which derived metrics that does and does not unlock, and the ring's own identity.
  *
- * **Read-only, unlike the web.** There the capability rows are tappable switches that talk
- * to the ring, and the panel also holds key export/import and a per-event-type table. The
- * key already has its own screen here, and flipping on-ring features from the phone is a
- * separate job with its own BLE round trip — see `docs/clients-web-and-ios.md`. What is
- * shown here is exactly what can be read from the summary.
+ * Mostly a read of the summary, with one exception: the capability rows write. Tapping one
+ * connects to the ring and sets a feature mode, the same operation the web dashboard
+ * offers. Still web-only are the key export/QR tools — the key has its own screen here —
+ * and the per-event-type table.
  */
 @Composable
 fun DeviceHealthPanel(
     device: Device?,
     expanded: Boolean,
     onToggle: () -> Unit,
+    /** Flip one on-ring capability. Null leaves the rows read-only. */
+    onToggleCapability: ((Capability) -> Unit)? = null,
+    /** The capability currently being written to the ring, if any. */
+    busyCapability: String? = null,
+    /** The last toggle's outcome, shown under the rows until the next one. */
+    capabilityMessage: String? = null,
     modifier: Modifier = Modifier,
 ) {
     val c = Oura.colors
@@ -98,7 +109,7 @@ fun DeviceHealthPanel(
                 ShortPeriodsNote(d, c)
                 Streams(d, c)
                 Insights(d, c)
-                Capabilities(d, c)
+                Capabilities(d, c, onToggleCapability, busyCapability, capabilityMessage)
                 Identity(d, c)
             }
         }
@@ -239,36 +250,87 @@ private fun Insights(d: Device, c: OuraColors) {
     }
 }
 
-/** Which on-ring features are switched on. Read-only here; the web can toggle them. */
+/**
+ * Which on-ring features are switched on, and — when [onToggle] is supplied — a switch to
+ * change one.
+ *
+ * Real switches rather than the coloured dots this started with. A dot that also happens to
+ * be a button is a guess: it reads as a status light, and the only thing saying otherwise
+ * was a line of caption text the eye skips. A switch says what it is before it is read.
+ *
+ * Flipping one is not a UI state change. It connects to the ring, authenticates and writes
+ * a feature mode, which takes on the order of fifteen seconds and can fail — so the switch
+ * gives way to a spinner while that happens, and the outcome is spelled out underneath
+ * rather than left to be inferred from a control that may or may not have moved.
+ *
+ * Only one at a time: the ring holds a single connection, and two writes racing for it
+ * would fail in a way neither row could explain.
+ */
 @Composable
-private fun Capabilities(d: Device, c: OuraColors) {
+private fun Capabilities(
+    d: Device,
+    c: OuraColors,
+    onToggle: ((Capability) -> Unit)?,
+    busy: String?,
+    message: String?,
+) {
     val caps = d.measuring.takeIf { it.isNotEmpty() } ?: return
-    Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
-        Subhead("Recording", c)
-        caps.chunked(2).forEach { row ->
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                row.forEach { m ->
-                    Row(
-                        Modifier.weight(1f),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Box(
-                            Modifier
-                                .width(6.dp)
-                                .height(6.dp)
-                                .clip(RoundedCornerShape(3.dp))
-                                .background(if (m.on) c.accent else c.lineSoft),
-                        )
-                        Text(
-                            m.name,
-                            color = if (m.on) c.muted else c.faint,
-                            fontSize = 11.sp,
-                        )
-                    }
+    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        // Same words as the web panel. The switches say what they are on their own, but
+        // the heading is what tells you the ring is about to be written to rather than the
+        // app's own settings — which is the part worth knowing before you touch one.
+        Subhead(if (onToggle != null) "Capabilities · tap to toggle" else "Capabilities", c)
+        caps.forEach { m ->
+            val working = busy == m.feature
+            val changeable = onToggle != null && m.feature.isNotBlank()
+            Row(
+                Modifier.fillMaxWidth().height(40.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    m.name,
+                    color = if (m.on) c.text else c.muted,
+                    fontSize = 12.sp,
+                )
+                if (working) {
+                    CircularProgressIndicator(
+                        Modifier.size(18.dp),
+                        color = c.accent,
+                        strokeWidth = 2.dp,
+                    )
+                } else {
+                    Switch(
+                        checked = m.on,
+                        // Null rather than a no-op lambda: it is what makes the switch
+                        // read as unavailable instead of merely unresponsive.
+                        onCheckedChange = if (changeable && busy == null) {
+                            { onToggle!!(m) }
+                        } else {
+                            null
+                        },
+                        enabled = changeable && busy == null,
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = c.bg,
+                            checkedTrackColor = c.accent,
+                            checkedBorderColor = c.accent,
+                            uncheckedThumbColor = c.faint,
+                            uncheckedTrackColor = c.surface2,
+                            uncheckedBorderColor = c.line,
+                        ),
+                        modifier = Modifier.scale(0.8f),
+                    )
                 }
-                if (row.size == 1) Box(Modifier.weight(1f))
             }
+        }
+        message?.let {
+            Text(
+                it,
+                color = c.faint,
+                fontSize = 10.sp,
+                lineHeight = 14.sp,
+                modifier = Modifier.padding(top = 4.dp),
+            )
         }
     }
 }

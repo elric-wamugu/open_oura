@@ -79,6 +79,78 @@ suspend fun runRingSync(
     /** Scan with a service-UUID filter — required when the screen may be off. */
     filteredScan: Boolean = false,
     onPhase: (SyncPhase) -> Unit,
+): SyncPhase = withRingSession(ctx, filteredScan, onPhase) { session, dbPath, keyHex ->
+    val report = session.sync(
+        dbPath,
+        keyHex,
+        object : SyncProgressListener {
+            // `progress` is computed in oura-link and arrives ready to
+            // render — the same fraction the web dashboard draws. Deriving it
+            // here instead is how the two clients came to disagree.
+            override fun onProgress(
+                stage: String,
+                bytesLeft: ULong,
+                eventsSynced: UInt,
+                progress: Float?,
+            ) {
+                onPhase(
+                    SyncPhase.Running(
+                        stage = stage,
+                        eventsSynced = eventsSynced.toLong(),
+                        bytesLeft = bytesLeft.toLong(),
+                        progress = progress,
+                    ),
+                )
+            }
+        },
+    )
+    Log.i(
+        TAG,
+        "sync done: ${report.eventsSynced} events, ${report.inserted} new, " +
+            "cursor ${report.nextCursor}",
+    )
+    SyncPhase.Done(
+        serial = report.serial,
+        events = report.eventsSynced.toLong(),
+        inserted = report.inserted.toLong(),
+    )
+}
+
+/**
+ * Turn one on-ring capability on or off.
+ *
+ * A short round trip next to a drain — connect, authenticate, one write — but it goes
+ * through the same bridge, because the bridge is where the subtleties live. The Rust side
+ * also records the new mode next to the database, so the panel reflects it without waiting
+ * for a sync.
+ */
+suspend fun runRingFeature(
+    ctx: Context,
+    feature: String,
+    on: Boolean,
+    onPhase: (SyncPhase) -> Unit = {},
+): SyncPhase = withRingSession(ctx, filteredScan = false, onPhase = onPhase) { session, dbPath, keyHex ->
+    onPhase(SyncPhase.Running("feature"))
+    val message = session.setFeatureMode(dbPath, keyHex, feature, on)
+    Log.i(TAG, "feature: $message")
+    SyncPhase.Done(serial = "", events = 0, inserted = 0)
+}
+
+/**
+ * Connect, stand up the two-way byte bridge, and run [block] against a [RingSession].
+ *
+ * Extracted because everything tricky about talking to this ring lives in the setup rather
+ * than in what any one caller does afterwards: the write pump exists because Rust calls
+ * [BleWriter.write] synchronously from its own runtime, the frame collector has to start
+ * *before* the session is used or setup-phase frames are lost, and the pump has to be
+ * allowed to drain before cancellation or the drain's final unawaited ack is dropped. A
+ * second caller copying that by hand would get one of them wrong.
+ */
+private suspend fun withRingSession(
+    ctx: Context,
+    filteredScan: Boolean,
+    onPhase: (SyncPhase) -> Unit,
+    block: suspend (session: RingSession, dbPath: String, keyHex: String) -> SyncPhase,
 ): SyncPhase {
     val keyHex = RingKeyStore(ctx).read()
         ?: return SyncPhase.Failed(
@@ -116,40 +188,7 @@ suspend fun runRingSync(
             }
 
             try {
-                val report = session.sync(
-                    dbPath,
-                    keyHex,
-                    object : SyncProgressListener {
-                        // `progress` is computed in oura-link and arrives ready to
-                        // render — the same fraction the web dashboard draws. Deriving it
-                        // here instead is how the two clients came to disagree.
-                        override fun onProgress(
-                            stage: String,
-                            bytesLeft: ULong,
-                            eventsSynced: UInt,
-                            progress: Float?,
-                        ) {
-                            onPhase(
-                                SyncPhase.Running(
-                                    stage = stage,
-                                    eventsSynced = eventsSynced.toLong(),
-                                    bytesLeft = bytesLeft.toLong(),
-                                    progress = progress,
-                                ),
-                            )
-                        }
-                    },
-                )
-                Log.i(
-                    TAG,
-                    "sync done: ${report.eventsSynced} events, ${report.inserted} new, " +
-                        "cursor ${report.nextCursor}",
-                )
-                SyncPhase.Done(
-                    serial = report.serial,
-                    events = report.eventsSynced.toLong(),
-                    inserted = report.inserted.toLong(),
-                )
+                block(session, dbPath, keyHex)
             } finally {
                 reader.cancel()
                 // Close first, then let the pump drain what is queued, and only cancel as a

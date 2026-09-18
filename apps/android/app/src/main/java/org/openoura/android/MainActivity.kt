@@ -30,6 +30,7 @@ import org.openoura.android.ble.RingSyncService
 import org.openoura.android.ble.SyncPhase
 import org.openoura.android.ble.describeSync
 import org.openoura.android.ble.probeRing
+import org.openoura.android.ble.runRingFeature
 import org.openoura.android.data.ProfileStore
 import org.openoura.android.data.RingKeyStore
 import org.openoura.android.data.SummaryRepository
@@ -195,6 +196,11 @@ class MainActivity : ComponentActivity() {
                 }
                 var batteryOpen by remember { mutableStateOf(prefs.getBoolean("fold_battery", false)) }
                 var deviceOpen by remember { mutableStateOf(prefs.getBoolean("fold_device", false)) }
+                // Which capability is being written to the ring, and what the last write
+                // said. Held here rather than in the panel because the work outlives any
+                // recomposition and must survive the panel folding shut mid-flight.
+                var capabilityBusy by remember { mutableStateOf<String?>(null) }
+                var capabilityMessage by remember { mutableStateOf<String?>(null) }
 
                 Scaffold(modifier = Modifier.fillMaxSize()) { inner ->
                     val ready = state as? SummaryState.Ready
@@ -286,6 +292,41 @@ class MainActivity : ComponentActivity() {
                             onToggleDevice = {
                                 deviceOpen = !deviceOpen
                                 prefs.edit().putBoolean("fold_device", deviceOpen).apply()
+                            },
+                            busyCapability = capabilityBusy,
+                            capabilityMessage = capabilityMessage,
+                            onToggleCapability = { cap ->
+                                // The ring holds one connection; a drain already has it.
+                                if (RingSyncService.isRunning) {
+                                    capabilityMessage = "A sync is running — try again once it finishes."
+                                } else if (capabilityBusy == null) {
+                                    capabilityBusy = cap.feature
+                                    capabilityMessage = "Writing ${cap.name} to the ring…"
+                                    lifecycleScope.launch {
+                                        val phase = withContext(Dispatchers.IO) {
+                                            runRingFeature(applicationContext, cap.feature, !cap.on)
+                                        }
+                                        capabilityMessage = when (phase) {
+                                            // The "wear the ring" half only makes sense one
+                                            // way round: nothing starts appearing because a
+                                            // capability was switched off.
+                                            is SyncPhase.Done -> if (cap.on) {
+                                                "${cap.name} turned off. The ring stops " +
+                                                    "recording it; history already synced stays."
+                                            } else {
+                                                "${cap.name} turned on. Wear the ring; its " +
+                                                    "events appear on the next sync."
+                                            }
+                                            is SyncPhase.Failed -> phase.message
+                                            else -> null
+                                        }
+                                        capabilityBusy = null
+                                        // The Rust side rewrote feature_modes.json, which the
+                                        // summary reads — so the dots only move once we
+                                        // recompute over it.
+                                        if (phase is SyncPhase.Done) repo.recompute()
+                                    }
+                                }
                             },
                             modifier = Modifier.padding(inner),
                         )
