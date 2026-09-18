@@ -117,12 +117,15 @@ private fun SleepReport(s: Summary, ymd: String, c: OuraColors) {
         Text("No scored night for this day.", color = c.muted, fontSize = 13.sp)
         return
     }
+    // The web's four, in the web's order. HRV and resting HR used to sit here; they are
+    // already the first two vitals tiles on the home screen, while asleep-vs-in-bed is the
+    // comparison this page is about and was missing.
     StatStrip(
         listOf(
-            "%.1fh".format(n.inBedH ?: 0.0) to "in bed",
-            "${(n.efficiency ?: 0.0).roundToInt()}%" to "efficiency",
-            (n.hrvMs?.let { "${it.roundToInt()} ms" } ?: "—") to "hrv",
-            (n.rhr?.let { "${it.roundToInt()} bpm" } ?: "—") to "resting hr",
+            "%.1f h".format(n.inBedH ?: 0.0) to "time in bed",
+            (n.metrics?.asleepMin?.let { "%.1f h".format(it / 60.0) } ?: "—") to "asleep",
+            (n.efficiency?.let { "${it.roundToInt()}%" } ?: "—") to "efficiency",
+            "${n.start ?: "—"}–${n.end ?: "—"}" to "bedtime",
         ),
         c,
     )
@@ -141,8 +144,9 @@ private fun SleepReport(s: Summary, ymd: String, c: OuraColors) {
         Section("Sleep metrics", c)
         MetricGrid(
             listOfNotNull(
-                m.asleepMin?.let { "%.0f min".format(it) to "asleep" },
-                m.onsetMin?.let { "%.0f min".format(it) to "onset" },
+                // Asleep now leads the stat strip, so repeating it here would spend a tile
+                // on a figure already two inches up the page.
+                m.onsetMin?.let { "%.0f min".format(it) to "sleep onset" },
                 m.wasoMin?.let { "%.0f min".format(it) to "awake after onset" },
                 m.remLatencyMin?.let { "%.0f min".format(it) to "rem latency" },
                 m.awakenings?.let { "$it" to "awakenings" },
@@ -344,19 +348,30 @@ private fun Section(title: String, c: OuraColors) {
 
 @Composable
 private fun StatStrip(items: List<Pair<String, String>>, c: OuraColors) {
-    Row(
+    // A browser can put four figures on one line; 360 dp cannot, once one of them is a
+    // bedtime range like "03:32-10:58". Wrapping to two rows keeps the web's four values
+    // rather than dropping one or shrinking them all to fit the longest.
+    val wrap = items.size == 4 && items.any { it.first.length > 7 }
+    Column(
         Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(10.dp))
             .background(c.surface)
             .border(1.dp, c.line, RoundedCornerShape(10.dp))
             .padding(vertical = 14.dp, horizontal = 12.dp),
-        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
-        items.forEach { (v, k) ->
-            Column(horizontalAlignment = Alignment.Start) {
-                Text(v, color = c.text, fontSize = 18.sp, fontFamily = FontFamily.Monospace)
-                Text(k.uppercase(), color = c.faint, fontSize = 9.sp, letterSpacing = 0.6.sp)
+        items.chunked(if (wrap) 2 else items.size).forEach { row ->
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                row.forEach { (v, k) ->
+                    Column(
+                        horizontalAlignment = Alignment.Start,
+                        modifier = if (wrap) Modifier.weight(1f) else Modifier,
+                    ) {
+                        Text(v, color = c.text, fontSize = 18.sp, fontFamily = FontFamily.Monospace)
+                        Text(k.uppercase(), color = c.faint, fontSize = 9.sp, letterSpacing = 0.6.sp)
+                    }
+                }
             }
         }
     }
