@@ -46,6 +46,15 @@ object SleepInterpretation {
                 "after onset (a short REM latency can signal REM pressure or sleep debt)."
         }
 
+        // "4 cycles" is the one figure on this page that means nothing without being told
+        // what a cycle is, and the number alone invites reading more into it than it holds.
+        m?.cycles?.let { cycles ->
+            out += "You went through $cycles sleep ${if (cycles == 1) "cycle" else "cycles"} — " +
+                "one cycle is a pass from light sleep down into deep and back up into REM, " +
+                "around 90 minutes. Four to six is typical, and the earliest ones carry most " +
+                "of the deep sleep."
+        }
+
         val waso = m?.wasoMin
         val awakenings = m?.awakenings
         if (waso != null && awakenings != null) {
