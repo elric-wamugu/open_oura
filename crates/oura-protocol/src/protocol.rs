@@ -27,6 +27,24 @@ pub mod feature {
     pub const CHARGING_CONTROL: u8 = 0x0e;
 }
 
+/// The feature ids `SetFeatureMode` addresses, by the names the clients use.
+///
+/// Shared so that the CLI, the dashboard and the on-device clients cannot come to disagree
+/// about which byte means "SpO2" — the table was already written out twice before anything
+/// else needed it a third time.
+pub fn feature_id(name: &str) -> Option<u8> {
+    Some(match name {
+        "daytime_hr" => 0x02,
+        "exercise_hr" => 0x03,
+        "spo2" => 0x04,
+        "resting_hr" => 0x08,
+        "real_steps" => 0x0b,
+        "cva_ppg" => 0x0d,
+        "ambient" => 0x10,
+        _ => return None,
+    })
+}
+
 /// Feature modes used by `SetFeatureMode` (extended `0x22`).
 pub mod feature_mode {
     pub const OFF: u8 = 0x00;

@@ -507,19 +507,15 @@ async fn cmd_feature_mode(
     mode: &str,
 ) -> Result<()> {
     use oura_protocol::protocol::feature_mode;
-    let id: u8 = match feature {
-        "real_steps" => 0x0b,
-        "daytime_hr" => 0x02,
-        "exercise_hr" => 0x03,
-        "spo2" => 0x04,
-        "resting_hr" => 0x08,
-        "cva_ppg" => 0x0d,
-        "ambient" => 0x10,
-        other => other
+    let id: u8 = match oura_protocol::protocol::feature_id(feature) {
+        Some(id) => id,
+        // Names come from the shared table; a raw 0xNN stays available for probing ids
+        // that do not have one yet.
+        None => feature
             .strip_prefix("0x")
             .and_then(|h| u8::from_str_radix(h, 16).ok())
-            .or_else(|| other.parse().ok())
-            .ok_or_else(|| anyhow!("unknown feature {other} (use a name or 0xNN)"))?,
+            .or_else(|| feature.parse().ok())
+            .ok_or_else(|| anyhow!("unknown feature {feature} (use a name or 0xNN)"))?,
     };
     let m = match mode {
         "off" => feature_mode::OFF,
