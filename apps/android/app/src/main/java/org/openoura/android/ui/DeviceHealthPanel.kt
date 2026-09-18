@@ -14,7 +14,9 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.annotation.DrawableRes
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Icon
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
@@ -23,10 +25,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import org.openoura.android.R
 import org.openoura.android.data.Capability
 import org.openoura.android.data.Device
 import org.openoura.android.ui.theme.Oura
@@ -114,6 +118,22 @@ fun DeviceHealthPanel(
             }
         }
     }
+}
+
+/**
+ * The same glyph the web panel shows beside each capability, keyed the same way.
+ *
+ * By name rather than by feature id, because that is how the web does it and the two lists
+ * should not need reconciling to see they agree. An unknown capability falls back to the
+ * chip icon rather than leaving a hole in the column.
+ */
+@DrawableRes
+private fun capabilityIcon(name: String): Int = when (name) {
+    "Daytime HR", "Cardio PPG (CVA)" -> R.drawable.ic_cap_heartbeat
+    "SpO2" -> R.drawable.ic_cap_wind
+    "Exercise HR" -> R.drawable.ic_cap_run
+    "Real steps" -> R.drawable.ic_cap_walking
+    else -> R.drawable.ic_cap_cpu
 }
 
 /** 2,900,505 → "2.9M". The header has room for a shape, not a figure. */
@@ -288,11 +308,24 @@ private fun Capabilities(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Text(
-                    m.name,
-                    color = if (m.on) c.text else c.muted,
-                    fontSize = 12.sp,
-                )
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Icon(
+                        painterResource(capabilityIcon(m.name)),
+                        contentDescription = null,
+                        // Lit when the ring is recording it, faint when it is not, so the
+                        // column reads at a glance without following each row to its switch.
+                        tint = if (m.on) c.accent else c.faint,
+                        modifier = Modifier.size(18.dp),
+                    )
+                    Text(
+                        m.name,
+                        color = if (m.on) c.text else c.muted,
+                        fontSize = 12.sp,
+                    )
+                }
                 if (working) {
                     CircularProgressIndicator(
                         Modifier.size(18.dp),
