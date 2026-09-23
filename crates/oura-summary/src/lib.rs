@@ -1269,6 +1269,13 @@ pub fn build_summary(db: &Path, tz: i64, runner: &dyn ModelRunner) -> Result<Val
             "start_ds": nt.start_ds, // exact bedtime key for on-device model injection
             "start": hm(start_unix, tz),
             "end": hm(end_unix, tz),
+            // The same two instants the clock strings are rendered from, unrounded.
+            // Anything exporting a night — Health Connect, an .ics, a CSV — needs a real
+            // timestamp, and reconstructing one from "02:38" plus `ymd` is both lossy and
+            // wrong whenever a night crosses midnight. `stages_full` is 30-second epochs
+            // from `start_unix`, so this is also what turns a stage index into a time.
+            "start_unix": start_unix.round() as i64,
+            "end_unix": end_unix.round() as i64,
             "in_bed_h": ((nt.end_ds - nt.start_ds) as f64 / 10.0 / 3600.0 * 10.0).round() / 10.0,
             "hrv_ms": mean(&nt.rmssd).map(|x| x.round()),
             "rhr": nt.hr.iter().cloned().fold(f64::INFINITY, f64::min).is_finite().then(|| nt.hr.iter().cloned().fold(f64::INFINITY, f64::min).round()),
