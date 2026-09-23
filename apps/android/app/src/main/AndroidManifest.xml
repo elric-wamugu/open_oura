@@ -34,6 +34,21 @@
     <!-- API 33+. Without it the sync still runs, but its progress notification is hidden. -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
+    <!--
+        Health Connect. Write-only, and every type is one the ring actually measures — the
+        export exists so other apps can read the ring's data, not so this one can read
+        theirs. Health Connect is on-device storage, so this does not contradict the
+        "nothing left the device" claim; whether anything syncs it onward is the user's
+        business and their other apps'.
+    -->
+    <uses-permission android:name="android.permission.health.WRITE_SLEEP" />
+    <uses-permission android:name="android.permission.health.WRITE_RESTING_HEART_RATE" />
+    <uses-permission android:name="android.permission.health.WRITE_HEART_RATE_VARIABILITY" />
+    <uses-permission android:name="android.permission.health.WRITE_OXYGEN_SATURATION" />
+    <uses-permission android:name="android.permission.health.WRITE_STEPS" />
+    <uses-permission android:name="android.permission.health.WRITE_ACTIVE_CALORIES_BURNED" />
+    <uses-permission android:name="android.permission.health.WRITE_TOTAL_CALORIES_BURNED" />
+
     <!-- No BLE, no ring: this app has nothing to offer a device without it. -->
     <uses-feature android:name="android.hardware.bluetooth_le" android:required="true" />
 
@@ -57,7 +72,27 @@
 
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+            <intent-filter>
+                <action android:name="androidx.health.ACTION_SHOW_PERMISSIONS_RATIONALE" />
+            </intent-filter>
         </activity>
+
+        <!--
+            Health Connect requires a way to explain why the app wants health data, or it
+            refuses the permission request outright. Two declarations because two eras:
+            the intent filter below serves the standalone Health Connect app (Android 13),
+            the activity-alias serves the platform one (Android 14+).
+        -->
+        <activity-alias
+            android:name="ViewPermissionUsageActivity"
+            android:exported="true"
+            android:targetActivity=".MainActivity"
+            android:permission="android.permission.START_VIEW_PERMISSION_USAGE">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW_PERMISSION_USAGE" />
+                <category android:name="android.intent.category.HEALTH_PERMISSIONS" />
+            </intent-filter>
+        </activity-alias>
 
         <service
             android:name=".ble.RingSyncService"

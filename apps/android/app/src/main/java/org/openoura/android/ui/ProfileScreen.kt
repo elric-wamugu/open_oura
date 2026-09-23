@@ -43,6 +43,7 @@ fun ProfileScreen(
     ringKeyFingerprint: String?,
     onSave: (RingProfile) -> Unit,
     onRingKey: () -> Unit,
+    onHealthConnect: () -> Unit,
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -139,6 +140,29 @@ fun ProfileScreen(
                 Text(
                     ringKeyFingerprint?.let { "#$it" } ?: "not set",
                     color = if (ringKeyFingerprint != null) c.accent else c.muted,
+                    fontSize = 12.sp,
+                    fontFamily = FontFamily.Monospace,
+                )
+                Text("›", color = c.muted, fontSize = 15.sp)
+            }
+        }
+
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(10.dp))
+                .background(c.surface)
+                .border(1.dp, c.line, RoundedCornerShape(10.dp))
+                .clickable(onClick = onHealthConnect)
+                .padding(horizontal = 14.dp, vertical = 12.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text("Health Connect", color = c.text, fontSize = 13.sp)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    "export",
+                    color = c.muted,
                     fontSize = 12.sp,
                     fontFamily = FontFamily.Monospace,
                 )

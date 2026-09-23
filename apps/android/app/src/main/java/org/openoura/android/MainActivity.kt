@@ -37,6 +37,12 @@ import org.openoura.android.data.SummaryRepository
 import org.openoura.android.data.SummaryState
 import org.openoura.android.ui.DayReportScreen
 import org.openoura.android.ui.DaysBrowser
+import androidx.health.connect.client.HealthConnectClient
+import androidx.health.connect.client.PermissionController
+import org.openoura.android.health.ExportResult
+import org.openoura.android.health.HealthExport
+import org.openoura.android.ui.HealthConnectScreen
+import org.openoura.android.ui.HealthConnectState
 import org.openoura.android.ui.HomeScreen
 import org.openoura.android.ui.ProfileScreen
 import org.openoura.android.ui.RingKeyScreen
@@ -134,6 +140,40 @@ class MainActivity : ComponentActivity() {
                 var browsing by remember { mutableStateOf(false) }
                 var editingProfile by remember { mutableStateOf(false) }
                 var editingRingKey by remember { mutableStateOf(false) }
+                var healthConnect by remember { mutableStateOf(false) }
+                var healthState by remember { mutableStateOf(HealthConnectState.UNSUPPORTED) }
+                var healthBusy by remember { mutableStateOf(false) }
+                var healthMessage by remember { mutableStateOf<String?>(null) }
+
+                // Health Connect's own permission flow: its UI, its grant, and the result
+                // comes back as the set it actually gave rather than a yes/no.
+                val askHealth = rememberLauncherForActivityResult(
+                    PermissionController.createRequestPermissionResultContract(),
+                ) { granted ->
+                    healthState = if (granted.containsAll(HealthExport.PERMISSIONS)) {
+                        HealthConnectState.READY
+                    } else {
+                        healthMessage = "Not all the write permissions were granted."
+                        HealthConnectState.NEEDS_PERMISSION
+                    }
+                }
+
+                // Recomputed whenever the screen opens, because the user can revoke these
+                // from system settings while the app is sitting in the background.
+                LaunchedEffect(healthConnect) {
+                    if (healthConnect) {
+                        healthState = when (HealthExport.status(applicationContext)) {
+                            HealthConnectClient.SDK_UNAVAILABLE -> HealthConnectState.UNSUPPORTED
+                            HealthConnectClient.SDK_UNAVAILABLE_PROVIDER_UPDATE_REQUIRED ->
+                                HealthConnectState.NEEDS_UPDATE
+                            else -> if (HealthExport.hasPermissions(applicationContext)) {
+                                HealthConnectState.READY
+                            } else {
+                                HealthConnectState.NEEDS_PERMISSION
+                            }
+                        }
+                    }
+                }
 
                 // BLE connection test. Bluetooth permissions are requested on demand rather
                 // than at launch: the app is fully usable on an imported database without
@@ -240,6 +280,42 @@ class MainActivity : ComponentActivity() {
                             onBack = { editingRingKey = false },
                             modifier = Modifier.padding(inner),
                         )
+                    } else if (healthConnect) {
+                        val ready = state as? SummaryState.Ready
+                        HealthConnectScreen(
+                            state = healthState,
+                            nights = ready?.summary?.nights?.size ?: 0,
+                            days = ready?.summary?.activityDaily?.size ?: 0,
+                            busy = healthBusy,
+                            message = healthMessage,
+                            onGrant = { askHealth.launch(HealthExport.PERMISSIONS) },
+                            onExport = {
+                                val summary = ready?.summary
+                                if (summary == null) {
+                                    healthMessage = "No summary computed yet — sync first."
+                                } else if (!healthBusy) {
+                                    healthBusy = true
+                                    healthMessage = "Writing to Health Connect…"
+                                    lifecycleScope.launch {
+                                        val res = HealthExport.export(applicationContext, summary)
+                                        healthMessage = when (res) {
+                                            is ExportResult.Wrote ->
+                                                "Exported ${res.total} records — ${res.sleep} nights, " +
+                                                    "${res.vitals} nightly vitals, ${res.activity} daily totals."
+                                            ExportResult.NoPermission -> {
+                                                healthState = HealthConnectState.NEEDS_PERMISSION
+                                                "Health Connect revoked the write permissions."
+                                            }
+                                            ExportResult.Unavailable -> "Health Connect is not available."
+                                            is ExportResult.Failed -> res.message
+                                        }
+                                        healthBusy = false
+                                    }
+                                }
+                            },
+                            onBack = { healthConnect = false },
+                            modifier = Modifier.padding(inner),
+                        )
                     } else if (editingProfile) {
                         ProfileScreen(
                             initial = profiles.read(),
@@ -250,6 +326,10 @@ class MainActivity : ComponentActivity() {
                                 scope.launch { busy = true; repo.recompute(); busy = false }
                             },
                             onRingKey = { editingRingKey = true },
+                            onHealthConnect = {
+                                healthMessage = null
+                                healthConnect = true
+                            },
                             onBack = { editingProfile = false },
                             modifier = Modifier.padding(inner),
                         )
