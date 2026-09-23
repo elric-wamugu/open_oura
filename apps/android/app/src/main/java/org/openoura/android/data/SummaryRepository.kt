@@ -13,6 +13,29 @@ import uniffi.oura_core.summaryJson
 
 private const val TAG = "OpenOura"
 
+/**
+ * Whether a cached summary can still be trusted, given when everything happened.
+ *
+ * Two ways it goes bad, and they are not the same failure. Both have already happened.
+ *
+ * The database moving under it is the obvious one: a sync that does not reach the end never
+ * recomputes, and a background drain stopped mid-flight on 2026-09-18 left the cursor
+ * 234,743 ahead of a summary still showing the previous evening. Current-looking and wrong
+ * is worse than visibly behind.
+ *
+ * The second is the code that *produced* it being replaced. `oura-summary` gained
+ * `start_unix` on 2026-09-23 and the first Health Connect export wrote zero sleep sessions,
+ * because the cache predated the field and nothing about the database had changed — so a
+ * comparison of those two files saw nothing wrong. The app's own update time catches it,
+ * and catches it without anyone having to remember to bump a constant when the brain's
+ * shape changes, which is the version of this that would eventually have failed quietly.
+ *
+ * The cost is one recompute after each app update, which is the right trade: a new build is
+ * precisely when a summary is most likely to come out different.
+ */
+internal fun summaryCacheIsStale(cacheWrittenAt: Long, dbModifiedAt: Long, appUpdatedAt: Long) =
+    dbModifiedAt > cacheWrittenAt || appUpdatedAt > cacheWrittenAt
+
 /** What the UI is currently looking at. */
 sealed interface SummaryState {
     data object Loading : SummaryState
@@ -89,20 +112,19 @@ class SummaryRepository private constructor(private val ctx: Context) {
             }
             return
         }
-        if (refresh || cached == null || cacheIsBehindDatabase()) recompute()
+        if (refresh || cached == null || cacheIsStale()) recompute()
     }
 
-    /**
-     * True when the database has moved since the summary was last built.
-     *
-     * A sync that does not reach the end never recomputes — a background drain stopped
-     * mid-flight on 2026-09-18 left the cursor 234,743 ahead of a summary still showing the
-     * previous evening. That is worse than being visibly behind, because the screen looks
-     * current. Comparing the two files catches it regardless of *why* they diverged, so
-     * this covers a killed worker, a crash, or a database swapped in underneath us.
-     */
-    private fun cacheIsBehindDatabase(): Boolean =
-        hasDatabase && cacheFile.exists() && dbFile.lastModified() > cacheFile.lastModified()
+    private fun cacheIsStale(): Boolean {
+        if (!hasDatabase || !cacheFile.exists()) return false
+        return summaryCacheIsStale(cacheFile.lastModified(), dbFile.lastModified(), appUpdatedAt())
+    }
+
+    /** When this APK was last installed over. Zero if it cannot be read, which reads as
+     *  "no reason to invalidate" rather than as a reason to recompute on every launch. */
+    private fun appUpdatedAt(): Long = runCatching {
+        ctx.packageManager.getPackageInfo(ctx.packageName, 0).lastUpdateTime
+    }.getOrDefault(0L)
 
     /** Runs the Rust core off the main thread and replaces the cache. */
     suspend fun recompute() {
