@@ -65,6 +65,11 @@ data class NightRow(
     @SerialName("start_ds") val startDs: Long? = null,
     val start: String? = null,
     val end: String? = null,
+    /** The same two instants as [start]/[end], unrounded. Exporting a night needs a real
+     *  interval, and "02:33" plus [ymd] reconstructs the wrong one whenever it crosses
+     *  midnight. `stagesFull` is 30-second epochs from [startUnix]. */
+    @SerialName("start_unix") val startUnix: Long? = null,
+    @SerialName("end_unix") val endUnix: Long? = null,
     @SerialName("in_bed_h") val inBedH: Double? = null,
     @SerialName("hrv_ms") val hrvMs: Double? = null,
     val rhr: Double? = null,
