@@ -301,6 +301,17 @@ nightly need" but "a 7.5 h need". `app.js` hardcodes "an".
 
 ## Known gaps (Android-only, by nature)
 
+- **Health Connect export** (`apps/android/.../health/HealthExport.kt`): nights as
+  `SleepSessionRecord` with stages, nightly resting HR / HRV / SpO₂, and daily steps and
+  energy. Android-only because Health Connect is; the desktop has no equivalent sink.
+  Records carry a `clientRecordId` keyed by date so a re-export corrects rather than
+  duplicates, and permissions are **write-only** — reading would let the app show numbers
+  it did not measure.
+
+  It needs `nights[].start_unix`/`end_unix`, which `oura-summary` emits for this but which
+  are not Android-specific: any export of a night as a real interval needs them, and the
+  clock strings cannot supply one across midnight.
+
 Two Android features have no web or iOS counterpart, and are not omissions to close:
 
 - **Unattended sync** (`apps/android/.../sync/AutoSync.kt`): a 3-hour WorkManager floor plus
