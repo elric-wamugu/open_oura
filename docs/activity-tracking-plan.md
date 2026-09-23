@@ -33,7 +33,9 @@ heuristic over MET and HR is precisely what that line exists to prevent.
 
 What the ring *does* have, and what stays valuable: continuous HR at quality-gated beat
 level, MET intensity per minute, `ehr_acm_intensity_event`, and the fact that it is on your
-finger 24 hours a day whether or not you remembered to start anything. This database holds 184 effort sessions as of 2026-09-23 — the 54 quoted in `clients-web-and-ios.md` was the figure when that section was written.
+finger 24 hours a day whether or not you remembered to start anything. This database
+holds **184 effort sessions** as of 2026-09-23 — the 54 quoted in
+`clients-web-and-ios.md` was the count when that section was written.
 
 ## Why the route comes first
 
