@@ -279,8 +279,21 @@ impl Store {
         &self,
         serial: Option<&str>,
     ) -> Result<Vec<(i64, u8, String, i64)>> {
+        // `+serial` suppresses `idx_events_serial_tag`, and that one character is worth
+        // roughly 9x on a real database.
+        //
+        // The index is selective for *tag*; for *serial* it is not — there is one ring, so
+        // `serial = ?` matches every row. SQLite still picks it for the equality, which
+        // hands rows back in (serial, tag, rowid) order and then needs a TEMP B-TREE to put
+        // 1.87M of them back in `id` order, spilling to disk on the way. Measured on a
+        // 523 MB database, 1,866,568 rows, identical results both ways:
+        //
+        //     AND serial = ?    SEARCH … USE TEMP B-TREE FOR ORDER BY    51.8 s
+        //     AND +serial = ?   SCAN events                               5.6 s
+        //
+        // The scan is already in `id` order, so the sort disappears entirely.
         let serial_filter = if serial.is_some() {
-            " AND serial = ?1"
+            " AND +serial = ?1"
         } else {
             ""
         };
