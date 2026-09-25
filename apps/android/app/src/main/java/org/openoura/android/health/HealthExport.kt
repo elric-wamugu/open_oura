@@ -67,6 +67,49 @@ object HealthExport {
         HealthPermission.getWritePermission(TotalCaloriesBurnedRecord::class),
     )
 
+    /**
+     * How far back an automatic export reaches.
+     *
+     * Chosen from the ring's ~8.5-day retention window plus margin, not picked round: a
+     * sync physically cannot alter a night older than what the ring still holds.
+     */
+    const val RECENT_DAYS = 14
+
+    private const val PREFS = "health_export"
+    private const val KEY_AUTO = "after_each_sync"
+
+    /**
+     * Whether a finished sync should also publish what it brought in.
+     *
+     * On by default, because "sync my data to Health Connect" is what anyone granting these
+     * permissions is asking for — the first version of this shipped as a button that ran
+     * once, and the data quietly stopped arriving. The switch exists so that can be turned
+     * off without revoking the permissions, and it is only ever consulted when they are
+     * granted, so it cannot cause a write nobody allowed.
+     */
+    fun autoExport(ctx: Context): Boolean =
+        ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean(KEY_AUTO, true)
+
+    fun setAutoExport(ctx: Context, on: Boolean) {
+        ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .edit().putBoolean(KEY_AUTO, on).apply()
+    }
+
+    /**
+     * Publish the recent window after a sync, if that is switched on and allowed.
+     *
+     * Quiet by design: this runs behind a background drain with nobody watching, so a
+     * Health Connect that is unavailable or unpermitted is a log line, not an error the
+     * sync has to carry.
+     */
+    suspend fun exportAfterSync(ctx: Context, summary: Summary) {
+        if (!autoExport(ctx)) return
+        when (val res = export(ctx, summary, sinceDays = RECENT_DAYS)) {
+            is ExportResult.Wrote -> Log.i(TAG, "after sync: ${res.total} records")
+            else -> Log.i(TAG, "after sync: skipped ($res)")
+        }
+    }
+
     /** Health Connect insists a record name the writer; this is how the ring appears. */
     private val device = Device(
         manufacturer = "Oura",
@@ -95,20 +138,36 @@ object HealthExport {
      * earlier one — which matters because a night's staging can change when a sync brings
      * in events that were still on the ring the first time round.
      */
-    suspend fun export(ctx: Context, summary: Summary): ExportResult {
+    suspend fun export(
+        ctx: Context,
+        summary: Summary,
+        /**
+         * Only export days at least this recent, or null for everything.
+         *
+         * The automatic path passes [RECENT_DAYS] rather than rewriting a year on every
+         * sync. That is safe because of a property of the ring rather than an assumption
+         * about the app: it holds a rolling ~8.5 days, so a sync cannot change a night
+         * older than that. Anything further back only moves when a database is imported,
+         * and the button on the Health Connect screen is there for exactly that.
+         */
+        sinceDays: Int? = null,
+    ): ExportResult {
         if (!available(ctx)) return ExportResult.Unavailable
         if (!hasPermissions(ctx)) return ExportResult.NoPermission
 
         val zone = ZoneId.systemDefault()
         val version = System.currentTimeMillis() / 1000
+        val cutoff = sinceDays?.let { LocalDate.now(zone).minusDays(it.toLong()).toString() }
+        // Dates are ISO, so a string comparison is a date comparison and needs no parsing.
+        fun recent(ymd: String?) = cutoff == null || (ymd != null && ymd >= cutoff)
 
         val sleep = mutableListOf<Record>()
         val vitals = mutableListOf<Record>()
-        summary.nights.forEach { night ->
+        summary.nights.filter { recent(it.ymd) }.forEach { night ->
             sleepSession(night, zone, version)?.let { sleep += it }
             vitals += nightlyVitals(night, zone, version)
         }
-        val activity = summary.activityDaily.flatMap { (date, stat) ->
+        val activity = summary.activityDaily.filterKeys { recent(it) }.flatMap { (date, stat) ->
             dailyActivity(date, stat, zone, version)
         }
 

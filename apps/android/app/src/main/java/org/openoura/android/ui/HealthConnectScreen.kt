@@ -3,18 +3,24 @@ package org.openoura.android.ui
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import org.openoura.android.health.HealthExport
 import org.openoura.android.ui.theme.Oura
 
 /** What the screen needs to know about Health Connect's state on this phone. */
@@ -37,6 +43,9 @@ fun HealthConnectScreen(
     message: String?,
     onGrant: () -> Unit,
     onExport: () -> Unit,
+    /** Whether a finished ring sync also publishes what it brought in. */
+    autoExport: Boolean = true,
+    onAutoExport: (Boolean) -> Unit = {},
     onBack: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -88,15 +97,44 @@ fun HealthConnectScreen(
             }
 
             HealthConnectState.READY -> {
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Keep in sync", color = c.text, fontSize = 13.sp)
+                        Text(
+                            "Publish each sync's new nights and days automatically, the " +
+                                "last ${HealthExport.RECENT_DAYS} days at a time.",
+                            color = c.faint, fontSize = 11.sp, lineHeight = 15.sp,
+                        )
+                    }
+                    Switch(
+                        checked = autoExport,
+                        onCheckedChange = onAutoExport,
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = c.bg,
+                            checkedTrackColor = c.accent,
+                            checkedBorderColor = c.accent,
+                            uncheckedThumbColor = c.faint,
+                            uncheckedTrackColor = c.surface2,
+                            uncheckedBorderColor = c.line,
+                        ),
+                        modifier = Modifier.scale(0.8f),
+                    )
+                }
+
                 Text(
                     "$nights ${if (nights == 1) "night" else "nights"} and $days " +
-                        "${if (days == 1) "day" else "days"} of activity ready to export. " +
-                        "Running it again is safe — each record is keyed by its date, so a " +
-                        "second export corrects the first rather than duplicating it.",
+                        "${if (days == 1) "day" else "days"} in total. Export everything to " +
+                        "backfill history the ring can no longer reach — running it again is " +
+                        "safe, since each record is keyed by its date and a second export " +
+                        "corrects the first rather than duplicating it.",
                     color = c.faint, fontSize = 12.sp, lineHeight = 17.sp,
                 )
                 Button(onClick = onExport, enabled = !busy, modifier = Modifier.fillMaxWidth()) {
-                    Text(if (busy) "Exporting…" else "Export to Health Connect")
+                    Text(if (busy) "Exporting…" else "Export everything now")
                 }
             }
         }

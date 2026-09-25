@@ -22,6 +22,7 @@ import kotlinx.coroutines.launch
 import org.openoura.android.MainActivity
 import org.openoura.android.R
 import org.openoura.android.battery.BatteryAlerts
+import org.openoura.android.health.HealthExport
 import org.openoura.android.data.SummaryRepository
 
 private const val TAG = "OpenOuraBle"
@@ -89,8 +90,12 @@ class RingSyncService : Service() {
                     val repo = SummaryRepository.get(applicationContext)
                     runCatching { repo.recompute() }
                         .onFailure { Log.e(TAG, "post-sync recompute failed", it) }
-                    // A sync is the only moment the ring's level can have changed.
-                    repo.cached()?.let { BatteryAlerts.check(applicationContext, it) }
+                    // A sync is the only moment the ring's level can have changed, and
+                    // the only moment there is anything new to publish.
+                    repo.cached()?.let {
+                        BatteryAlerts.check(applicationContext, it)
+                        HealthExport.exportAfterSync(applicationContext, it)
+                    }
                 }
             } finally {
                 running = false

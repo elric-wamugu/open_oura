@@ -13,6 +13,7 @@ import androidx.work.WorkerParameters
 import androidx.work.workDataOf
 import kotlinx.coroutines.CancellationException
 import org.openoura.android.battery.BatteryAlerts
+import org.openoura.android.health.HealthExport
 import org.openoura.android.ble.RingSyncService
 import org.openoura.android.ble.SyncPhase
 import org.openoura.android.ble.runRingSync
@@ -308,7 +309,12 @@ class AutoSyncWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(c
         if (after.recompute) {
             runCatching { repo.recompute() }
                 .onFailure { Log.e(TAG, "post-sync recompute failed", it) }
-            repo.cached()?.let { BatteryAlerts.check(ctx, it) }
+            repo.cached()?.let {
+                BatteryAlerts.check(ctx, it)
+                // Publish what the sync brought in. Inside the recompute branch on
+                // purpose: if the drain achieved nothing there is nothing new to send.
+                HealthExport.exportAfterSync(ctx, it)
+            }
         }
         // Not Result.retry(): a failure is usually the ring being out of range, and retrying
         // with backoff would spend the radio on a scan that cannot succeed. The next trigger

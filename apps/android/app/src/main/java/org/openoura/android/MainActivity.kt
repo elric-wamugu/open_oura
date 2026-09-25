@@ -144,6 +144,7 @@ class MainActivity : ComponentActivity() {
                 var healthState by remember { mutableStateOf(HealthConnectState.UNSUPPORTED) }
                 var healthBusy by remember { mutableStateOf(false) }
                 var healthMessage by remember { mutableStateOf<String?>(null) }
+                var healthAuto by remember { mutableStateOf(HealthExport.autoExport(applicationContext)) }
 
                 // Health Connect's own permission flow: its UI, its grant, and the result
                 // comes back as the set it actually gave rather than a yes/no.
@@ -288,6 +289,11 @@ class MainActivity : ComponentActivity() {
                             days = ready?.summary?.activityDaily?.size ?: 0,
                             busy = healthBusy,
                             message = healthMessage,
+                            autoExport = healthAuto,
+                            onAutoExport = {
+                                healthAuto = it
+                                HealthExport.setAutoExport(applicationContext, it)
+                            },
                             onGrant = { askHealth.launch(HealthExport.PERMISSIONS) },
                             onExport = {
                                 val summary = ready?.summary
