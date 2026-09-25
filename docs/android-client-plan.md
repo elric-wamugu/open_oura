@@ -376,9 +376,16 @@ Only once the above is solid:
 
 - **Health Connect** export (sleep sessions, resting HR, steps) so other apps can read it.
 - **Scheduled background sync** via WorkManager with a constraint on the ring being nearby.
-- **Incremental `build_summary`.** The 3-second cost grows linearly with history. The fix is
-  persisting per-day rollups in SQLite so a summary is an incremental update rather than a
-  full re-scan of every event. Worth doing before the database gets much larger.
+- ~~**Incremental `build_summary`.**~~ **Not needed — the cost was a query plan, not the
+  re-scan.** By 2026-09-25 this had reached 78 s on the phone and 54 s on an M-series Mac,
+  and the rollup rewrite looked unavoidable. It was not: `idx_events_serial_tag` is
+  selective for tag but not for serial (one ring, so `serial = ?` matches every row),
+  SQLite chose it anyway, and sorting 1.87M rows back into `id` order needed a
+  disk-spilling TEMP B-TREE. Suppressing the index for that one query took the phone to
+  **4.5 s** and the Mac to **6.3 s**. JSON parsing — the other obvious suspect, 138 MB of
+  it decoded in seven separate passes — turned out to cost under a second a pass. Revisit
+  rollups only if a measurement says so; `cargo run --release -p oura-summary --example
+  profile_summary -- oura.db` is that measurement.
 
 ---
 
