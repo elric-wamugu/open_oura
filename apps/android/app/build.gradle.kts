@@ -48,6 +48,14 @@ android {
     }
 }
 
+kotlin {
+    compilerOptions {
+        // MaterialShapes and LoadingIndicator are still experimental in material3 1.5.0;
+        // opting in once here keeps @OptIn noise out of every screen.
+        optIn.add("androidx.compose.material3.ExperimentalMaterial3ExpressiveApi")
+    }
+}
+
 dependencies {
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.activity.compose)
@@ -57,12 +65,15 @@ dependencies {
     implementation(libs.androidx.compose.ui.tooling.preview)
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
+    implementation(libs.androidx.navigation3.runtime)
+    implementation(libs.androidx.navigation3.ui)
     // Rust core: generated UniFFI bindings (app/src/main/java/uniffi/) reach
     // jniLibs/arm64-v8a/liboura_core.so through JNA. Both are produced by
     // apps/android/build-aar.sh — run it before the first Gradle sync.
     implementation(variantOf(libs.jna) { artifactType("aar") })
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.androidx.glance.appwidget)
+    implementation(libs.androidx.glance.material3)
     implementation(libs.androidx.work.runtime.ktx)
     implementation(libs.androidx.health.connect.client)
     testImplementation(libs.junit)
