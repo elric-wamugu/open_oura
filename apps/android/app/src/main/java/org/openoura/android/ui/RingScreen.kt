@@ -35,7 +35,6 @@ fun RingScreen(
     onToggleDevice: () -> Unit,
     onToggleCapability: (Capability) -> Unit,
     busyCapability: String?,
-    capabilityMessage: String?,
     modifier: Modifier = Modifier,
 ) {
     val summary = (state as? SummaryState.Ready)?.summary
@@ -91,7 +90,6 @@ fun RingScreen(
                             onToggle = onToggleDevice,
                             onToggleCapability = onToggleCapability,
                             busyCapability = busyCapability,
-                            capabilityMessage = capabilityMessage,
                         )
                     }
                 }

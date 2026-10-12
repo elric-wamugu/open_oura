@@ -166,7 +166,6 @@ fun OpenOuraApp(
 
     var healthState by remember { mutableStateOf(HealthConnectState.UNSUPPORTED) }
     var healthBusy by remember { mutableStateOf(false) }
-    var healthMessage by remember { mutableStateOf<String?>(null) }
     var healthAuto by remember { mutableStateOf(HealthExport.autoExport(app)) }
 
     // Health Connect's own permission flow: its UI, its grant, and the result comes back
@@ -175,7 +174,7 @@ fun OpenOuraApp(
         healthState = if (granted.containsAll(HealthExport.PERMISSIONS)) {
             HealthConnectState.READY
         } else {
-            healthMessage = "Not all the write permissions were granted."
+            messages.show("Not all the write permissions were granted.")
             HealthConnectState.NEEDS_PERMISSION
         }
     }
@@ -233,10 +232,9 @@ fun OpenOuraApp(
     // a first run, but a choice to open it survives restarting the app.
     var batteryOpen by remember { mutableStateOf(prefs.getBoolean("fold_battery", false)) }
     var deviceOpen by remember { mutableStateOf(prefs.getBoolean("fold_device", false)) }
-    // Which capability is being written to the ring, and what the last write said. Held
-    // here rather than in the panel because the work outlives the panel.
+    // Which capability is being written to the ring. Held here rather than in the panel
+    // because the work outlives the panel; its outcome is reported in a snackbar.
     var capabilityBusy by remember { mutableStateOf<String?>(null) }
-    var capabilityMessage by remember { mutableStateOf<String?>(null) }
 
     val provider = entryProvider<NavKey> {
         entry<TodayRoute>(metadata = TabRootMotion) {
@@ -290,17 +288,15 @@ fun OpenOuraApp(
                     prefs.edit().putBoolean("fold_device", deviceOpen).apply()
                 },
                 busyCapability = capabilityBusy,
-                capabilityMessage = capabilityMessage,
                 onToggleCapability = { cap ->
                     // The ring holds one connection; a drain already has it.
                     if (RingSyncService.isRunning) {
-                        capabilityMessage = "A sync is running — try again once it finishes."
+                        messages.show("A sync is running — try again once it finishes.")
                     } else if (capabilityBusy == null) {
                         capabilityBusy = cap.feature
-                        capabilityMessage = "Writing ${cap.name} to the ring…"
                         work.launch {
                             val phase = withContext(Dispatchers.IO) { runRingFeature(app, cap.feature, !cap.on) }
-                            capabilityMessage = when (phase) {
+                            val outcome = when (phase) {
                                 // The "wear the ring" half only makes sense one way round:
                                 // nothing starts appearing because a capability was
                                 // switched off.
@@ -312,6 +308,7 @@ fun OpenOuraApp(
                                 is SyncPhase.Failed -> phase.message
                                 else -> null
                             }
+                            outcome?.let { messages.show(it, long = true) }
                             capabilityBusy = null
                             // The Rust side rewrote feature_modes.json, which the summary
                             // reads — so the switches only move once we recompute over it.
@@ -332,10 +329,8 @@ fun OpenOuraApp(
                     scope.launch { busy = true; repo.recompute(); busy = false }
                 },
                 onRingKey = { navigator.push(RingKeyRoute) },
-                onHealthConnect = {
-                    healthMessage = null
-                    navigator.push(HealthConnectRoute)
-                },
+                onHealthConnect = { navigator.push(HealthConnectRoute) },
+                onImportDatabase = { pickDatabase.launch(arrayOf("*/*")) },
                 dynamicColor = dynamic,
                 onDynamicColor = { setDynamic(it) },
             )
@@ -396,7 +391,6 @@ fun OpenOuraApp(
                     nights = ready?.summary?.nights?.size ?: 0,
                     days = ready?.summary?.activityDaily?.size ?: 0,
                     busy = healthBusy,
-                    message = healthMessage,
                     autoExport = healthAuto,
                     onAutoExport = {
                         healthAuto = it
@@ -406,12 +400,11 @@ fun OpenOuraApp(
                     onExport = {
                         val summary = (state as? SummaryState.Ready)?.summary
                         if (summary == null) {
-                            healthMessage = "No summary computed yet — sync first."
+                            messages.show("No summary computed yet — sync first.")
                         } else if (!healthBusy) {
                             healthBusy = true
-                            healthMessage = "Writing to Health Connect…"
                             work.launch {
-                                healthMessage = when (val res = HealthExport.export(app, summary)) {
+                                val outcome = when (val res = HealthExport.export(app, summary)) {
                                     is ExportResult.Wrote ->
                                         "Exported ${res.total} records — ${res.sleep} nights, " +
                                             "${res.vitals} nightly vitals, ${res.activity} daily totals."
@@ -422,6 +415,7 @@ fun OpenOuraApp(
                                     ExportResult.Unavailable -> "Health Connect is not available."
                                     is ExportResult.Failed -> res.message
                                 }
+                                messages.show(outcome, long = true)
                                 healthBusy = false
                             }
                         }
