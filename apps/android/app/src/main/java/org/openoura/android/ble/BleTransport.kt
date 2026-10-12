@@ -593,6 +593,11 @@ class BleTransport private constructor(
             }
         }
 
+        // Only ever called from the scan callback above, and a scan only starts once
+        // BlePermissions.granted() — BLUETOOTH_CONNECT included on API 31+ — so the name read
+        // is covered. runCatching still absorbs a SecurityException if the user revokes
+        // the permission mid-scan; lint just can't see either guard from here.
+        @SuppressLint("MissingPermission")
         private fun matches(result: ScanResult, nameContains: String): Boolean {
             val advertisesService = result.scanRecord?.serviceUuids
                 ?.any { it.uuid == SERVICE_UUID } == true

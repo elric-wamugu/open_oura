@@ -1,0 +1,10 @@
+# UniFFI binding config for oura-core, read by `uniffi-bindgen generate --library`
+# (apps/android/build-aar.sh). Swift bindings (apps/ios) take nothing from here.
+
+[bindings.kotlin]
+# The Kotlin bindings only ever run on Android. This switches UniFFI's object cleaner to
+# its Android variant: an explicit Build.VERSION check that uses SystemCleaner from API 34
+# and JNA's cleaner below it. The default instead probes for java.lang.ref.Cleaner by
+# reflection, which lint cannot see through (three NewApi errors at minSdk 26) and which
+# selects the API 33 cleaner that UniFFI notes some Android 13 builds cannot use.
+android = true
