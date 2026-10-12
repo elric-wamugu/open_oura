@@ -1,16 +1,22 @@
 package org.openoura.android.ui
 
+import androidx.annotation.DrawableRes
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.defaultMinSize
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -18,11 +24,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.Layout
-import androidx.compose.ui.text.font.FontFamily
-import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
-import org.openoura.android.ui.theme.Oura
+import org.openoura.android.ui.components.ShapedIcon
+import org.openoura.android.ui.theme.dataColors
 import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
@@ -54,79 +59,86 @@ fun VitalTile(
     label: String,
     value: Double?,
     unit: String,
+    @DrawableRes icon: Int,
     modifier: Modifier = Modifier,
     reference: Double? = null,
     referenceLabel: String = "baseline",
     status: TileStatus? = null,
     subtitle: String? = null,
 ) {
-    val c = Oura.colors
-    Column(
-        modifier = modifier
-            .clip(RoundedCornerShape(8.dp))
-            .background(c.surface)
-            .border(1.dp, c.line, RoundedCornerShape(8.dp))
-            .defaultMinSize(minHeight = 118.dp)
-            .padding(start = 14.dp, end = 14.dp, top = 14.dp, bottom = 12.dp),
-        verticalArrangement = Arrangement.spacedBy(6.dp),
+    val cs = MaterialTheme.colorScheme
+    Card(
+        modifier = modifier,
+        shape = MaterialTheme.shapes.large,
+        colors = CardDefaults.cardColors(containerColor = cs.surfaceContainer),
     ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
+        Column(
+            Modifier
+                .fillMaxHeight()
+                .defaultMinSize(minHeight = 132.dp)
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            Text(
-                label.uppercase(),
-                color = c.faint,
-                fontSize = 10.sp,
-                fontWeight = FontWeight.Medium,
-                letterSpacing = 0.8.sp,
-                modifier = Modifier.weight(1f, fill = false),
-            )
-            if (status != null) StatusPill(status)
-        }
-
-        Row(verticalAlignment = Alignment.Bottom) {
-            Text(
-                value?.let { trimZeros(it) } ?: "—",
-                color = c.text,
-                fontSize = 30.sp,
-                fontFamily = FontFamily.Monospace,
-                fontWeight = FontWeight.Normal,
-            )
-            if (unit.isNotEmpty() && value != null) {
-                Text(
-                    unit,
-                    color = c.faint,
-                    fontSize = 12.sp,
-                    modifier = Modifier.padding(start = 4.dp, bottom = 4.dp),
-                )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.Top,
+            ) {
+                ShapedIcon(icon, size = 36.dp)
+                if (status != null) StatusPill(status)
             }
-        }
 
-        if (value != null && reference != null) {
-            ComparisonBar(value, reference, unit, referenceLabel)
-        } else if (subtitle != null) {
-            Text(subtitle, color = c.faint, fontSize = 11.sp)
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(
+                    label,
+                    style = MaterialTheme.typography.labelLarge,
+                    color = cs.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Row(verticalAlignment = Alignment.Bottom) {
+                    Text(
+                        value?.let { trimZeros(it) } ?: "—",
+                        style = MaterialTheme.typography.headlineLargeEmphasized,
+                        color = cs.onSurface,
+                    )
+                    if (unit.isNotEmpty() && value != null) {
+                        Text(
+                            unit,
+                            style = MaterialTheme.typography.titleSmall,
+                            color = cs.onSurfaceVariant,
+                            modifier = Modifier.padding(start = 4.dp, bottom = 6.dp),
+                        )
+                    }
+                }
+            }
+
+            Spacer(Modifier.weight(1f, fill = false))
+            if (value != null && reference != null) {
+                ComparisonBar(value, reference, unit, referenceLabel)
+            } else if (subtitle != null) {
+                Text(subtitle, style = MaterialTheme.typography.bodySmall, color = cs.onSurfaceVariant)
+            }
         }
     }
 }
 
 @Composable
 private fun StatusPill(status: TileStatus) {
-    val c = Oura.colors
-    val tone: Color = when (status.kind) {
-        StatusKind.Ok -> c.accent
-        StatusKind.Warn -> c.warn
-        StatusKind.Neutral -> c.muted
+    val cs = MaterialTheme.colorScheme
+    val warn = MaterialTheme.dataColors.warn
+    val (bg: Color, fg: Color) = when (status.kind) {
+        StatusKind.Ok -> cs.secondaryContainer to cs.onSecondaryContainer
+        StatusKind.Warn -> warn.warnContainer to warn.onWarnContainer
+        StatusKind.Neutral -> cs.surfaceContainerHighest to cs.onSurfaceVariant
     }
     Box(
         Modifier
-            .clip(RoundedCornerShape(999.dp))
-            .background(tone.copy(alpha = 0.13f))
-            .padding(horizontal = 7.dp, vertical = 2.dp),
+            .clip(CircleShape)
+            .background(bg)
+            .padding(horizontal = 10.dp, vertical = 4.dp),
     ) {
-        Text(status.label, color = tone, fontSize = 10.sp, fontWeight = FontWeight.Medium)
+        Text(status.label, style = MaterialTheme.typography.labelMediumEmphasized, color = fg)
     }
 }
 
@@ -136,40 +148,46 @@ private fun StatusPill(status: TileStatus) {
  */
 @Composable
 private fun ComparisonBar(value: Double, reference: Double, unit: String, refLabel: String) {
-    val c = Oura.colors
+    val cs = MaterialTheme.colorScheme
     val hi = max(value, reference) * 1.3
     val fill = if (hi <= 0) 0f else (min(100.0, max(3.0, value / hi * 100.0)) / 100.0).toFloat()
     val mark = if (hi <= 0) 0f else (min(100.0, reference / hi * 100.0) / 100.0).toFloat()
     val delta = Math.round((value - reference) * 10.0) / 10.0
     val u = unit.trim()
 
-    Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Box(
             Modifier
                 .fillMaxWidth()
-                .height(4.dp)
-                .clip(RoundedCornerShape(999.dp))
-                .background(c.lineSoft),
+                .height(8.dp)
+                .clip(CircleShape)
+                .background(cs.surfaceContainerHighest),
         ) {
             Box(
                 Modifier
                     .fillMaxWidth(fill)
-                    .height(4.dp)
-                    .clip(RoundedCornerShape(999.dp))
-                    .background(c.accent),
+                    .height(8.dp)
+                    .clip(CircleShape)
+                    .background(cs.primary),
             )
             // The marker is placed by fraction of the measured track, so it stays aligned
             // with the fill at any tile width.
             Layout(
                 content = {
-                    Box(Modifier.background(c.muted).height(4.dp).fillMaxWidth())
+                    Box(
+                        Modifier
+                            .width(3.dp)
+                            .height(8.dp)
+                            .clip(CircleShape)
+                            .background(cs.onSurface),
+                    )
                 },
-                modifier = Modifier.fillMaxWidth().height(4.dp),
+                modifier = Modifier.fillMaxWidth().height(8.dp),
             ) { measurables, constraints ->
                 val markPx = (constraints.maxWidth * mark).roundToInt()
-                val p = measurables.first().measure(constraints.copy(minWidth = 2, maxWidth = 2))
+                val p = measurables.first().measure(constraints.copy(minWidth = 0))
                 layout(constraints.maxWidth, constraints.maxHeight) {
-                    p.place(x = (markPx - 1).coerceIn(0, constraints.maxWidth - 2), y = 0)
+                    p.place(x = (markPx - p.width / 2).coerceIn(0, constraints.maxWidth - p.width), y = 0)
                 }
             }
         }
@@ -178,9 +196,8 @@ private fun ComparisonBar(value: Double, reference: Double, unit: String, refLab
                 append(refLabel).append(' ').append(trimZeros(reference)).append(u)
                 append(" · ").append(if (delta >= 0) "+" else "").append(trimZeros(delta)).append(u)
             },
-            color = c.faint,
-            fontSize = 10.sp,
-            fontFamily = FontFamily.Monospace,
+            style = MaterialTheme.typography.labelMedium,
+            color = cs.onSurfaceVariant,
         )
     }
 }

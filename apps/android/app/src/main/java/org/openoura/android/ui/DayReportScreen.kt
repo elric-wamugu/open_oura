@@ -1,6 +1,5 @@
 package org.openoura.android.ui
 
-import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -45,11 +44,9 @@ fun DayReportScreen(
     ymd: String,
     sleepTab: Boolean,
     onSelectTab: (Boolean) -> Unit,
-    onBack: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val c = Oura.colors
-    BackHandler(onBack = onBack)
     Column(
         modifier = modifier
             .fillMaxSize()
@@ -57,24 +54,12 @@ fun DayReportScreen(
             .padding(horizontal = 16.dp, vertical = 12.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
+        // The day's title lives in the top app bar now; only the Sleep/Activity switch stays.
         Row(
             Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
+            horizontalArrangement = Arrangement.Center,
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    "‹ Back",
-                    color = c.muted,
-                    fontSize = 13.sp,
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(999.dp))
-                        .border(1.dp, c.line, RoundedCornerShape(999.dp))
-                        .clickable(onClick = onBack)
-                        .padding(horizontal = 12.dp, vertical = 6.dp),
-                )
-                Text(dayTitle(ymd), color = c.text, fontSize = 15.sp, fontFamily = FontFamily.Monospace)
-            }
             Row(
                 Modifier
                     .clip(RoundedCornerShape(999.dp))

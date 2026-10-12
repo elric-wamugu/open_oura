@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  The open-ring mark at icon size, for the Ring tab. Same geometry as
+  ic_launcher_foreground.xml and OpenRingMark: a 300° arc from -50°, so the gap sits just
+  right of the top. The _fill variant is the selected-tab weight (a heavier stroke, since
+  a ring has no interior to fill).
+-->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24"
+    android:tint="?android:attr/colorControlNormal">
+    <path
+        android:pathData="M16.82,6.26 A7.5,7.5 0 1 1 9.43,4.95"
+        android:strokeColor="@android:color/white"
+        android:strokeWidth="2.2"
+        android:strokeLineCap="round"
+        android:fillColor="#00000000" />
+</vector>

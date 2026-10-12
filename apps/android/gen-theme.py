@@ -1,0 +1,157 @@
+# /// script
+# requires-python = ">=3.10"
+# dependencies = ["materialyoucolor==3.0.4"]
+# ///
+"""Generate the app's brand colour schemes from the teal seed.
+
+Material 3 builds a whole scheme (primary/secondary/tertiary families, the five surface
+containers, outlines, error, the fixed roles) from one seed colour through its HCT tonal
+palettes. Running that here, once, and committing the result keeps the app free of a
+runtime colour library and makes every shipped colour reviewable in a diff.
+
+    uv run apps/android/gen-theme.py              # from the repo root
+    uv run apps/android/gen-theme.py --variant tonal_spot
+
+Writes:
+  app/src/main/java/org/openoura/android/ui/theme/BrandSchemes.kt   BrandLight / BrandDark
+  app/src/main/res/values/brand_colors.xml, values-night/...        window + widget XML
+
+The variant defaults to Fidelity, which keeps the seed's own saturation, so the app still
+reads as the dashboard's teal. Material You (the wallpaper toggle) uses the system's
+TonalSpot scheme, so switching between the two stays a visible choice.
+"""
+
+import argparse
+from pathlib import Path
+
+from materialyoucolor.dynamiccolor.material_dynamic_colors import MaterialDynamicColors
+from materialyoucolor.hct import Hct
+from materialyoucolor.palettes.tonal_palette import TonalPalette
+from materialyoucolor.scheme.scheme_fidelity import SchemeFidelity
+from materialyoucolor.scheme.scheme_tonal_spot import SchemeTonalSpot
+from materialyoucolor.scheme.scheme_vibrant import SchemeVibrant
+
+SEED = "#0D9488"  # the dashboard's light-mode accent (styles.css --accent)
+WARN = "#C9842B"  # the dashboard's warn amber, a data colour kept outside the scheme
+SPEC = "2025"  # the Material 3 Expressive colour spec
+
+VARIANTS = {
+    "fidelity": SchemeFidelity,
+    "tonal_spot": SchemeTonalSpot,
+    "vibrant": SchemeVibrant,
+}
+
+# Every role Compose's lightColorScheme()/darkColorScheme() takes, in its parameter order.
+ROLES = [
+    "primary", "onPrimary", "primaryContainer", "onPrimaryContainer", "inversePrimary",
+    "secondary", "onSecondary", "secondaryContainer", "onSecondaryContainer",
+    "tertiary", "onTertiary", "tertiaryContainer", "onTertiaryContainer",
+    "background", "onBackground", "surface", "onSurface", "surfaceVariant",
+    "onSurfaceVariant", "surfaceTint", "inverseSurface", "inverseOnSurface",
+    "error", "onError", "errorContainer", "onErrorContainer",
+    "outline", "outlineVariant", "scrim",
+    "surfaceBright", "surfaceContainer", "surfaceContainerHigh",
+    "surfaceContainerHighest", "surfaceContainerLow", "surfaceContainerLowest", "surfaceDim",
+    "primaryFixed", "primaryFixedDim", "onPrimaryFixed", "onPrimaryFixedVariant",
+    "secondaryFixed", "secondaryFixedDim", "onSecondaryFixed", "onSecondaryFixedVariant",
+    "tertiaryFixed", "tertiaryFixedDim", "onTertiaryFixed", "onTertiaryFixedVariant",
+]
+
+# The handful the XML side needs: the launch window background and the widget shells,
+# which are drawn before (or outside) any Compose theme exists.
+XML_ROLES = [
+    "surface", "onSurface", "onSurfaceVariant", "surfaceContainer", "surfaceContainerHigh",
+    "primary", "primaryContainer", "onPrimaryContainer", "outlineVariant",
+]
+
+
+def snake(name: str) -> str:
+    return "".join("_" + ch.lower() if ch.isupper() else ch for ch in name)
+
+
+def scheme_colors(seed: str, variant: str, dark: bool) -> dict[str, int]:
+    hct = Hct.from_int(int("FF" + seed.lstrip("#"), 16))
+    scheme = VARIANTS[variant](hct, dark, 0.0, spec_version=SPEC)
+    roles = MaterialDynamicColors(spec=SPEC)
+    out = {}
+    for role in ROLES:
+        dc = getattr(roles, role, None)
+        # The 2025 spec folds background into surface; fall back so every Compose role
+        # is still set explicitly rather than left to the library's baseline purple.
+        if dc is None:
+            dc = getattr(roles, {"background": "surface", "onBackground": "onSurface"}[role])
+        out[role] = dc.get_argb(scheme) & 0xFFFFFFFF
+    return out
+
+
+# Material's tone pairing for a custom colour family: the colour, what sits on it, a
+# container, and what sits on the container.
+WARN_TONES = {
+    "light": {"warn": 40, "onWarn": 100, "warnContainer": 90, "onWarnContainer": 10},
+    "dark": {"warn": 80, "onWarn": 20, "warnContainer": 30, "onWarnContainer": 90},
+}
+
+
+def warn_colors(hexcode: str, mode: str) -> dict[str, int]:
+    palette = TonalPalette.from_int(int("FF" + hexcode.lstrip("#"), 16))
+    return {k: palette.tone(t) & 0xFFFFFFFF for k, t in WARN_TONES[mode].items()}
+
+
+def kotlin(light: dict, dark: dict, seed: str, variant: str) -> str:
+    def block(name: str, fn: str, colors: dict) -> str:
+        body = "\n".join(f"    {r} = Color(0x{colors[r]:08X})," for r in ROLES)
+        return f"val {name} = {fn}(\n{body}\n)\n"
+
+    def warn(name: str, mode: str) -> str:
+        body = "\n".join(f"    {k} = Color(0x{v:08X})," for k, v in warn_colors(WARN, mode).items())
+        return f"val {name} = WarnColors(\n{body}\n)\n"
+
+    return (
+        "// Generated by apps/android/gen-theme.py — do not edit by hand; re-run it.\n"
+        f"// Seed {seed}, {variant} variant, Material colour spec {SPEC}.\n"
+        "package org.openoura.android.ui.theme\n\n"
+        "import androidx.compose.material3.darkColorScheme\n"
+        "import androidx.compose.material3.lightColorScheme\n"
+        "import androidx.compose.ui.graphics.Color\n\n"
+        + block("BrandLight", "lightColorScheme", light)
+        + "\n"
+        + block("BrandDark", "darkColorScheme", dark)
+        + f"\n// Warn family from {WARN}: same tone pairing as the scheme's own containers.\n"
+        + warn("WarnLight", "light")
+        + "\n"
+        + warn("WarnDark", "dark")
+    )
+
+
+def xml(colors: dict, seed: str, variant: str) -> str:
+    rows = "\n".join(
+        f'    <color name="brand_{snake(r)}">#{colors[r] & 0xFFFFFF:06X}</color>' for r in XML_ROLES
+    )
+    return (
+        '<?xml version="1.0" encoding="utf-8"?>\n'
+        f"<!-- Generated by apps/android/gen-theme.py (seed {seed}, {variant}). Re-run it. -->\n"
+        f"<resources>\n{rows}\n</resources>\n"
+    )
+
+
+def main() -> None:
+    ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
+    ap.add_argument("--seed", default=SEED)
+    ap.add_argument("--variant", default="fidelity", choices=sorted(VARIANTS))
+    args = ap.parse_args()
+
+    app = Path(__file__).resolve().parent / "app" / "src" / "main"
+    light = scheme_colors(args.seed, args.variant, dark=False)
+    dark = scheme_colors(args.seed, args.variant, dark=True)
+
+    kt = app / "java/org/openoura/android/ui/theme/BrandSchemes.kt"
+    kt.write_text(kotlin(light, dark, args.seed, args.variant))
+    for folder, colors in (("values", light), ("values-night", dark)):
+        out = app / "res" / folder / "brand_colors.xml"
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(xml(colors, args.seed, args.variant))
+    print(f"wrote {kt.name} and brand_colors.xml (seed {args.seed}, {args.variant})")
+
+
+if __name__ == "__main__":
+    main()

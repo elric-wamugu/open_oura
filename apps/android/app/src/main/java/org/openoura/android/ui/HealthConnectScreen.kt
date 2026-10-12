@@ -1,6 +1,5 @@
 package org.openoura.android.ui
 
-import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
@@ -47,11 +46,9 @@ fun HealthConnectScreen(
     /** Whether a finished ring sync also publishes what it brought in. */
     autoExport: Boolean = true,
     onAutoExport: (Boolean) -> Unit = {},
-    onBack: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val c = Oura.colors
-    BackHandler(onBack = onBack)
     Column(
         modifier
             .fillMaxSize()
@@ -59,8 +56,6 @@ fun HealthConnectScreen(
             .padding(horizontal = 16.dp, vertical = 12.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
-        BackHeader("Health Connect", onBack)
-
         Text(
             "Writes the ring's nights and daily activity into Health Connect, where any " +
                 "other app you have allowed can read them — Fitbit, Samsung Health, a " +
@@ -151,18 +146,5 @@ fun HealthConnectScreen(
                 "frames, and it is not a backup of your database.",
             color = c.faint, fontSize = 11.sp, lineHeight = 16.sp,
         )
-    }
-}
-
-@Composable
-private fun BackHeader(title: String, onBack: () -> Unit) {
-    val c = Oura.colors
-    androidx.compose.foundation.layout.Row(
-        Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
-        verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
-    ) {
-        OutlinedButton(onClick = onBack) { Text("‹ Back") }
-        Text(title, color = c.text, fontSize = 17.sp, fontFamily = FontFamily.Monospace)
     }
 }

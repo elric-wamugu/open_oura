@@ -1,6 +1,5 @@
 package org.openoura.android.ui
 
-import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -44,11 +43,9 @@ fun ProfileScreen(
     onSave: (RingProfile) -> Unit,
     onRingKey: () -> Unit,
     onHealthConnect: () -> Unit,
-    onBack: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val c = Oura.colors
-    BackHandler(onBack = onBack)
 
     var age by remember { mutableStateOf(fmt(initial.age)) }
     var height by remember { mutableStateOf(fmt(initial.height_m)) }
@@ -61,20 +58,6 @@ fun ProfileScreen(
             .padding(horizontal = 16.dp, vertical = 12.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
-        Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text(
-                "‹ Back",
-                color = c.muted,
-                fontSize = 13.sp,
-                modifier = Modifier
-                    .clip(RoundedCornerShape(999.dp))
-                    .border(1.dp, c.line, RoundedCornerShape(999.dp))
-                    .clickable(onClick = onBack)
-                    .padding(horizontal = 12.dp, vertical = 6.dp),
-            )
-            Text("Profile", color = c.text, fontSize = 15.sp, fontFamily = FontFamily.Monospace)
-        }
-
         Text(
             "The ring can't measure these. They feed the VO₂max estimate, the predicted " +
                 "maximum heart rate, and the resting-energy figure behind total kcal — so " +

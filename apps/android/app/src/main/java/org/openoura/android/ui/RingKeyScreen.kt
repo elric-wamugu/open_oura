@@ -1,6 +1,5 @@
 package org.openoura.android.ui
 
-import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -52,11 +51,9 @@ fun RingKeyScreen(
     probing: Boolean,
     probeStatus: String?,
     onTestConnection: () -> Unit,
-    onBack: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val c = Oura.colors
-    BackHandler(onBack = onBack)
 
     var entry by remember { mutableStateOf("") }
     var status by remember { mutableStateOf<String?>(null) }
@@ -70,23 +67,6 @@ fun RingKeyScreen(
             .padding(horizontal = 16.dp, vertical = 12.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp),
     ) {
-        Row(
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text(
-                "‹ Back",
-                color = c.muted,
-                fontSize = 13.sp,
-                modifier = Modifier
-                    .clip(RoundedCornerShape(999.dp))
-                    .border(1.dp, c.line, RoundedCornerShape(999.dp))
-                    .clickable(onClick = onBack)
-                    .padding(horizontal = 12.dp, vertical = 6.dp),
-            )
-            Text("Ring key", color = c.text, fontSize = 15.sp, fontFamily = FontFamily.Monospace)
-        }
-
         Text(
             "The ring will not hand over any history without its 16-byte auth key. Copy the " +
                 "one your desktop client already uses: the dashboard's key export shows it as " +

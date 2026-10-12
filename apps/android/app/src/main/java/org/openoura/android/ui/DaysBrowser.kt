@@ -1,6 +1,5 @@
 package org.openoura.android.ui
 
-import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -34,32 +33,12 @@ import kotlin.math.roundToInt
 fun DaysBrowser(
     summary: Summary,
     onOpenDay: (String, Boolean) -> Unit,
-    onBack: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val c = Oura.colors
-    BackHandler(onBack = onBack)
     val days = summary.days
 
     Column(modifier = modifier.fillMaxSize().padding(horizontal = 16.dp, vertical = 12.dp)) {
-        Row(
-            Modifier.fillMaxWidth().padding(bottom = 12.dp),
-            horizontalArrangement = Arrangement.spacedBy(12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text(
-                "‹ Back",
-                color = c.muted,
-                fontSize = 13.sp,
-                modifier = Modifier
-                    .clip(RoundedCornerShape(999.dp))
-                    .border(1.dp, c.line, RoundedCornerShape(999.dp))
-                    .clickable(onClick = onBack)
-                    .padding(horizontal = 12.dp, vertical = 6.dp),
-            )
-            Text("${days.size} days", color = c.text, fontSize = 15.sp, fontFamily = FontFamily.Monospace)
-        }
-
         LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             items(days) { day ->
                 val night = summary.nightForDay(day)

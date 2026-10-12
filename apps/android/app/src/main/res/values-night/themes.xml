@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Dark mode: a dark parent and the dark brand surface, so there is no white flash. -->
+    <style name="Theme.OpenOura" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/brand_surface</item>
+    </style>
+</resources>
