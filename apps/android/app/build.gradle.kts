@@ -17,11 +17,11 @@ android {
     defaultConfig {
         applicationId = "org.openoura.android"
         minSdk = 26
-        // Pinned to the target device (Pixel 5, Android 14 = API 34). compileSdk stays on
+        // Pinned to the target device (Pixel 9a, Android 17 = API 37). compileSdk stays on
         // the newest SDK — that only affects what APIs are visible — but targetSdk selects
-        // which runtime behaviour changes apply, and there is no Android 15+ hardware here
-        // to test those on.
-        targetSdk = 34
+        // which runtime behaviour changes apply, so only raise it once the new level's
+        // changes have been tested on the phone.
+        targetSdk = 37
         versionCode = 1
         versionName = "1.0"
 

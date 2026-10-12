@@ -409,8 +409,10 @@ class BleTransport private constructor(
             val gatt = withContext(Dispatchers.Main) {
                 // The transport-taking overload is marked deprecated by the newest SDK, but
                 // passing TRANSPORT_LE explicitly is exactly what avoids the stack guessing
-                // BR/EDR and failing with status 133. Keep it until targetSdk moves past 34
-                // and the replacement can actually be tested on hardware.
+                // BR/EDR and failing with status 133. Its replacement, connectGatt with
+                // BluetoothGattConnectionSettings, only exists from API 37, so this overload
+                // stays for minSdk 26–36 either way. The deprecation is a compile warning
+                // only: nothing about it changes with targetSdk.
                 @Suppress("DEPRECATION")
                 val g = device.connectGatt(ctx, autoConnect, callback, BluetoothDevice.TRANSPORT_LE)
                 g

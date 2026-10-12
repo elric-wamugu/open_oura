@@ -12,19 +12,24 @@ Each step is tagged **[you]** (needs a human: installs, GUI, hardware, accounts)
 
 ## Target device
 
-**Google Pixel 5, Android 14 (API 34)** — `arm64-v8a`, Snapdragon 765G, 8 GB RAM. Android 14
-is this device's final OS version, so API 34 is the ceiling and there is no Android 15
-behaviour to design around.
+**Google Pixel 9a, Android 17 (API 37)** — `arm64-v8a`, Tensor G4, 8 GB RAM.
+
+The phases below were built and measured on the original target, a **Pixel 5 on Android 14
+(API 34)**, so the timings and the `compileSdk 35` / `targetSdk 34` steps in them are that
+device's history. The app moved to `compileSdk 37` / `targetSdk 37` for the Pixel 9a.
 
 Consequences that run through the whole plan:
 
 - **ABI is `arm64-v8a` only.** Same as the Apple Silicon emulator, so one Rust target
   (`aarch64-linux-android`) covers device and emulator both.
-- **`compileSdk 35`, `targetSdk 34`, `minSdk 26`.** Target the device's own API level —
-  there is no way to test Android 15 behaviour changes on hardware you own.
+- **`compileSdk 37`, `targetSdk 37`, `minSdk 26`.** Target the device's own API level —
+  never one whose behaviour changes you cannot test on hardware you own.
+- **Native libraries must be 16 KB page-aligned.** Android 15+ devices can run with 16 KB
+  pages, and a 4 KB-aligned `.so` can fail to load there. NDK r28+ aligns by default; check an
+  APK with `zipalign -c -P 16 -v 4 app-debug.apk`.
 - **API 34 makes foreground-service types mandatory.** A BLE sync service *must* declare
   `android:foregroundServiceType="connectedDevice"` and hold
-  `FOREGROUND_SERVICE_CONNECTED_DEVICE`, or Android 14 throws at `startForeground()`.
+  `FOREGROUND_SERVICE_CONNECTED_DEVICE`, or Android 14+ throws at `startForeground()`.
   This is a requirement here, not a nicety.
 - **`build_summary` measured at 8.0 s on the Pixel 5** over 847k events (vs 3.0 s on the
   M2 — 2.7× slower, better than the 3–5× I first assumed). Cold start from the cached

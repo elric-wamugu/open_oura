@@ -1,5 +1,6 @@
 package org.openoura.android.ui
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
@@ -50,6 +51,7 @@ fun HealthConnectScreen(
     modifier: Modifier = Modifier,
 ) {
     val c = Oura.colors
+    BackHandler(onBack = onBack)
     Column(
         modifier
             .fillMaxSize()
