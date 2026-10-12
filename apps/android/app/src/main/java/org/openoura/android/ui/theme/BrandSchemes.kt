@@ -108,17 +108,62 @@ val BrandDark = darkColorScheme(
     onTertiaryFixedVariant = Color(0xFF773215),
 )
 
-// Warn family from #C9842B: same tone pairing as the scheme's own containers.
-val WarnLight = WarnColors(
-    warn = Color(0xFF885200),
-    onWarn = Color(0xFFFFFFFF),
-    warnContainer = Color(0xFFFFDDBB),
-    onWarnContainer = Color(0xFF2B1700),
+// Warn family from #C9842B.
+val WarnLight = ToneFamily(
+    color = Color(0xFF845415),
+    onColor = Color(0xFFFFFFFF),
+    container = Color(0xFFFFDDBB),
+    onContainer = Color(0xFF2B1700),
 )
 
-val WarnDark = WarnColors(
-    warn = Color(0xFFFFB867),
-    onWarn = Color(0xFF482900),
-    warnContainer = Color(0xFF673D00),
-    onWarnContainer = Color(0xFFFFDDBB),
+val WarnDark = ToneFamily(
+    color = Color(0xFFFABA72),
+    onColor = Color(0xFF482900),
+    container = Color(0xFF673D00),
+    onContainer = Color(0xFFFFDDBB),
+)
+
+// High family from #E5533C.
+val HighLight = ToneFamily(
+    color = Color(0xFF904B3E),
+    onColor = Color(0xFFFFFFFF),
+    container = Color(0xFFFFDAD4),
+    onContainer = Color(0xFF3A0A04),
+)
+
+val HighDark = ToneFamily(
+    color = Color(0xFFFFB4A6),
+    onColor = Color(0xFF561E15),
+    container = Color(0xFF733429),
+    onContainer = Color(0xFFFFDAD4),
+)
+
+// Low family from #3D7EDB.
+val LowLight = ToneFamily(
+    color = Color(0xFF415F91),
+    onColor = Color(0xFFFFFFFF),
+    container = Color(0xFFD6E3FF),
+    onContainer = Color(0xFF001B3E),
+)
+
+val LowDark = ToneFamily(
+    color = Color(0xFFAAC7FF),
+    onColor = Color(0xFF0A305F),
+    container = Color(0xFF274777),
+    onContainer = Color(0xFFD6E3FF),
+)
+
+// Normal family from #2F9E5A.
+val NormalLight = ToneFamily(
+    color = Color(0xFF316A42),
+    onColor = Color(0xFFFFFFFF),
+    container = Color(0xFFB3F1BF),
+    onContainer = Color(0xFF00210C),
+)
+
+val NormalDark = ToneFamily(
+    color = Color(0xFF98D5A4),
+    onColor = Color(0xFF00391A),
+    container = Color(0xFF16512C),
+    onContainer = Color(0xFFB3F1BF),
 )

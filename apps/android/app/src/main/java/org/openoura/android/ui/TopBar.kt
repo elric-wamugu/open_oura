@@ -78,9 +78,9 @@ fun BatteryChip(device: Device?, onClick: () -> Unit, modifier: Modifier = Modif
         },
         colors = if (low) {
             AssistChipDefaults.assistChipColors(
-                containerColor = warn.warnContainer,
-                labelColor = warn.onWarnContainer,
-                leadingIconContentColor = warn.onWarnContainer,
+                containerColor = warn.container,
+                labelColor = warn.onContainer,
+                leadingIconContentColor = warn.onContainer,
             )
         } else {
             AssistChipDefaults.assistChipColors()

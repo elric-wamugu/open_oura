@@ -12,13 +12,16 @@ import androidx.compose.ui.graphics.Color
 // the scheme is the brand teal or repainted from the wallpaper — so these never follow
 // Material You. Values are the web dashboard's (dashboard/web/styles.css).
 
-/** The amber "needs attention" family. Generated alongside the scheme by gen-theme.py. */
+/**
+ * One data colour family, generated alongside the scheme by gen-theme.py with Material's
+ * own tone pairing: the colour, what sits on it, a container, and what sits on that.
+ */
 @Immutable
-data class WarnColors(
-    val warn: Color,
-    val onWarn: Color,
-    val warnContainer: Color,
-    val onWarnContainer: Color,
+data class ToneFamily(
+    val color: Color,
+    val onColor: Color,
+    val container: Color,
+    val onContainer: Color,
 )
 
 @Immutable
@@ -29,7 +32,12 @@ data class DataColors(
     val wake: Color,
     /** Warn as a graphic (bars, chart marks): the dashboard's own amber. */
     val warnMark: Color,
-    val warn: WarnColors,
+    /** "Needs attention" — low battery, a reading moving the unhealthy way. */
+    val warn: ToneFamily,
+    /** A reading against its reference, coded like a lab report: high, low, in range. */
+    val high: ToneFamily,
+    val low: ToneFamily,
+    val normal: ToneFamily,
 )
 
 internal val LightData = DataColors(
@@ -39,6 +47,9 @@ internal val LightData = DataColors(
     wake = Color(0xFFD2B06E),
     warnMark = Color(0xFFC9842B),
     warn = WarnLight,
+    high = HighLight,
+    low = LowLight,
+    normal = NormalLight,
 )
 
 internal val DarkData = DataColors(
@@ -48,6 +59,9 @@ internal val DarkData = DataColors(
     wake = Color(0xFFC1B08F),
     warnMark = Color(0xFFE0A44E),
     warn = WarnDark,
+    high = HighDark,
+    low = LowDark,
+    normal = NormalDark,
 )
 
 val LocalDataColors = staticCompositionLocalOf { DarkData }

@@ -6,7 +6,13 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.openoura.android.ui.theme.BrandDark
 import org.openoura.android.ui.theme.BrandLight
-import org.openoura.android.ui.theme.WarnColors
+import org.openoura.android.ui.theme.HighDark
+import org.openoura.android.ui.theme.HighLight
+import org.openoura.android.ui.theme.LowDark
+import org.openoura.android.ui.theme.LowLight
+import org.openoura.android.ui.theme.NormalDark
+import org.openoura.android.ui.theme.NormalLight
+import org.openoura.android.ui.theme.ToneFamily
 import org.openoura.android.ui.theme.WarnDark
 import org.openoura.android.ui.theme.WarnLight
 
@@ -58,10 +64,16 @@ class BrandSchemeContrastTest {
     }
 
     @Test
-    fun `warn chips are readable`() {
-        for ((mode, w) in listOf<Pair<String, WarnColors>>("light" to WarnLight, "dark" to WarnDark)) {
-            check("$mode onWarnContainer/warnContainer", w.onWarnContainer, w.warnContainer, 4.5)
-            check("$mode onWarn/warn", w.onWarn, w.warn, 4.5)
+    fun `data colour families are readable`() {
+        val families = listOf<Pair<String, ToneFamily>>(
+            "light warn" to WarnLight, "dark warn" to WarnDark,
+            "light high" to HighLight, "dark high" to HighDark,
+            "light low" to LowLight, "dark low" to LowDark,
+            "light normal" to NormalLight, "dark normal" to NormalDark,
+        )
+        for ((name, f) in families) {
+            check("$name onContainer/container", f.onContainer, f.container, 4.5)
+            check("$name onColor/color", f.onColor, f.color, 4.5)
         }
     }
 }

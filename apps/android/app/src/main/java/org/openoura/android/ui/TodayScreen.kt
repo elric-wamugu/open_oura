@@ -214,9 +214,9 @@ private fun VitalsGrid(s: Summary) {
                 reference = if (eff != null) 85.0 else null, referenceLabel = "target",
                 status = eff?.let {
                     when {
-                        it >= 85 -> TileStatus("Normal", StatusKind.Ok)
-                        it >= 75 -> TileStatus("Fair", StatusKind.Neutral)
-                        else -> TileStatus("Low", StatusKind.Warn)
+                        it >= 85 -> TileStatus("Normal", StatusKind.Ok, StatusLevel.Normal)
+                        it >= 75 -> TileStatus("Fair", StatusKind.Neutral, StatusLevel.Fair)
+                        else -> TileStatus("Low", StatusKind.Warn, StatusLevel.Low)
                     }
                 },
                 subtitle = if (eff == null) "needs a scored night" else null,
@@ -227,9 +227,9 @@ private fun VitalsGrid(s: Summary) {
                 reference = if (spo2 != null) SPO2_HEALTHY else null, referenceLabel = "healthy",
                 status = spo2?.let {
                     when {
-                        it >= SPO2_HEALTHY -> TileStatus("Normal", StatusKind.Ok)
-                        it >= 90 -> TileStatus("Low", StatusKind.Neutral)
-                        else -> TileStatus("Low", StatusKind.Warn)
+                        it >= SPO2_HEALTHY -> TileStatus("Normal", StatusKind.Ok, StatusLevel.Normal)
+                        it >= 90 -> TileStatus("Low", StatusKind.Neutral, StatusLevel.Low)
+                        else -> TileStatus("Low", StatusKind.Warn, StatusLevel.Low)
                     }
                 },
                 subtitle = if (spo2 == null) "needs spo2 on overnight" else null,

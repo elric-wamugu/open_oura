@@ -37,17 +37,32 @@ import kotlin.math.roundToInt
 // thresholds and the comparison-bar geometry are kept identical to the web so the two
 // clients can't quietly disagree about whether a reading is "Normal".
 
+/** Whether the reading is moving the healthy way ([Ok]) or the unhealthy way ([Warn]). */
 enum class StatusKind { Ok, Warn, Neutral }
 
-data class TileStatus(val label: String, val kind: StatusKind)
+/**
+ * Where the reading sits against its reference, which is what the pill's colour codes —
+ * lab-report style: high, low, or in range. Deliberately separate from [StatusKind]: a low
+ * resting HR is good and a low SpO2 is not, so "is it low" and "is it good" are different
+ * questions. The pill answers the first; the comparison bar turns amber for the second.
+ */
+enum class StatusLevel { High, Low, Normal, Fair }
+
+data class TileStatus(val label: String, val kind: StatusKind, val level: StatusLevel)
 
 /** `statusFor(deltaPct, good)` in app.js — direction-aware, ±5% counts as unchanged. */
 fun statusFor(deltaPct: Double?, goodIsUp: Boolean): TileStatus? {
     if (deltaPct == null) return null
-    if (abs(deltaPct) <= 5.0) return TileStatus("Normal", StatusKind.Ok)
+    if (abs(deltaPct) <= 5.0) return TileStatus("Normal", StatusKind.Ok, StatusLevel.Normal)
     val improving = if (goodIsUp) deltaPct > 0 else deltaPct < 0
-    return if (improving) TileStatus(if (goodIsUp) "High" else "Low", StatusKind.Ok)
-    else TileStatus(if (goodIsUp) "Low" else "Elevated", StatusKind.Warn)
+    val up = deltaPct > 0
+    val kind = if (improving) StatusKind.Ok else StatusKind.Warn
+    val label = when {
+        up && !goodIsUp -> "Elevated"
+        up -> "High"
+        else -> "Low"
+    }
+    return TileStatus(label, kind, if (up) StatusLevel.High else StatusLevel.Low)
 }
 
 private fun trimZeros(v: Double): String =
@@ -115,7 +130,7 @@ fun VitalTile(
 
             Spacer(Modifier.weight(1f, fill = false))
             if (value != null && reference != null) {
-                ComparisonBar(value, reference, unit, referenceLabel)
+                ComparisonBar(value, reference, unit, referenceLabel, warn = status?.kind == StatusKind.Warn)
             } else if (subtitle != null) {
                 Text(subtitle, style = MaterialTheme.typography.bodySmall, color = cs.onSurfaceVariant)
             }
@@ -126,12 +141,15 @@ fun VitalTile(
 @Composable
 private fun StatusPill(status: TileStatus) {
     val cs = MaterialTheme.colorScheme
-    val warn = MaterialTheme.dataColors.warn
-    val (bg: Color, fg: Color) = when (status.kind) {
-        StatusKind.Ok -> cs.secondaryContainer to cs.onSecondaryContainer
-        StatusKind.Warn -> warn.warnContainer to warn.onWarnContainer
-        StatusKind.Neutral -> cs.surfaceContainerHighest to cs.onSurfaceVariant
+    val d = MaterialTheme.dataColors
+    val family = when (status.level) {
+        StatusLevel.High -> d.high
+        StatusLevel.Low -> d.low
+        StatusLevel.Normal -> d.normal
+        StatusLevel.Fair -> null
     }
+    val (bg: Color, fg: Color) = family?.let { it.container to it.onContainer }
+        ?: (cs.surfaceContainerHighest to cs.onSurfaceVariant)
     Box(
         Modifier
             .clip(CircleShape)
@@ -147,8 +165,9 @@ private fun StatusPill(status: TileStatus) {
  * shared 0…(max×1.3) scale, with a caption giving the reference and the signed delta.
  */
 @Composable
-private fun ComparisonBar(value: Double, reference: Double, unit: String, refLabel: String) {
+private fun ComparisonBar(value: Double, reference: Double, unit: String, refLabel: String, warn: Boolean) {
     val cs = MaterialTheme.colorScheme
+    val fillColor = if (warn) MaterialTheme.dataColors.warn.color else cs.primary
     val hi = max(value, reference) * 1.3
     val fill = if (hi <= 0) 0f else (min(100.0, max(3.0, value / hi * 100.0)) / 100.0).toFloat()
     val mark = if (hi <= 0) 0f else (min(100.0, reference / hi * 100.0) / 100.0).toFloat()
@@ -168,7 +187,7 @@ private fun ComparisonBar(value: Double, reference: Double, unit: String, refLab
                     .fillMaxWidth(fill)
                     .height(8.dp)
                     .clip(CircleShape)
-                    .background(cs.primary),
+                    .background(fillColor),
             )
             // The marker is placed by fraction of the measured track, so it stays aligned
             // with the fill at any tile width.
