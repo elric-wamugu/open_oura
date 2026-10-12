@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- Static mock shown in the widget picker. Not the live widget — the picker cannot run
      Glance — so it just has to look like the real thing at a glance. Kept in step with
-     ActivityContent: two cells square, one fact per line. -->
+     Widgets.kt: brand colours, the headline on a primary-container pill. -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
@@ -9,15 +9,20 @@
     android:gravity="center_vertical"
     android:background="@drawable/widget_bg"
     android:padding="12dp">
+    <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:orientation="vertical" android:background="@drawable/widget_pill"
+        android:paddingHorizontal="12dp" android:paddingVertical="8dp">
+        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+            android:text="Today" android:textColor="@color/brand_on_primary_container"
+            android:textSize="12sp" android:textStyle="bold" />
+        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+            android:text="8,240 steps" android:textColor="@color/brand_on_primary_container"
+            android:textSize="24sp" android:textStyle="bold" />
+    </LinearLayout>
     <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
-        android:text="TODAY" android:textColor="#6B7280" android:textSize="10sp"
-        android:textStyle="bold" />
+        android:layout_marginTop="6dp" android:text="peak 130 bpm"
+        android:textColor="@color/brand_on_secondary_container" android:textSize="12sp" />
     <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
-        android:text="2,000" android:textColor="#2DD4BF" android:textSize="26sp"
-        android:layout_marginTop="2dp" />
-    <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
-        android:text="peak 130 bpm" android:textColor="#9AA0AA" android:textSize="11sp"
-        android:layout_marginTop="6dp" />
-    <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
-        android:text="ring 50%" android:textColor="#9AA0AA" android:textSize="11sp" />
+        android:text="ring 50%" android:textColor="@color/brand_on_secondary_container"
+        android:textSize="12sp" />
 </LinearLayout>

@@ -1,5 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- Widget shell before Glance draws (loading placeholder) and in the picker previews.
+     Brand colours from gen-theme.py; values-night swaps them for dark mode. Android 12+
+     takes the launcher's own radius from drawable-v31. -->
 <shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
-    <solid android:color="#16181D" />
-    <corners android:radius="16dp" />
+    <solid android:color="@color/brand_secondary_container" />
+    <corners android:radius="24dp" />
 </shape>

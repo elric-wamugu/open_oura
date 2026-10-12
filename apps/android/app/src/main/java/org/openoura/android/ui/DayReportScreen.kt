@@ -1,43 +1,60 @@
 package org.openoura.android.ui
 
-import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.SizeTransform
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.ListItemDefaults
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.SegmentedListItem
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.text.font.FontFamily
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
+import org.openoura.android.R
 import org.openoura.android.data.NightRow
 import org.openoura.android.data.Summary
-import org.openoura.android.ui.theme.Oura
-import org.openoura.android.ui.theme.OuraColors
-import androidx.compose.runtime.remember
+import org.openoura.android.ui.components.ChoiceOption
+import org.openoura.android.ui.components.ConnectedChoice
+import org.openoura.android.ui.components.SectionHeader
+import org.openoura.android.ui.components.ShapedIcon
+import org.openoura.android.ui.theme.dataColors
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import kotlin.math.roundToInt
 
 /**
- * The full-page day report — Sleep and Activity tabs, the counterpart to the web's
+ * The full-page day report — Sleep and Activity halves, the counterpart to the web's
  * `openDayPage` and the iOS `DayReportView`.
  *
  * Every clinical number here (`metrics`, `autonomic`, the stage percentages) comes
  * straight from `oura-summary`. Nothing is recomputed in Kotlin.
+ *
+ * The two halves switch with a connected button group rather than a swipeable pager: the
+ * polysomnograph and movement chart are scrubbed sideways, and a pager would fight them for
+ * every horizontal drag.
  */
 @Composable
 fun DayReportScreen(
@@ -45,137 +62,102 @@ fun DayReportScreen(
     ymd: String,
     sleepTab: Boolean,
     onSelectTab: (Boolean) -> Unit,
-    onBack: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val c = Oura.colors
-    BackHandler(onBack = onBack)
+    val motion = MaterialTheme.motionScheme
     Column(
         modifier = modifier
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
-            .padding(horizontal = 16.dp, vertical = 12.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp),
+            .padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 24.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Row(
-            Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    "‹ Back",
-                    color = c.muted,
-                    fontSize = 13.sp,
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(999.dp))
-                        .border(1.dp, c.line, RoundedCornerShape(999.dp))
-                        .clickable(onClick = onBack)
-                        .padding(horizontal = 12.dp, vertical = 6.dp),
-                )
-                Text(dayTitle(ymd), color = c.text, fontSize = 15.sp, fontFamily = FontFamily.Monospace)
-            }
-            Row(
-                Modifier
-                    .clip(RoundedCornerShape(999.dp))
-                    .background(c.surface2)
-                    .border(1.dp, c.line, RoundedCornerShape(999.dp))
-                    .padding(3.dp),
-                horizontalArrangement = Arrangement.spacedBy(2.dp),
-            ) {
-                TabChip("Sleep", sleepTab) { onSelectTab(true) }
-                TabChip("Activity", !sleepTab) { onSelectTab(false) }
+        ConnectedChoice(
+            options = listOf(
+                ChoiceOption("Sleep", R.drawable.ic_sym_bedtime),
+                ChoiceOption("Activity", R.drawable.ic_sym_directions_walk),
+            ),
+            selected = if (sleepTab) 0 else 1,
+            onSelect = { onSelectTab(it == 0) },
+            modifier = Modifier.fillMaxWidth(),
+        )
+
+        AnimatedContent(
+            targetState = sleepTab,
+            transitionSpec = {
+                (fadeIn(motion.defaultEffectsSpec()) togetherWith fadeOut(motion.fastEffectsSpec()))
+                    .using(SizeTransform(clip = false))
+            },
+            label = "report-half",
+        ) { sleep ->
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                if (sleep) SleepReport(summary, ymd) else ActivityReport(summary, ymd)
             }
         }
-
-        if (sleepTab) SleepReport(summary, ymd, c) else ActivityReport(summary, ymd, c)
     }
-}
-
-@Composable
-private fun TabChip(label: String, selected: Boolean, onClick: () -> Unit) {
-    val c = Oura.colors
-    Text(
-        label,
-        color = if (selected) c.text else c.muted,
-        fontSize = 12.sp,
-        fontWeight = if (selected) FontWeight.Medium else FontWeight.Normal,
-        modifier = Modifier
-            .clip(RoundedCornerShape(999.dp))
-            .background(if (selected) c.surface else androidx.compose.ui.graphics.Color.Transparent)
-            .clickable(onClick = onClick)
-            .padding(horizontal = 12.dp, vertical = 5.dp),
-    )
 }
 
 // ── sleep ────────────────────────────────────────────────────────────────────────────
 
 @Composable
-private fun SleepReport(s: Summary, ymd: String, c: OuraColors) {
+private fun ColumnScope.SleepReport(s: Summary, ymd: String) {
     val n = s.nightForDay(ymd)
     if (n == null) {
-        Text("No scored night for this day.", color = c.muted, fontSize = 13.sp)
+        Notice("No scored night for this day.")
         return
     }
     // The web's four, in the web's order. HRV and resting HR used to sit here; they are
-    // already the first two vitals tiles on the home screen, while asleep-vs-in-bed is the
-    // comparison this page is about and was missing.
-    StatStrip(
+    // already the first two vitals tiles on Today, while asleep-vs-in-bed is the
+    // comparison this page is about.
+    HeroStats(
         listOf(
-            "%.1f h".format(n.inBedH ?: 0.0) to "time in bed",
-            (n.metrics?.asleepMin?.let { "%.1f h".format(it / 60.0) } ?: "—") to "asleep",
-            (n.efficiency?.let { "${it.roundToInt()}%" } ?: "—") to "efficiency",
-            "${n.start ?: "—"}–${n.end ?: "—"}" to "bedtime",
+            "%.1f h".format(n.inBedH ?: 0.0) to "Time in bed",
+            (n.metrics?.asleepMin?.let { "%.1f h".format(it / 60.0) } ?: "—") to "Asleep",
+            (n.efficiency?.let { "${it.roundToInt()}%" } ?: "—") to "Efficiency",
+            "${n.start ?: "—"}–${n.end ?: "—"}" to "Bedtime",
         ),
-        c,
     )
 
-    Section("Overnight polysomnograph", c)
-    StageLegend()
+    SectionHeader("Overnight polysomnograph", Modifier.padding(top = 4.dp))
+    StageLegend(Modifier.padding(start = 4.dp))
     Polysomnograph(n)
 
-    Section("Sleep architecture", c)
-    Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-        StagePct("Deep", n.deepPct, c); StagePct("Light", n.lightPct, c)
-        StagePct("REM", n.remPct, c); StagePct("Awake", n.wakePct, c)
-    }
+    SectionHeader("Sleep architecture", Modifier.padding(top = 4.dp))
+    StageBar(n)
 
     n.metrics?.let { m ->
-        Section("Sleep metrics", c)
+        SectionHeader("Sleep metrics", Modifier.padding(top = 4.dp))
         MetricGrid(
             listOfNotNull(
-                // Asleep now leads the stat strip, so repeating it here would spend a tile
-                // on a figure already two inches up the page.
-                m.onsetMin?.let { "%.0f min".format(it) to "sleep onset" },
-                m.wasoMin?.let { "%.0f min".format(it) to "awake after onset" },
-                m.remLatencyMin?.let { "%.0f min".format(it) to "rem latency" },
-                m.awakenings?.let { "$it" to "awakenings" },
-                m.cycles?.let { "$it" to "cycles" },
-                m.fragIndex?.let { "%.1f".format(it) to "fragmentation" },
+                // Asleep leads the stats above, so repeating it here would spend a tile on
+                // a figure already two inches up the page.
+                m.onsetMin?.let { "%.0f min".format(it) to "Sleep onset" },
+                m.wasoMin?.let { "%.0f min".format(it) to "Awake after onset" },
+                m.remLatencyMin?.let { "%.0f min".format(it) to "REM latency" },
+                m.awakenings?.let { "$it" to "Awakenings" },
+                m.cycles?.let { "$it" to "Cycles" },
+                m.fragIndex?.let { "%.1f".format(it) to "Fragmentation" },
             ),
-            c,
         )
     }
 
     n.autonomic?.let { a ->
         if (listOfNotNull(a.hrDeep, a.hrLight, a.hrRem, a.hrvDeep, a.hrvLight, a.hrvRem).isNotEmpty()) {
-            Section("Autonomic recovery by stage", c)
+            SectionHeader("Autonomic recovery by stage", Modifier.padding(top = 4.dp))
             MetricGrid(
                 listOfNotNull(
-                    a.hrDeep?.let { "%.0f bpm".format(it) to "hr · deep" },
-                    a.hrLight?.let { "%.0f bpm".format(it) to "hr · light" },
-                    a.hrRem?.let { "%.0f bpm".format(it) to "hr · rem" },
-                    a.hrvDeep?.let { "%.0f ms".format(it) to "hrv · deep" },
-                    a.hrvLight?.let { "%.0f ms".format(it) to "hrv · light" },
-                    a.hrvRem?.let { "%.0f ms".format(it) to "hrv · rem" },
+                    a.hrDeep?.let { "%.0f bpm".format(it) to "HR · deep" },
+                    a.hrLight?.let { "%.0f bpm".format(it) to "HR · light" },
+                    a.hrRem?.let { "%.0f bpm".format(it) to "HR · REM" },
+                    a.hrvDeep?.let { "%.0f ms".format(it) to "HRV · deep" },
+                    a.hrvLight?.let { "%.0f ms".format(it) to "HRV · light" },
+                    a.hrvRem?.let { "%.0f ms".format(it) to "HRV · REM" },
                 ),
-                c,
             )
-            Text(
+            Footnote(
                 "Per-stage means rather than an overnight HRV trend: nocturnal HRV is " +
                     "stage-driven (deep up, REM down), so a slope would track stage order, " +
                     "not recovery.",
-                color = c.faint, fontSize = 11.sp,
             )
         }
     }
@@ -183,59 +165,98 @@ private fun SleepReport(s: Summary, ymd: String, c: OuraColors) {
     val interpretation = SleepInterpretation.lines(n)
     val debt = SleepInterpretation.debtNote(s.sleepDebt)
     if (interpretation.isNotEmpty() || debt != null) {
-        Section("Interpretation", c)
-        interpretation.forEach { Text(it, color = c.muted, fontSize = 12.sp, lineHeight = 17.sp) }
+        SectionHeader("Interpretation", Modifier.padding(top = 4.dp))
+        interpretation.forEach {
+            Text(it, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(horizontal = 4.dp))
+        }
         debt?.let { (value, caption) ->
-            Column(
-                Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(10.dp))
-                    .background(c.surface)
-                    .border(1.dp, c.line, RoundedCornerShape(10.dp))
-                    .padding(12.dp),
-                verticalArrangement = Arrangement.spacedBy(2.dp),
+            Surface(
+                shape = MaterialTheme.shapes.extraLarge,
+                color = MaterialTheme.colorScheme.tertiaryContainer,
+                contentColor = MaterialTheme.colorScheme.onTertiaryContainer,
+                modifier = Modifier.fillMaxWidth(),
             ) {
-                Text(value, color = c.text, fontSize = 20.sp, fontWeight = FontWeight.Medium)
-                Text(caption, color = c.faint, fontSize = 11.sp, lineHeight = 15.sp)
+                Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text("Sleep debt", style = MaterialTheme.typography.labelLarge)
+                    Text(value, style = MaterialTheme.typography.headlineMediumEmphasized)
+                    Text(caption, style = MaterialTheme.typography.bodySmall)
+                }
             }
         }
     }
 }
 
+/**
+ * The night's stage split as one rounded bar, each stage's share drawn to scale, with the
+ * percentages underneath — the proportions read at a glance, the figures on a second look.
+ */
 @Composable
-private fun StagePct(label: String, pct: Double?, c: OuraColors) {
-    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-        Text(label, color = c.muted, fontSize = 11.sp)
-        Text(
-            "${(pct ?: 0.0).roundToInt()}%",
-            color = c.text, fontSize = 11.sp, fontWeight = FontWeight.Medium,
-        )
+private fun StageBar(n: NightRow) {
+    val d = MaterialTheme.dataColors
+    val parts = listOf(
+        Triple("Deep", n.deepPct, d.deep),
+        Triple("Light", n.lightPct, d.light),
+        Triple("REM", n.remPct, d.rem),
+        Triple("Awake", n.wakePct, d.wake),
+    )
+    Surface(shape = MaterialTheme.shapes.large, color = MaterialTheme.colorScheme.surfaceContainer) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+            val total = parts.sumOf { it.second ?: 0.0 }
+            if (total > 0) {
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .height(20.dp)
+                        .clip(CircleShape),
+                    horizontalArrangement = Arrangement.spacedBy(3.dp),
+                ) {
+                    parts.forEach { (_, pct, colour) ->
+                        val w = (pct ?: 0.0).toFloat()
+                        if (w > 0f) Box(Modifier.weight(w).fillMaxHeight().background(colour))
+                    }
+                }
+            }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                parts.forEach { (label, pct, colour) ->
+                    Column {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Box(Modifier.size(10.dp).clip(CircleShape).background(colour))
+                            Text(
+                                label,
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        Text("${(pct ?: 0.0).roundToInt()}%", style = MaterialTheme.typography.titleLargeEmphasized)
+                    }
+                }
+            }
+        }
     }
 }
 
 // ── activity ─────────────────────────────────────────────────────────────────────────
 
 @Composable
-private fun ActivityReport(s: Summary, ymd: String, c: OuraColors) {
+private fun ColumnScope.ActivityReport(s: Summary, ymd: String) {
     val ds = s.activityDaily[ymd]
     val prof = s.activityProfile[ymd] ?: emptyList()
     val steps = s.activitySteps[ymd] ?: emptyList()
 
-    StatStrip(
+    HeroStats(
         listOfNotNull(
-            "${(ds?.steps ?: 0.0).roundToInt()}" to "steps",
-            "${(ds?.activeKcal ?: 0.0).roundToInt()} kcal" to "active energy",
-            "${(ds?.totalKcal ?: 0.0).roundToInt()} kcal" to "total energy",
-            ds?.distanceM?.let { "%.1f km".format(it / 1000) to "distance" },
+            "${(ds?.steps ?: 0.0).roundToInt()}" to "Steps",
+            "${(ds?.activeKcal ?: 0.0).roundToInt()} kcal" to "Active energy",
+            "${(ds?.totalKcal ?: 0.0).roundToInt()} kcal" to "Total energy",
+            ds?.distanceM?.let { "%.1f km".format(it / 1000) to "Distance" },
         ),
-        c,
     )
 
-    Section("Movement across the day", c)
+    SectionHeader("Movement across the day", Modifier.padding(top = 4.dp))
     if (prof.size > 1) {
         MovementChart(prof = prof, steps = steps, dayTotalSteps = ds?.steps)
     } else {
-        Text("No movement profile for this day.", color = c.muted, fontSize = 12.sp)
+        Notice("No movement profile for this day.")
     }
 
     val bucketMin = if (prof.isEmpty()) 15.0 else 24.0 * 60.0 / prof.size
@@ -244,23 +265,20 @@ private fun ActivityReport(s: Summary, ymd: String, c: OuraColors) {
     val peakMet = prof.maxOrNull() ?: 0.0
     val peakHr = ds?.peakHr
 
-    Section("Intensity", c)
+    SectionHeader("Intensity", Modifier.padding(top = 4.dp))
     MetricGrid(
         listOf(
-            "${activeMin.roundToInt()} min" to "active",
-            "${lightMin.roundToInt()} min" to "lightly active",
-            "%.1f MET".format(peakMet) to "peak intensity",
-            (peakHr?.let { "${it.roundToInt()} bpm" } ?: "—") to "peak hr",
-            "${s.effortForDay(ymd).size}" to "sessions",
+            "${activeMin.roundToInt()} min" to "Active",
+            "${lightMin.roundToInt()} min" to "Lightly active",
+            "%.1f MET".format(peakMet) to "Peak intensity",
+            (peakHr?.let { "${it.roundToInt()} bpm" } ?: "—") to "Peak HR",
+            "${s.effortForDay(ymd).size}" to "Sessions",
         ),
-        c,
     )
-    EffortSessions(s, ymd, c)
-
     if (peakHr != null) {
         val hrMax = s.fitness?.hrMaxPredicted
         val pct = hrMax?.let { (peakHr / it * 100).roundToInt() }
-        Text(
+        Footnote(
             if (pct == null) {
                 "Peak HR is the highest 30-second sustained rate of the day, from the " +
                     "ring's quality-checked beats."
@@ -268,9 +286,9 @@ private fun ActivityReport(s: Summary, ymd: String, c: OuraColors) {
                 "Peak HR is the highest 30-second sustained rate of the day — $pct% of the " +
                     "${hrMax.roundToInt()} bpm predicted for your age. ${peakHrVerdict(pct)}"
             },
-            color = c.faint, fontSize = 11.sp,
         )
     }
+    EffortSessions(s, ymd)
 }
 
 /**
@@ -280,48 +298,38 @@ private fun ActivityReport(s: Summary, ymd: String, c: OuraColors) {
  * it isn't bundled, so `activity[]` stays empty. Mirrors the web's effort rows.
  */
 @Composable
-private fun EffortSessions(s: Summary, ymd: String, c: OuraColors) {
+private fun ColumnScope.EffortSessions(s: Summary, ymd: String) {
     val sessions = s.effortForDay(ymd)
-    Section("Sessions", c)
+    SectionHeader("Sessions", Modifier.padding(top = 4.dp))
     if (sessions.isEmpty()) {
-        Text("No sessions detected this day.", color = c.muted, fontSize = 12.sp)
+        Notice("No sessions detected this day.")
         return
     }
     val clock = remember { DateTimeFormatter.ofPattern("HH:mm") }
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        sessions.forEach { e ->
+    Column(verticalArrangement = Arrangement.spacedBy(ListItemDefaults.SegmentedGap)) {
+        sessions.forEachIndexed { i, e ->
             val bits = buildList {
                 add("${e.durationMin.roundToInt()} min")
                 e.hrMean?.let { add("${it.roundToInt()} bpm avg") }
                 e.hrPeak?.let { add("${it.roundToInt()} peak") }
                 e.intensityPeak?.let { add("intensity ${it.roundToInt()}") }
             }
-            Column(
-                Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(8.dp))
-                    .background(c.surface)
-                    .border(1.dp, c.line, RoundedCornerShape(8.dp))
-                    .padding(horizontal = 12.dp, vertical = 10.dp),
-                verticalArrangement = Arrangement.spacedBy(3.dp),
+            SegmentedListItem(
+                shapes = ListItemDefaults.segmentedShapes(i, sessions.size),
+                colors = groupColors(),
+                leadingContent = { ShapedIcon(R.drawable.ic_sym_monitor_heart) },
+                supportingContent = { Text(bits.joinToString(" · ")) },
             ) {
-                Text(
-                    "effort · ${clock.format(
-                        Instant.ofEpochSecond(e.start.toLong()).atZone(ZoneId.systemDefault()),
-                    )}",
-                    color = c.text, fontSize = 13.sp, fontFamily = FontFamily.Monospace,
-                )
-                Text(bits.joinToString(" · "), color = c.faint, fontSize = 11.sp)
+                Text("Effort at ${clock.format(Instant.ofEpochSecond(e.start.toLong()).atZone(ZoneId.systemDefault()))}")
             }
         }
     }
-    Text(
+    Footnote(
         "Detected from the ring's own exercise-HR trace — it records while the ring thinks " +
             "you're working, so these are start/stop and effort, not labelled workouts. " +
             "Naming them needs Oura's activity model, which isn't bundled. Heart rate is " +
             "missing from some because motion corrupts the optical signal, which is exactly " +
             "when the ring is least able to read a clean beat.",
-        color = c.faint, fontSize = 10.sp,
     )
 }
 
@@ -334,43 +342,27 @@ fun peakHrVerdict(pct: Int): String = when {
 
 // ── shared bits ──────────────────────────────────────────────────────────────────────
 
+/**
+ * The page's headline figures on one tonal card. A browser can put four on a line; a phone
+ * cannot once one is a bedtime range like "03:32–10:58", so they sit two by two.
+ */
 @Composable
-private fun Section(title: String, c: OuraColors) {
-    Text(
-        title.uppercase(),
-        color = c.faint,
-        fontSize = 10.sp,
-        fontWeight = FontWeight.Medium,
-        letterSpacing = 0.8.sp,
-        modifier = Modifier.padding(top = 6.dp),
-    )
-}
-
-@Composable
-private fun StatStrip(items: List<Pair<String, String>>, c: OuraColors) {
-    // A browser can put four figures on one line; 360 dp cannot, once one of them is a
-    // bedtime range like "03:32-10:58". Wrapping to two rows keeps the web's four values
-    // rather than dropping one or shrinking them all to fit the longest.
-    val wrap = items.size == 4 && items.any { it.first.length > 7 }
-    Column(
-        Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(10.dp))
-            .background(c.surface)
-            .border(1.dp, c.line, RoundedCornerShape(10.dp))
-            .padding(vertical = 14.dp, horizontal = 12.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp),
+private fun HeroStats(items: List<Pair<String, String>>) {
+    Surface(
+        shape = MaterialTheme.shapes.extraLarge,
+        color = MaterialTheme.colorScheme.surfaceContainer,
+        modifier = Modifier.fillMaxWidth(),
     ) {
-        items.chunked(if (wrap) 2 else items.size).forEach { row ->
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                row.forEach { (v, k) ->
-                    Column(
-                        horizontalAlignment = Alignment.Start,
-                        modifier = if (wrap) Modifier.weight(1f) else Modifier,
-                    ) {
-                        Text(v, color = c.text, fontSize = 18.sp, fontFamily = FontFamily.Monospace)
-                        Text(k.uppercase(), color = c.faint, fontSize = 9.sp, letterSpacing = 0.6.sp)
+        Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+            items.chunked(2).forEach { row ->
+                Row(Modifier.fillMaxWidth()) {
+                    row.forEach { (value, label) ->
+                        Column(Modifier.weight(1f)) {
+                            Text(value, style = MaterialTheme.typography.headlineSmallEmphasized)
+                            Text(label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
                     }
+                    if (row.size == 1) Spacer(Modifier.weight(1f))
                 }
             }
         }
@@ -378,25 +370,34 @@ private fun StatStrip(items: List<Pair<String, String>>, c: OuraColors) {
 }
 
 @Composable
-private fun MetricGrid(items: List<Pair<String, String>>, c: OuraColors) {
+private fun MetricGrid(items: List<Pair<String, String>>) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         items.chunked(2).forEach { row ->
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                row.forEach { (v, k) ->
-                    Column(
-                        Modifier
-                            .weight(1f)
-                            .clip(RoundedCornerShape(6.dp))
-                            .background(c.surface)
-                            .border(1.dp, c.line, RoundedCornerShape(6.dp))
-                            .padding(10.dp),
+                row.forEach { (value, label) ->
+                    Surface(
+                        shape = MaterialTheme.shapes.large,
+                        color = MaterialTheme.colorScheme.surfaceContainer,
+                        modifier = Modifier.weight(1f),
                     ) {
-                        Text(v, color = c.text, fontSize = 15.sp, fontFamily = FontFamily.Monospace)
-                        Text(k.uppercase(), color = c.faint, fontSize = 9.sp, letterSpacing = 0.5.sp)
+                        Column(Modifier.padding(14.dp)) {
+                            Text(value, style = MaterialTheme.typography.titleLargeEmphasized)
+                            Text(label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
                     }
                 }
-                if (row.size == 1) androidx.compose.foundation.layout.Spacer(Modifier.weight(1f))
+                if (row.size == 1) Spacer(Modifier.weight(1f))
             }
         }
     }
+}
+
+@Composable
+private fun Footnote(text: String) {
+    Text(
+        text,
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.padding(horizontal = 4.dp),
+    )
 }

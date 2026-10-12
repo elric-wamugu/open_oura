@@ -1,19 +1,31 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- Static mock shown in the widget picker. Not the live widget — the picker cannot run
-     Glance — so it just has to look like the real thing at a glance. -->
+     Glance — so it just has to look like the real thing at a glance. Kept in step with
+     Widgets.kt: brand colours, the headline on a primary-container pill. -->
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:orientation="vertical"
+    android:gravity="center_vertical"
     android:background="@drawable/widget_bg"
     android:padding="12dp">
     <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
-        android:text="LAST NIGHT" android:textColor="#6B7280" android:textSize="10sp"
-        android:textStyle="bold" />
+        android:text="Last night" android:textColor="@color/brand_on_secondary_container"
+        android:textSize="12sp" android:textStyle="bold" />
+    <LinearLayout android:layout_width="wrap_content" android:layout_height="wrap_content"
+        android:layout_marginTop="4dp" android:orientation="horizontal"
+        android:gravity="center_vertical">
+        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+            android:background="@drawable/widget_pill" android:paddingHorizontal="12dp"
+            android:paddingVertical="4dp" android:text="7.6 h"
+            android:textColor="@color/brand_on_primary_container" android:textSize="28sp"
+            android:textStyle="bold" />
+        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
+            android:layout_marginStart="12dp" android:text="88% efficiency"
+            android:textColor="@color/brand_on_secondary_container" android:textSize="14sp"
+            android:textStyle="bold" />
+    </LinearLayout>
     <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
-        android:text="8.2h" android:textColor="#E8E9EC" android:textSize="26sp"
-        android:layout_marginTop="2dp" />
-    <TextView android:layout_width="wrap_content" android:layout_height="wrap_content"
-        android:text="76% eff · deep 13% · rem 9%" android:textColor="#9AA0AA" android:textSize="11sp"
-        android:layout_marginTop="2dp" />
+        android:layout_marginTop="8dp" android:text="deep 22% · REM 18% · SpO₂ 97%"
+        android:textColor="@color/brand_on_secondary_container" android:textSize="12sp" />
 </LinearLayout>

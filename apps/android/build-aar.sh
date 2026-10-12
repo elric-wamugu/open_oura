@@ -13,7 +13,7 @@ set -euo pipefail
 cd "$(dirname "$0")/../.."
 REPO="$PWD"
 
-ABI="arm64-v8a"                 # Pixel 5 + the Apple-Silicon emulator are both arm64.
+ABI="arm64-v8a"                 # Pixel 9a + the Apple-Silicon emulator are both arm64.
 TARGET="aarch64-linux-android"
 APP="$REPO/apps/android/app/src/main"
 JNI="$APP/jniLibs"

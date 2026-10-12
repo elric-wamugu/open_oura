@@ -17,11 +17,11 @@ android {
     defaultConfig {
         applicationId = "org.openoura.android"
         minSdk = 26
-        // Pinned to the target device (Pixel 5, Android 14 = API 34). compileSdk stays on
+        // Pinned to the target device (Pixel 9a, Android 17 = API 37). compileSdk stays on
         // the newest SDK — that only affects what APIs are visible — but targetSdk selects
-        // which runtime behaviour changes apply, and there is no Android 15+ hardware here
-        // to test those on.
-        targetSdk = 34
+        // which runtime behaviour changes apply, so only raise it once the new level's
+        // changes have been tested on the phone.
+        targetSdk = 37
         versionCode = 1
         versionName = "1.0"
 
@@ -48,6 +48,14 @@ android {
     }
 }
 
+kotlin {
+    compilerOptions {
+        // MaterialShapes and LoadingIndicator are still experimental in material3 1.5.0;
+        // opting in once here keeps @OptIn noise out of every screen.
+        optIn.add("androidx.compose.material3.ExperimentalMaterial3ExpressiveApi")
+    }
+}
+
 dependencies {
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.activity.compose)
@@ -57,12 +65,15 @@ dependencies {
     implementation(libs.androidx.compose.ui.tooling.preview)
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
+    implementation(libs.androidx.navigation3.runtime)
+    implementation(libs.androidx.navigation3.ui)
     // Rust core: generated UniFFI bindings (app/src/main/java/uniffi/) reach
     // jniLibs/arm64-v8a/liboura_core.so through JNA. Both are produced by
     // apps/android/build-aar.sh — run it before the first Gradle sync.
     implementation(variantOf(libs.jna) { artifactType("aar") })
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.androidx.glance.appwidget)
+    implementation(libs.androidx.glance.material3)
     implementation(libs.androidx.work.runtime.ktx)
     implementation(libs.androidx.health.connect.client)
     testImplementation(libs.junit)

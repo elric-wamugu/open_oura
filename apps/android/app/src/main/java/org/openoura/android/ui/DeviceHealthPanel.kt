@@ -1,9 +1,7 @@
 package org.openoura.android.ui
 
-import androidx.compose.animation.AnimatedVisibility
+import androidx.annotation.DrawableRes
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -12,11 +10,13 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.annotation.DrawableRes
-import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.Icon
+import androidx.compose.material3.ListItemDefaults
+import androidx.compose.material3.LoadingIndicator
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.SegmentedListItem
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
@@ -24,17 +24,17 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.draw.scale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
-import androidx.compose.ui.text.font.FontFamily
-import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import org.openoura.android.R
 import org.openoura.android.data.Capability
 import org.openoura.android.data.Device
-import org.openoura.android.ui.theme.Oura
-import org.openoura.android.ui.theme.OuraColors
+import org.openoura.android.ui.components.ExpandablePanel
+import org.openoura.android.ui.components.ShapedIcon
+import org.openoura.android.ui.theme.CodeType
+import org.openoura.android.ui.theme.dataColors
 import kotlin.math.roundToInt
 
 /**
@@ -58,65 +58,34 @@ fun DeviceHealthPanel(
     onToggleCapability: ((Capability) -> Unit)? = null,
     /** The capability currently being written to the ring, if any. */
     busyCapability: String? = null,
-    /** The last toggle's outcome, shown under the rows until the next one. */
-    capabilityMessage: String? = null,
+    /** Size of the local oura.db on disk, if known. */
+    databaseBytes: Long? = null,
     modifier: Modifier = Modifier,
 ) {
-    val c = Oura.colors
     val d = device ?: return
-
-    Column(
-        modifier = modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(10.dp))
-            .background(c.surface)
-            .border(1.dp, c.line, RoundedCornerShape(10.dp))
-            .padding(14.dp),
+    val context = LocalContext.current
+    // Android's own short form ("729 MB"), so it reads the same as the Storage settings.
+    val dbSize = databaseBytes?.let { android.text.format.Formatter.formatShortFileSize(context, it) }
+    ExpandablePanel(
+        icon = R.drawable.ic_sym_database,
+        title = "Device & data",
+        // Worth reading while collapsed: the two numbers that say whether there is
+        // anything to look at inside.
+        summary = listOfNotNull(
+            d.nights?.let { "$it nights" },
+            d.totalEvents?.let { "${compact(it)} events" },
+            dbSize,
+        ).joinToString(" · ").ifEmpty { null },
+        expanded = expanded,
+        onToggle = onToggle,
+        modifier = modifier,
     ) {
-        Row(
-            Modifier.fillMaxWidth().clickable(onClick = onToggle),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text(
-                "DEVICE & DATA HEALTH",
-                color = c.faint,
-                fontSize = 10.sp,
-                fontWeight = FontWeight.Medium,
-                letterSpacing = 0.8.sp,
-            )
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                // Worth reading while collapsed: the two numbers that say whether there is
-                // anything to look at inside.
-                Text(
-                    listOfNotNull(
-                        d.nights?.let { "$it nights" },
-                        d.totalEvents?.let { "${compact(it)} events" },
-                    ).joinToString(" · ").ifEmpty { "—" },
-                    color = c.muted,
-                    fontSize = 12.sp,
-                    fontFamily = FontFamily.Monospace,
-                )
-                Text(if (expanded) "▾" else "▸", color = c.faint, fontSize = 11.sp)
-            }
-        }
-
-        AnimatedVisibility(expanded) {
-            Column(
-                Modifier.padding(top = 12.dp),
-                verticalArrangement = Arrangement.spacedBy(14.dp),
-            ) {
-                StatRow(d, c)
-                ShortPeriodsNote(d, c)
-                Streams(d, c)
-                Insights(d, c)
-                Capabilities(d, c, onToggleCapability, busyCapability, capabilityMessage)
-                Identity(d, c)
-            }
-        }
+        StatGrid(d, dbSize)
+        ShortPeriodsNote(d)
+        Streams(d)
+        Insights(d)
+        Capabilities(d, onToggleCapability, busyCapability)
+        Identity(d)
     }
 }
 
@@ -146,33 +115,48 @@ private fun compact(n: Long): String = when {
 private fun grouped(n: Long): String = "%,d".format(n)
 
 @Composable
-private fun StatRow(d: Device, c: OuraColors) {
+private fun Subhead(text: String) {
+    Text(
+        text,
+        style = MaterialTheme.typography.titleSmallEmphasized,
+        color = MaterialTheme.colorScheme.primary,
+        modifier = Modifier.padding(start = 4.dp, bottom = 4.dp),
+    )
+}
+
+private data class Stat(val label: String, val value: String, val warn: Boolean = false, val caption: String? = null)
+
+@Composable
+private fun StatGrid(d: Device, dbSize: String?) {
+    val cs = MaterialTheme.colorScheme
     val fresh = d.freshHours?.let { if (it < 1) "<1" else it.roundToInt().toString() } ?: "—"
+    val batteryOff = d.batteryStatus != null && d.batteryStatus != "ok"
     val items = listOf(
-        "Battery" to ((d.batteryPct?.let { "$it" } ?: "—") + "%"),
-        "Last sync" to "$fresh h ago",
-        "History" to "%.1f days".format(d.daysOfData ?: 0.0),
-        "Events" to grouped(d.totalEvents ?: 0),
+        Stat("Battery", (d.batteryPct?.let { "$it" } ?: "—") + "%", warn = batteryOff),
+        Stat("Last sync", "$fresh h ago"),
+        Stat("History", "%.1f days".format(d.daysOfData ?: 0.0)),
+        Stat("Events", grouped(d.totalEvents ?: 0), caption = dbSize?.let { "$it on this phone" }),
     )
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         items.chunked(2).forEach { pair ->
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                pair.forEach { (k, v) ->
-                    Column(
-                        Modifier
-                            .weight(1f)
-                            .clip(RoundedCornerShape(8.dp))
-                            .background(c.surface2)
-                            .padding(10.dp),
-                        verticalArrangement = Arrangement.spacedBy(2.dp),
+                pair.forEach { (label, value, warn, caption) ->
+                    Surface(
+                        shape = MaterialTheme.shapes.large,
+                        color = cs.surfaceContainerHigh,
+                        modifier = Modifier.weight(1f),
                     ) {
-                        Text(k, color = c.faint, fontSize = 10.sp)
-                        Text(
-                            v,
-                            color = if (k == "Battery" && d.batteryStatus != "ok" && d.batteryStatus != null) c.warn else c.text,
-                            fontSize = 16.sp,
-                            fontFamily = FontFamily.Monospace,
-                        )
+                        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                            Text(label, style = MaterialTheme.typography.labelMedium, color = cs.onSurfaceVariant)
+                            Text(
+                                value,
+                                style = MaterialTheme.typography.titleLargeEmphasized,
+                                color = if (warn) MaterialTheme.dataColors.warn.color else cs.onSurface,
+                            )
+                            caption?.let {
+                                Text(it, style = MaterialTheme.typography.labelSmall, color = cs.onSurfaceVariant)
+                            }
+                        }
                     }
                 }
             }
@@ -185,56 +169,50 @@ private fun StatRow(d: Device, c: OuraColors) {
  * count from quietly disagreeing with the ring's own tally.
  */
 @Composable
-private fun ShortPeriodsNote(d: Device, c: OuraColors) {
+private fun ShortPeriodsNote(d: Device) {
     val dropped = d.shortPeriodsExcluded?.takeIf { it > 0 } ?: return
     val nights = d.nights ?: 0
     Text(
         "$nights scoreable ${if (nights == 1) "night" else "nights"}. $dropped shorter bedtime " +
             "${if (dropped == 1) "period was" else "periods were"} logged by the ring but " +
             "excluded — under 90 minutes, they're stillness rather than sleep and can't be staged.",
-        color = c.faint,
-        fontSize = 11.sp,
-        lineHeight = 15.sp,
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
     )
 }
 
 /** Event families by volume. The bar is relative to the largest, as on the web. */
 @Composable
-private fun Streams(d: Device, c: OuraColors) {
+private fun Streams(d: Device) {
+    val cs = MaterialTheme.colorScheme
     val streams = d.streams.takeIf { it.isNotEmpty() } ?: return
     val max = streams.maxOf { it.count }.coerceAtLeast(1)
-    Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
-        Subhead("Data captured", c)
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Subhead("Data captured")
         streams.forEach { s ->
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    s.name,
-                    color = c.muted,
-                    fontSize = 11.sp,
-                    modifier = Modifier.weight(0.42f),
-                )
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(s.name, style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(0.4f))
                 Box(
                     Modifier
-                        .weight(0.38f)
-                        .height(6.dp)
-                        .clip(RoundedCornerShape(3.dp))
-                        .background(c.lineSoft),
+                        .weight(0.4f)
+                        .height(8.dp)
+                        .clip(CircleShape)
+                        .background(cs.surfaceContainerHighest),
                 ) {
                     Box(
                         Modifier
                             .fillMaxWidth((s.count.toFloat() / max).coerceAtLeast(0.03f))
-                            .height(6.dp)
-                            .clip(RoundedCornerShape(3.dp))
-                            .background(c.accent),
+                            .height(8.dp)
+                            .clip(CircleShape)
+                            .background(cs.primary),
                     )
                 }
                 Text(
                     grouped(s.count),
-                    color = c.faint,
-                    fontSize = 10.sp,
-                    fontFamily = FontFamily.Monospace,
-                    modifier = Modifier.weight(0.20f),
-                    textAlign = androidx.compose.ui.text.style.TextAlign.End,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = cs.onSurfaceVariant,
+                    textAlign = TextAlign.End,
+                    modifier = Modifier.weight(0.2f),
                 )
             }
         }
@@ -243,28 +221,30 @@ private fun Streams(d: Device, c: OuraColors) {
 
 /** What can be computed from what is arriving — and, when it cannot, why not. */
 @Composable
-private fun Insights(d: Device, c: OuraColors) {
+private fun Insights(d: Device) {
+    val cs = MaterialTheme.colorScheme
     val insights = d.insights.takeIf { it.isNotEmpty() } ?: return
-    Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
-        Subhead("Insights available", c)
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Subhead("Insights available")
         insights.forEach { i ->
-            Row(
-                Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Row(Modifier.weight(1f), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text(i.name, color = c.muted, fontSize = 11.sp)
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text(i.name, style = MaterialTheme.typography.bodyMedium)
                     if (i.gated && i.why.isNotBlank()) {
-                        Text("· ${i.why}", color = c.faint, fontSize = 10.sp)
+                        Text(i.why, style = MaterialTheme.typography.bodySmall, color = cs.onSurfaceVariant)
                     }
                 }
-                Text(
-                    i.status,
-                    color = if (i.gated) c.faint else c.accent,
-                    fontSize = 10.sp,
-                    fontFamily = FontFamily.Monospace,
-                )
+                val (bg, fg) = if (i.gated) {
+                    cs.surfaceContainerHighest to cs.onSurfaceVariant
+                } else {
+                    cs.secondaryContainer to cs.onSecondaryContainer
+                }
+                Box(
+                    Modifier
+                        .clip(CircleShape)
+                        .background(bg)
+                        .padding(horizontal = 10.dp, vertical = 4.dp),
+                ) { Text(i.status, style = MaterialTheme.typography.labelMedium, color = fg) }
             }
         }
     }
@@ -274,103 +254,75 @@ private fun Insights(d: Device, c: OuraColors) {
  * Which on-ring features are switched on, and — when [onToggle] is supplied — a switch to
  * change one.
  *
- * Real switches rather than the coloured dots this started with. A dot that also happens to
- * be a button is a guess: it reads as a status light, and the only thing saying otherwise
- * was a line of caption text the eye skips. A switch says what it is before it is read.
+ * Real switches rather than coloured dots: a dot that also happens to be a button reads as
+ * a status light. A switch says what it is before it is read.
  *
  * Flipping one is not a UI state change. It connects to the ring, authenticates and writes
  * a feature mode, which takes on the order of fifteen seconds and can fail — so the switch
- * gives way to a spinner while that happens, and the outcome is spelled out underneath
- * rather than left to be inferred from a control that may or may not have moved.
+ * gives way to a loading indicator while that happens, and the outcome is spelled out in a
+ * snackbar rather than left to be inferred from a control that may or may not have moved.
  *
  * Only one at a time: the ring holds a single connection, and two writes racing for it
  * would fail in a way neither row could explain.
  */
 @Composable
-private fun Capabilities(
-    d: Device,
-    c: OuraColors,
-    onToggle: ((Capability) -> Unit)?,
-    busy: String?,
-    message: String?,
-) {
+private fun Capabilities(d: Device, onToggle: ((Capability) -> Unit)?, busy: String?) {
+    val cs = MaterialTheme.colorScheme
     val caps = d.measuring.takeIf { it.isNotEmpty() } ?: return
-    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-        // Same words as the web panel. The switches say what they are on their own, but
-        // the heading is what tells you the ring is about to be written to rather than the
-        // app's own settings — which is the part worth knowing before you touch one.
-        Subhead(if (onToggle != null) "Capabilities · tap to toggle" else "Capabilities", c)
-        caps.forEach { m ->
+    Column(verticalArrangement = Arrangement.spacedBy(ListItemDefaults.SegmentedGap)) {
+        // The heading is what tells you the ring is about to be written to rather than the
+        // app's own settings — the part worth knowing before you touch one.
+        Subhead(if (onToggle != null) "On the ring · tap to change" else "On the ring")
+        caps.forEachIndexed { index, m ->
             val working = busy == m.feature
-            val changeable = onToggle != null && m.feature.isNotBlank()
-            Row(
-                Modifier.fillMaxWidth().height(40.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Icon(
-                        painterResource(capabilityIcon(m.name)),
-                        contentDescription = null,
-                        // Lit when the ring is recording it, faint when it is not, so the
-                        // column reads at a glance without following each row to its switch.
-                        tint = if (m.on) c.accent else c.faint,
-                        modifier = Modifier.size(18.dp),
+            val changeable = onToggle != null && m.feature.isNotBlank() && busy == null
+            SegmentedListItem(
+                shapes = ListItemDefaults.segmentedShapes(index, caps.size),
+                colors = ListItemDefaults.segmentedColors(containerColor = cs.surfaceContainerHigh),
+                leadingContent = {
+                    // Lit when the ring is recording it, quiet when it is not, so the column
+                    // reads at a glance without following each row to its switch.
+                    ShapedIcon(
+                        capabilityIcon(m.name),
+                        size = 36.dp,
+                        container = if (m.on) cs.secondaryContainer else cs.surfaceContainerHighest,
+                        content = if (m.on) cs.onSecondaryContainer else cs.outline,
                     )
-                    Text(
-                        m.name,
-                        color = if (m.on) c.text else c.muted,
-                        fontSize = 12.sp,
-                    )
-                }
-                if (working) {
-                    CircularProgressIndicator(
-                        Modifier.size(18.dp),
-                        color = c.accent,
-                        strokeWidth = 2.dp,
-                    )
-                } else {
-                    Switch(
-                        checked = m.on,
-                        // Null rather than a no-op lambda: it is what makes the switch
-                        // read as unavailable instead of merely unresponsive.
-                        onCheckedChange = if (changeable && busy == null) {
-                            { onToggle!!(m) }
-                        } else {
-                            null
-                        },
-                        enabled = changeable && busy == null,
-                        colors = SwitchDefaults.colors(
-                            checkedThumbColor = c.bg,
-                            checkedTrackColor = c.accent,
-                            checkedBorderColor = c.accent,
-                            uncheckedThumbColor = c.faint,
-                            uncheckedTrackColor = c.surface2,
-                            uncheckedBorderColor = c.line,
-                        ),
-                        modifier = Modifier.scale(0.8f),
-                    )
-                }
-            }
-        }
-        message?.let {
-            Text(
-                it,
-                color = c.faint,
-                fontSize = 10.sp,
-                lineHeight = 14.sp,
-                modifier = Modifier.padding(top = 4.dp),
-            )
+                },
+                supportingContent = { Text(if (working) "Writing to the ring…" else if (m.on) "Recording" else "Off") },
+                trailingContent = {
+                    if (working) {
+                        LoadingIndicator(Modifier.size(36.dp))
+                    } else {
+                        Switch(
+                            checked = m.on,
+                            // Null rather than a no-op lambda: it is what makes the switch
+                            // read as unavailable instead of merely unresponsive.
+                            onCheckedChange = if (changeable) ({ onToggle!!(m) }) else null,
+                            enabled = changeable,
+                            thumbContent = if (m.on) {
+                                {
+                                    Icon(
+                                        painterResource(R.drawable.ic_sym_check),
+                                        contentDescription = null,
+                                        modifier = Modifier.size(SwitchDefaults.IconSize),
+                                    )
+                                }
+                            } else {
+                                null
+                            },
+                        )
+                    }
+                },
+            ) { Text(m.name) }
         }
     }
 }
 
 /** The ring's identity and sync internals — the numbers worth quoting in a bug report. */
 @Composable
-private fun Identity(d: Device, c: OuraColors) {
+private fun Identity(d: Device) {
+    val cs = MaterialTheme.colorScheme
     val rows = listOfNotNull(
         d.serial?.let { "Ring ID" to it },
         d.firmware?.let { "Firmware" to it },
@@ -382,24 +334,17 @@ private fun Identity(d: Device, c: OuraColors) {
         d.nextCursor?.let { "Sync cursor" to grouped(it) },
     ).takeIf { it.isNotEmpty() } ?: return
 
-    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        Subhead("Device", c)
-        rows.forEach { (k, v) ->
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                Text(k, color = c.faint, fontSize = 11.sp)
-                Text(v, color = c.muted, fontSize = 11.sp, fontFamily = FontFamily.Monospace)
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Subhead("Device")
+        Surface(shape = MaterialTheme.shapes.large, color = cs.surfaceContainerHigh) {
+            Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                rows.forEach { (k, v) ->
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        Text(k, style = MaterialTheme.typography.bodySmall, color = cs.onSurfaceVariant)
+                        Text(v, style = CodeType.small, color = cs.onSurface)
+                    }
+                }
             }
         }
     }
-}
-
-@Composable
-private fun Subhead(text: String, c: OuraColors) {
-    Text(
-        text.uppercase(),
-        color = c.faint,
-        fontSize = 9.sp,
-        fontWeight = FontWeight.Medium,
-        letterSpacing = 0.8.sp,
-    )
 }

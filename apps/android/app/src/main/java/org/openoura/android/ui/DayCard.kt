@@ -1,38 +1,49 @@
 package org.openoura.android.ui
 
+import androidx.annotation.DrawableRes
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
-import androidx.compose.ui.text.font.FontFamily
-import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
+import org.openoura.android.R
 import org.openoura.android.data.NightRow
 import org.openoura.android.data.Summary
-import org.openoura.android.ui.theme.Oura
-import org.openoura.android.ui.theme.OuraColors
+import org.openoura.android.ui.components.SegmentGap
+import org.openoura.android.ui.components.ShapedIcon
+import org.openoura.android.ui.components.segmentShape
+import org.openoura.android.ui.theme.DataColors
+import org.openoura.android.ui.theme.dataColors
 import kotlin.math.min
 import kotlin.math.roundToInt
 
 // The combined day card from the web dashboard (`dayCard` in app.js) and the iOS
-// TodayCard: a Sleep region above an Activity region, each opening its full report.
+// TodayCard: a Sleep part above an Activity part, each opening its full report. Here the
+// two parts are separate tappable surfaces joined into one segmented block.
 
 private val WEEKDAYS = listOf("Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat")
 private val MONTHS = listOf(
@@ -69,123 +80,115 @@ fun DayCard(
     onOpenActivity: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val c = Oura.colors
-    Column(
-        modifier = modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(10.dp))
-            .background(c.surface)
-            .border(1.dp, c.line, RoundedCornerShape(10.dp))
-            .padding(14.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        Text(
-            dayTitle(ymd),
-            color = c.faint,
-            fontSize = 11.sp,
-            fontFamily = FontFamily.Monospace,
-            letterSpacing = 0.6.sp,
-        )
-
-        summary.nightForDay(ymd)?.let { night -> SleepPart(night, c, onOpenSleep) }
-
-        ActivityPart(summary, ymd, c, onOpenActivity)
-    }
-}
-
-@Composable
-private fun SleepPart(n: NightRow, c: OuraColors, onOpen: () -> Unit) {
-    Column(
-        Modifier.fillMaxWidth().clickable(onClick = onOpen),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        PartHead(
-            tag = "Sleep",
-            meta = "${n.start ?: "—"}–${n.end ?: "—"} · ${num(n.inBedH)}h",
-            c = c,
-        )
-        n.stages?.takeIf { it.isNotEmpty() }?.let { Hypnogram(it, c) }
-        Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-            StageLegend("Deep", n.deepPct, c.deep, c)
-            StageLegend("Light", n.lightPct, c.light, c)
-            StageLegend("REM", n.remPct, c.rem, c)
-            StageLegend("Awake", n.wakePct, c.wake, c)
+    val night = summary.nightForDay(ymd)
+    val count = if (night != null) 2 else 1
+    Column(modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(SegmentGap)) {
+        if (night != null) {
+            Segment(index = 0, count = count, onClick = onOpenSleep) { SleepPart(night) }
+        }
+        Segment(index = count - 1, count = count, onClick = onOpenActivity) {
+            ActivityPart(summary, ymd)
         }
     }
 }
 
 @Composable
-private fun ActivityPart(s: Summary, ymd: String, c: OuraColors, onOpen: () -> Unit) {
+private fun Segment(index: Int, count: Int, onClick: () -> Unit, content: @Composable ColumnScope.() -> Unit) {
+    Surface(
+        onClick = onClick,
+        shape = segmentShape(index, count, outer = 28.dp),
+        color = MaterialTheme.colorScheme.surfaceContainer,
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp), content = content)
+    }
+}
+
+@Composable
+private fun SleepPart(n: NightRow) {
+    val d = MaterialTheme.dataColors
+    PartHead(
+        icon = R.drawable.ic_sym_bedtime,
+        title = "Sleep",
+        meta = "${n.start ?: "—"}–${n.end ?: "—"} · ${num(n.inBedH)} h in bed",
+    )
+    n.stages?.takeIf { it.isNotEmpty() }?.let { Hypnogram(it, d) }
+    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+        StageLegend("Deep", n.deepPct, d.deep)
+        StageLegend("Light", n.lightPct, d.light)
+        StageLegend("REM", n.remPct, d.rem)
+        StageLegend("Awake", n.wakePct, d.wake)
+    }
+}
+
+@Composable
+private fun ActivityPart(s: Summary, ymd: String) {
     val ds = s.activityDaily[ymd]
     val stat = if (ds != null) {
         "${kfmt(ds.steps ?: 0.0)} steps · ${(ds.activeKcal ?: 0.0).roundToInt()} kcal"
     } else {
         "no activity totals"
     }
-    Column(
-        Modifier.fillMaxWidth().clickable(onClick = onOpen),
-        verticalArrangement = Arrangement.spacedBy(6.dp),
-    ) {
-        PartHead(tag = "Activity", meta = stat, c = c)
-        s.activityProfile[ymd]?.takeIf { it.size > 1 }?.let { prof ->
-            MovementRidge(prof, c)
-            RidgeAxis(c)
+    PartHead(icon = R.drawable.ic_sym_directions_walk, title = "Activity", meta = stat)
+    s.activityProfile[ymd]?.takeIf { it.size > 1 }?.let { prof ->
+        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            MovementRidge(prof, MaterialTheme.colorScheme.primary, MaterialTheme.colorScheme.outlineVariant)
+            RidgeAxis()
         }
     }
 }
 
 @Composable
-private fun PartHead(tag: String, meta: String, c: OuraColors) {
+private fun PartHead(@DrawableRes icon: Int, title: String, meta: String) {
     Row(
         Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text(
-                tag.uppercase(),
-                color = c.faint,
-                fontSize = 10.sp,
-                fontWeight = FontWeight.Medium,
-                letterSpacing = 0.8.sp,
-            )
-            Text(meta, color = c.text, fontSize = 13.sp, fontFamily = FontFamily.Monospace)
+        ShapedIcon(icon)
+        Column(Modifier.weight(1f)) {
+            Text(title, style = MaterialTheme.typography.titleMediumEmphasized)
+            Text(meta, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
-        Text("›", color = c.faint, fontSize = 16.sp)
+        Icon(
+            painterResource(R.drawable.ic_sym_chevron_right),
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     }
 }
 
 @Composable
-private fun StageLegend(label: String, pct: Double?, swatch: Color, c: OuraColors) {
-    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
-        Canvas(Modifier.size(8.dp).clip(RoundedCornerShape(2.dp))) { drawRect(swatch) }
-        Text(label, color = c.muted, fontSize = 11.sp)
-        Text("${num(pct)}%", color = c.text, fontSize = 11.sp, fontWeight = FontWeight.Medium)
+private fun StageLegend(label: String, pct: Double?, swatch: Color) {
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        Box(Modifier.size(10.dp).clip(CircleShape).background(swatch))
+        Text(label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text("${num(pct)}%", style = MaterialTheme.typography.labelLargeEmphasized)
     }
 }
 
 /** Stage strip: one cell per downsampled epoch. 1=deep 2=light 3=rem 4=wake. */
 @Composable
-fun Hypnogram(stages: List<Int>, c: OuraColors, height: androidx.compose.ui.unit.Dp = 34.dp) {
+fun Hypnogram(stages: List<Int>, d: DataColors, height: Dp = 40.dp) {
     Canvas(
         Modifier
             .fillMaxWidth()
             .height(height)
-            .clip(RoundedCornerShape(3.dp)),
+            .clip(RoundedCornerShape(10.dp)),
     ) {
         if (stages.isEmpty()) return@Canvas
         val w = size.width / stages.size
         stages.forEachIndexed { i, code ->
             val color = when (code) {
-                1 -> c.deep
-                2 -> c.light
-                3 -> c.rem
-                else -> c.wake
+                1 -> d.deep
+                2 -> d.light
+                3 -> d.rem
+                else -> d.wake
             }
             drawRect(
-                color = color.copy(alpha = 0.9f),
+                color = color,
                 topLeft = Offset(i * w, 0f),
-                size = androidx.compose.ui.geometry.Size(w + 0.6f, size.height),
+                size = Size(w + 0.6f, size.height),
             )
         }
     }
@@ -193,7 +196,7 @@ fun Hypnogram(stages: List<Int>, c: OuraColors, height: androidx.compose.ui.unit
 
 /** 96 × 15-min MET buckets as a filled area with faint 6-hour anchors. */
 @Composable
-fun MovementRidge(profile: List<Double>, c: OuraColors, height: androidx.compose.ui.unit.Dp = 30.dp) {
+fun MovementRidge(profile: List<Double>, accent: Color, grid: Color, height: Dp = 40.dp) {
     Canvas(Modifier.fillMaxWidth().height(height)) {
         val p = profile.map { it.coerceAtLeast(0.0) }
         if (p.size < 2) return@Canvas
@@ -203,7 +206,7 @@ fun MovementRidge(profile: List<Double>, c: OuraColors, height: androidx.compose
 
         for (hr in 6 until 24 step 6) {
             val x = size.width * hr / 24f
-            drawLine(c.lineSoft, Offset(x, 0f), Offset(x, size.height), strokeWidth = 1f)
+            drawLine(grid, Offset(x, 0f), Offset(x, size.height), strokeWidth = 1f)
         }
 
         val path = Path().apply {
@@ -213,23 +216,23 @@ fun MovementRidge(profile: List<Double>, c: OuraColors, height: androidx.compose
             lineTo(0f, size.height)
             close()
         }
-        drawPath(path, c.accent.copy(alpha = 0.18f))
+        drawPath(path, accent.copy(alpha = 0.22f))
         val line = Path().apply {
             moveTo(0f, yOf(p[0]))
             for (i in 1 until p.size) lineTo(i * stepX, yOf(p[i]))
         }
-        drawPath(line, c.accent, style = androidx.compose.ui.graphics.drawscope.Stroke(width = 1.6f))
+        drawPath(line, accent, style = Stroke(width = 2.dp.toPx()))
     }
 }
 
-/** 12-hour AM/PM ticks every 3 hours, matching the web ridge axis. */
+/** 12-hour AM/PM ticks every 6 hours, matching the ridge's anchors. */
 @Composable
-private fun RidgeAxis(c: OuraColors) {
+private fun RidgeAxis() {
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-        listOf(0, 3, 6, 9, 12, 15, 18, 21, 24).forEach { h ->
+        listOf(0, 6, 12, 18, 24).forEach { h ->
             val m = ((h % 24) + 24) % 24
-            val label = "${if (m % 12 == 0) 12 else m % 12}${if (m < 12) "AM" else "PM"}"
-            Text(label, color = c.faint, fontSize = 9.sp, fontFamily = FontFamily.Monospace)
+            val label = "${if (m % 12 == 0) 12 else m % 12}${if (m < 12) "am" else "pm"}"
+            Text(label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }

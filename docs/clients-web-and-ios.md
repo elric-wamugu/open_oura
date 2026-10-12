@@ -53,8 +53,8 @@ metric there once and both clients receive it in the JSON.
 | **Activity sessions / workouts** | `openActDetail` (session) | workouts section | `activity` | AAD (web: Python · iOS: `ActivityModel`) |
 | **Ring-detected effort** (fallback when AAD is absent) | `effortForDay` + effort rows | `EffortSessions` (DayReportScreen.kt) | `effort` | — (exercise-HR trace timing) |
 | Steps / active calories / **distance** | activity report stats | activity day stats | `activity_daily` (incl. `distance_m`) | — |
-| Previous days browser (date · sleep h · eff % · steps) | `openDaysBrowser` → `openDayPage` | `DaysBrowser` (Android) / `AllDaysView` (iOS) | day keys | — |
-| Device & data health | `renderDevice` | `DeviceHealthPanel` (Android, read-only) / device section (iOS) | `device.{streams,insights,measuring,…}` | — |
+| Previous days browser (date · sleep h · eff % · steps) | `openDaysBrowser` → `openDayPage` | `DaysBrowser`, the History tab (Android) / `AllDaysView` (iOS) | day keys | — |
+| Device & data health | `renderDevice` | `DeviceHealthPanel` on the Ring tab, with capability toggles (Android) / device section (iOS) | `device.{streams,insights,measuring,…}` | — |
 | **Battery log + discharge runs** | `renderBattery`, `batteryChart` | `BatteryPanel`, `drawBatteryChart` | `battery.{series,cycles}` | — |
 | Excluded-period note | `renderDevice` (`.dh-note`) | `DeviceHealthPanel` (Android) / device section stat (iOS) | `device.short_periods_excluded` | — |
 
@@ -78,6 +78,12 @@ a nap doesn't shadow the real sleep.
 - **Home layout**: same day-unit model on both, but the iOS "Observatory" theme floats data on
   a black canvas (no panels) while the web uses bordered cards/dialogs. Match *data/features*,
   not pixel-for-pixel layout. iOS opens details as sheets; the web as stacked `<dialog>`s.
+  Android is Material 3 Expressive with four tabs — **Today** (day card, vitals), **History**
+  (days → day report), **Ring** (sync, battery, Device & data) and **You** (profile, ring
+  key, Health Connect, appearance); details push onto the tab's own back stack. The vitals'
+  status pills there are colour-coded by level (High / Low / Normal) as well as labelled, with
+  the comparison bar turning amber for the unhealthy direction — the labels and thresholds
+  are the web's.
 - **BLE sync**: iOS syncs **natively** — `RingSync.swift` (CoreBluetooth `BLETransport`)
   drives the Rust `RingSession` FFI (`oura-core`) to authenticate + drain into a writable
   DB. The web dashboard has **no** BLE; it reads a DB produced by the desktop `oura sync`.
@@ -311,6 +317,15 @@ nightly need" but "a 7.5 h need". `app.js` hardcodes "an".
   It needs `nights[].start_unix`/`end_unix`, which `oura-summary` emits for this but which
   are not Android-specific: any export of a night as a real interval needs them, and the
   clock strings cannot supply one across midnight.
+- **Material You (wallpaper colours)**: a setting on the You tab that repaints the app and
+  its widgets from the system's dynamic scheme. Android-only by nature — the platform
+  provides the palette. Data colours (sleep stages, status levels) deliberately do not
+  follow it, so a chart reads the same on every phone.
+- **Database size on disk** in Device & data (header and the Events tile): `oura.db` plus
+  any un-checkpointed `oura.db-wal`, read by `SummaryRepository.databaseBytes()` and shown
+  in Android's short file-size form. Deliberately a client-side `stat` rather than a
+  summary field: it describes the local file, not the ring's data, and each client can
+  read its own. The web or iOS could show theirs the same way if it ever earns the space.
 
 Two Android features have no web or iOS counterpart, and are not omissions to close:
 

@@ -87,6 +87,14 @@ class SummaryRepository private constructor(private val ctx: Context) {
 
     val hasDatabase: Boolean get() = dbFile.exists() && dbFile.length() > 0
 
+    /**
+     * What the database occupies on this phone, or null when there isn't one. The store runs
+     * SQLite in WAL mode, so writes not yet checkpointed sit in `oura.db-wal` beside it —
+     * counted too, since that is space the history is genuinely taking up.
+     */
+    fun databaseBytes(): Long? =
+        dbFile.takeIf { it.exists() }?.let { it.length() + File(ctx.filesDir, "oura.db-wal").length() }
+
     /** Local UTC offset in whole hours — what `summary_json` wants for day bucketing. */
     private fun tzOffsetHours(): Long =
         (java.util.TimeZone.getDefault().getOffset(System.currentTimeMillis()) / 3_600_000).toLong()
