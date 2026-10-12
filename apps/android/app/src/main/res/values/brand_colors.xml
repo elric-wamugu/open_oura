@@ -10,4 +10,6 @@
     <color name="brand_primary_container">#008378</color>
     <color name="brand_on_primary_container">#F4FFFC</color>
     <color name="brand_outline_variant">#BCC9C6</color>
+    <color name="brand_secondary_container">#C2EBE3</color>
+    <color name="brand_on_secondary_container">#456B66</color>
 </resources>

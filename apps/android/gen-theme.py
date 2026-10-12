@@ -70,6 +70,9 @@ ROLES = [
 XML_ROLES = [
     "surface", "onSurface", "onSurfaceVariant", "surfaceContainer", "surfaceContainerHigh",
     "primary", "primaryContainer", "onPrimaryContainer", "outlineVariant",
+    # Glance's Material 3 widget background is secondaryContainer with its tone nudged;
+    # the picker previews and the loading placeholder approximate it with the role itself.
+    "secondaryContainer", "onSecondaryContainer",
 ]
 
 
