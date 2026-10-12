@@ -272,7 +272,11 @@ fun OpenOuraApp(
             }
         }
         entry<RingRoute>(metadata = TabRootMotion) {
+            // A stat call, but not one to repeat every frame: re-read when the summary
+            // changes, which is exactly when a sync or an import has grown the file.
+            val dbBytes = remember(state) { repo.databaseBytes() }
             RingScreen(
+                databaseBytes = dbBytes,
                 state = state,
                 syncPhase = syncPhase,
                 onSync = ::startRingSync,

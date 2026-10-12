@@ -311,6 +311,11 @@ nightly need" but "a 7.5 h need". `app.js` hardcodes "an".
   It needs `nights[].start_unix`/`end_unix`, which `oura-summary` emits for this but which
   are not Android-specific: any export of a night as a real interval needs them, and the
   clock strings cannot supply one across midnight.
+- **Database size on disk** in Device & data (header and the Events tile): `oura.db` plus
+  any un-checkpointed `oura.db-wal`, read by `SummaryRepository.databaseBytes()` and shown
+  in Android's short file-size form. Deliberately a client-side `stat` rather than a
+  summary field: it describes the local file, not the ring's data, and each client can
+  read its own. The web or iOS could show theirs the same way if it ever earns the space.
 
 Two Android features have no web or iOS counterpart, and are not omissions to close:
 

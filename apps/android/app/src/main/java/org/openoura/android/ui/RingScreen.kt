@@ -35,6 +35,8 @@ fun RingScreen(
     onToggleDevice: () -> Unit,
     onToggleCapability: (Capability) -> Unit,
     busyCapability: String?,
+    /** Size of the local oura.db, shown beside the event count. */
+    databaseBytes: Long?,
     modifier: Modifier = Modifier,
 ) {
     val summary = (state as? SummaryState.Ready)?.summary
@@ -90,6 +92,7 @@ fun RingScreen(
                             onToggle = onToggleDevice,
                             onToggleCapability = onToggleCapability,
                             busyCapability = busyCapability,
+                            databaseBytes = databaseBytes,
                         )
                     }
                 }

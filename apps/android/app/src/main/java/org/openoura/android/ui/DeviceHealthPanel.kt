@@ -24,6 +24,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -57,9 +58,14 @@ fun DeviceHealthPanel(
     onToggleCapability: ((Capability) -> Unit)? = null,
     /** The capability currently being written to the ring, if any. */
     busyCapability: String? = null,
+    /** Size of the local oura.db on disk, if known. */
+    databaseBytes: Long? = null,
     modifier: Modifier = Modifier,
 ) {
     val d = device ?: return
+    val context = LocalContext.current
+    // Android's own short form ("729 MB"), so it reads the same as the Storage settings.
+    val dbSize = databaseBytes?.let { android.text.format.Formatter.formatShortFileSize(context, it) }
     ExpandablePanel(
         icon = R.drawable.ic_sym_database,
         title = "Device & data",
@@ -68,12 +74,13 @@ fun DeviceHealthPanel(
         summary = listOfNotNull(
             d.nights?.let { "$it nights" },
             d.totalEvents?.let { "${compact(it)} events" },
+            dbSize,
         ).joinToString(" · ").ifEmpty { null },
         expanded = expanded,
         onToggle = onToggle,
         modifier = modifier,
     ) {
-        StatGrid(d)
+        StatGrid(d, dbSize)
         ShortPeriodsNote(d)
         Streams(d)
         Insights(d)
@@ -117,21 +124,23 @@ private fun Subhead(text: String) {
     )
 }
 
+private data class Stat(val label: String, val value: String, val warn: Boolean = false, val caption: String? = null)
+
 @Composable
-private fun StatGrid(d: Device) {
+private fun StatGrid(d: Device, dbSize: String?) {
     val cs = MaterialTheme.colorScheme
     val fresh = d.freshHours?.let { if (it < 1) "<1" else it.roundToInt().toString() } ?: "—"
     val batteryOff = d.batteryStatus != null && d.batteryStatus != "ok"
     val items = listOf(
-        Triple("Battery", (d.batteryPct?.let { "$it" } ?: "—") + "%", batteryOff),
-        Triple("Last sync", "$fresh h ago", false),
-        Triple("History", "%.1f days".format(d.daysOfData ?: 0.0), false),
-        Triple("Events", grouped(d.totalEvents ?: 0), false),
+        Stat("Battery", (d.batteryPct?.let { "$it" } ?: "—") + "%", warn = batteryOff),
+        Stat("Last sync", "$fresh h ago"),
+        Stat("History", "%.1f days".format(d.daysOfData ?: 0.0)),
+        Stat("Events", grouped(d.totalEvents ?: 0), caption = dbSize?.let { "$it on this phone" }),
     )
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         items.chunked(2).forEach { pair ->
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                pair.forEach { (label, value, warn) ->
+                pair.forEach { (label, value, warn, caption) ->
                     Surface(
                         shape = MaterialTheme.shapes.large,
                         color = cs.surfaceContainerHigh,
@@ -144,6 +153,9 @@ private fun StatGrid(d: Device) {
                                 style = MaterialTheme.typography.titleLargeEmphasized,
                                 color = if (warn) MaterialTheme.dataColors.warn.color else cs.onSurface,
                             )
+                            caption?.let {
+                                Text(it, style = MaterialTheme.typography.labelSmall, color = cs.onSurfaceVariant)
+                            }
                         }
                     }
                 }
