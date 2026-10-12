@@ -2,7 +2,6 @@ package org.openoura.android.ui
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -14,7 +13,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -28,14 +26,16 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.text.font.FontFamily
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import org.openoura.android.data.NightRow
-import org.openoura.android.ui.theme.Oura
-import org.openoura.android.ui.theme.OuraColors
+import org.openoura.android.ui.theme.ChartColors
+import org.openoura.android.ui.theme.chartColors
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.foundation.shape.CircleShape
 import kotlin.math.roundToInt
 
 /** The night's clock window, unwrapped across midnight so `end` may exceed 24 h. */
@@ -92,7 +92,7 @@ private fun stageName(code: Int) = when (code) {
     else -> "Light"
 }
 
-private fun stageColour(code: Int, c: OuraColors) = when (code) {
+private fun stageColour(code: Int, c: ChartColors) = when (code) {
     1 -> c.deep
     3 -> c.rem
     4 -> c.wake
@@ -115,20 +115,20 @@ private fun stageColour(code: Int, c: OuraColors) = when (code) {
  */
 @Composable
 fun Polysomnograph(night: NightRow, modifier: Modifier = Modifier) {
-    val c = Oura.colors
+    val c = chartColors()
     val stages = night.stagesFull?.takeIf { it.size > 1 } ?: night.stages.orEmpty()
     if (stages.size < 2) {
-        Text("No hypnogram for this night.", color = c.muted, fontSize = 12.sp)
+        Text("No hypnogram for this night.", style = MaterialTheme.typography.bodyMedium, color = c.muted)
         return
     }
     val s = night.series
     val lanes = remember(night.id, c) {
         listOfNotNull(
-            s?.hr?.takeIf { it.size > 1 }?.let { Lane("Heart rate", "bpm", it, c.warn) },
-            s?.hrv?.takeIf { it.size > 1 }?.let { Lane("HRV", "ms", it, c.accent) },
-            s?.spo2?.takeIf { it.size > 1 }?.let { Lane("Blood O₂", "%", it, c.rem) },
-            s?.temp?.takeIf { it.size > 1 }?.let { Lane("Skin temp", "°C", it, c.light, decimals = 1) },
-            s?.motion?.takeIf { it.size > 1 }?.let { Lane("Motion", "s", it, c.faint) },
+            s?.hr?.takeIf { it.size > 1 }?.let { Lane("Heart rate", "bpm", it, c.hr) },
+            s?.hrv?.takeIf { it.size > 1 }?.let { Lane("HRV", "ms", it, c.hrv) },
+            s?.spo2?.takeIf { it.size > 1 }?.let { Lane("Blood O₂", "%", it, c.spo2) },
+            s?.temp?.takeIf { it.size > 1 }?.let { Lane("Skin temp", "°C", it, c.temp, decimals = 1) },
+            s?.motion?.takeIf { it.size > 1 }?.let { Lane("Motion", "s", it, c.motion) },
         )
     }
     val win = remember(night.id) { nightWindow(night.start, night.end) }
@@ -137,10 +137,9 @@ fun Polysomnograph(night: NightRow, modifier: Modifier = Modifier) {
     Column(
         modifier = modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(10.dp))
-            .background(c.surface)
-            .border(1.dp, c.line, RoundedCornerShape(10.dp))
-            .padding(12.dp)
+            .clip(MaterialTheme.shapes.large)
+            .background(MaterialTheme.colorScheme.surfaceContainer)
+            .padding(16.dp)
             // One gesture surface for the whole stack: the lanes only mean anything read
             // together, so they move together.
             //
@@ -162,10 +161,8 @@ fun Polysomnograph(night: NightRow, modifier: Modifier = Modifier) {
     ) {
         Text(
             cursor?.let { win.clockAt(it) } ?: "${night.start ?: "—"}–${night.end ?: "—"}",
+            style = if (cursor != null) MaterialTheme.typography.titleSmallEmphasized else MaterialTheme.typography.titleSmall,
             color = if (cursor != null) c.text else c.muted,
-            fontSize = 11.sp,
-            fontFamily = FontFamily.Monospace,
-            fontWeight = if (cursor != null) FontWeight.Medium else FontWeight.Normal,
         )
 
         LaneHeader(
@@ -192,25 +189,19 @@ fun Polysomnograph(night: NightRow, modifier: Modifier = Modifier) {
 }
 
 @Composable
-private fun LaneHeader(label: String, value: String, c: OuraColors) {
+private fun LaneHeader(label: String, value: String, c: ChartColors) {
     Row(
         Modifier.fillMaxWidth().padding(top = 6.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
     ) {
-        Text(label, color = c.muted, fontSize = 10.sp)
-        Text(
-            value,
-            color = c.text,
-            fontSize = 10.sp,
-            fontFamily = FontFamily.Monospace,
-            fontWeight = FontWeight.Medium,
-        )
+        Text(label, style = MaterialTheme.typography.labelMedium, color = c.muted)
+        Text(value, style = MaterialTheme.typography.labelMediumEmphasized, color = c.text)
     }
 }
 
 /** Hour ticks across the night, placed by fraction so they line up with the plots. */
 @Composable
-private fun HourAxis(win: NightWindow, c: OuraColors) {
+private fun HourAxis(win: NightWindow, c: ChartColors) {
     val ticks = remember(win) {
         val first = ((win.startMin + 59) / 60) * 60
         generateSequence(first) { it + 60 }
@@ -226,16 +217,15 @@ private fun HourAxis(win: NightWindow, c: OuraColors) {
             Text(
                 label,
                 Modifier.offset(x = w * f - 7.dp),
-                color = c.faint,
-                fontSize = 9.sp,
-                fontFamily = FontFamily.Monospace,
+                style = MaterialTheme.typography.labelSmall,
+                color = c.muted,
             )
         }
     }
 }
 
 /** Stepped clinical hypnogram: flat coloured runs, faint risers between stage changes. */
-private fun DrawScope.drawHypnogram(stages: List<Int>, c: OuraColors) {
+private fun DrawScope.drawHypnogram(stages: List<Int>, c: ChartColors) {
     val padT = 8f
     val plotH = size.height - 16f
     fun yOf(level: Int) = padT + (level / 3f) * plotH
@@ -243,7 +233,7 @@ private fun DrawScope.drawHypnogram(stages: List<Int>, c: OuraColors) {
 
     for (level in 0..3) {
         val y = yOf(level)
-        drawLine(c.lineSoft, Offset(0f, y), Offset(size.width, y), strokeWidth = 1f)
+        drawLine(c.grid, Offset(0f, y), Offset(size.width, y), strokeWidth = 1f)
     }
     var i = 0
     var prev: Int? = null
@@ -256,14 +246,14 @@ private fun DrawScope.drawHypnogram(stages: List<Int>, c: OuraColors) {
         val x2 = xOf(minOf(j, stages.size - 1))
         val y = yOf(level)
         prev?.let { drawLine(c.faint.copy(alpha = 0.5f), Offset(x1, yOf(it)), Offset(x1, y), strokeWidth = 1f) }
-        drawLine(stageColour(code, c), Offset(x1, y), Offset(x2, y), strokeWidth = 3f)
+        drawLine(stageColour(code, c), Offset(x1, y), Offset(x2, y), strokeWidth = 3.dp.toPx(), cap = StrokeCap.Round)
         prev = level
         i = j
     }
 }
 
 /** Auto-scaled line with a faint fill and a dashed mean, per the web's `laneSvg`. */
-private fun DrawScope.drawLane(lane: Lane, c: OuraColors) {
+private fun DrawScope.drawLane(lane: Lane, c: ChartColors) {
     val v = lane.values
     val min = v.min()
     val range = (v.max() - min).takeIf { it > 0 } ?: 1.0
@@ -284,34 +274,33 @@ private fun DrawScope.drawLane(lane: Lane, c: OuraColors) {
     drawPath(area, lane.colour.copy(alpha = 0.09f))
     val my = yOf(lane.mean)
     drawLine(lane.colour.copy(alpha = 0.45f), Offset(0f, my), Offset(size.width, my), strokeWidth = 1f)
-    drawPath(line, lane.colour, style = Stroke(width = 1.6f))
+    drawPath(line, lane.colour, style = Stroke(width = 1.75.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round))
     // The grid line the web draws behind every lane, kept so an empty-looking lane still
     // reads as a lane rather than as a rendering failure.
-    drawLine(c.lineSoft, Offset(0f, size.height), Offset(size.width, size.height), strokeWidth = 1f)
+    drawLine(c.grid, Offset(0f, size.height), Offset(size.width, size.height), strokeWidth = 1f)
 }
 
-private fun DrawScope.drawCursor(f: Float, c: OuraColors) {
+private fun DrawScope.drawCursor(f: Float, c: ChartColors) {
     val x = f * size.width
-    drawLine(c.text.copy(alpha = 0.55f), Offset(x, 0f), Offset(x, size.height), strokeWidth = 1.5f)
+    drawLine(c.text.copy(alpha = 0.6f), Offset(x, 0f), Offset(x, size.height), strokeWidth = 2.dp.toPx(), cap = StrokeCap.Round)
 }
 
 /** Deep / Light / REM / Awake swatches, so the hypnogram's colours are readable. */
 @Composable
 fun StageLegend(modifier: Modifier = Modifier) {
-    val c = Oura.colors
-    Row(modifier, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+    val c = chartColors()
+    Row(modifier, horizontalArrangement = Arrangement.spacedBy(16.dp)) {
         listOf("Deep" to c.deep, "Light" to c.light, "REM" to c.rem, "Awake" to c.wake)
             .forEach { (label, colour) ->
-                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
                     Box(
                         Modifier
-                            .padding(top = 3.dp)
-                            .height(8.dp)
-                            .width(8.dp)
-                            .clip(RoundedCornerShape(2.dp))
+                            .height(10.dp)
+                            .width(10.dp)
+                            .clip(CircleShape)
                             .background(colour),
                     )
-                    Text(label, color = c.muted, fontSize = 10.sp)
+                    Text(label, style = MaterialTheme.typography.labelMedium, color = c.muted)
                 }
             }
     }

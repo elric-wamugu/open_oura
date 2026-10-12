@@ -2,8 +2,7 @@ package org.openoura.android.ui
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
-import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -11,7 +10,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -22,12 +21,12 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
-import org.openoura.android.ui.theme.Oura
+import org.openoura.android.ui.theme.chartColors
 import kotlin.math.min
 import kotlin.math.roundToInt
 
@@ -47,7 +46,7 @@ fun MovementChart(
     dayTotalSteps: Double?,
     modifier: Modifier = Modifier,
 ) {
-    val c = Oura.colors
+    val c = chartColors()
     var cursor by remember(prof) { mutableStateOf<Int?>(null) }
 
     val peak = maxOf(1.0, prof.maxOrNull() ?: 1.0)
@@ -64,13 +63,16 @@ fun MovementChart(
     Column(
         modifier = modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(10.dp))
-            .background(c.surface)
-            .border(1.dp, c.line, RoundedCornerShape(10.dp))
-            .padding(12.dp),
-        verticalArrangement = Arrangement.spacedBy(6.dp),
+            .clip(MaterialTheme.shapes.large)
+            .background(MaterialTheme.colorScheme.surfaceContainer)
+            .padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        Text(header, color = c.muted, fontSize = 11.sp, fontFamily = FontFamily.Monospace)
+        Text(
+            header,
+            style = if (cursor != null) MaterialTheme.typography.titleSmallEmphasized else MaterialTheme.typography.titleSmall,
+            color = if (cursor != null) c.text else c.muted,
+        )
 
         Canvas(
             Modifier
@@ -78,7 +80,9 @@ fun MovementChart(
                 .height(120.dp)
                 .pointerInput(prof) {
                     // Both gestures resolve to the nearest bucket; release clears it.
-                    detectDragGestures(
+                    // Horizontal only, as on the polysomnograph: a drag in every direction
+                    // turned each attempt to scroll the page past the chart into a scrub.
+                    detectHorizontalDragGestures(
                         onDragEnd = { cursor = null },
                         onDragCancel = { cursor = null },
                     ) { change, _ ->
@@ -102,7 +106,7 @@ fun MovementChart(
 
             for (hr in 0..24 step 6) {
                 val x = size.width * hr / 24f
-                drawLine(c.lineSoft, Offset(x, 0f), Offset(x, size.height), strokeWidth = 1f)
+                drawLine(c.grid, Offset(x, 0f), Offset(x, size.height), strokeWidth = 1f)
             }
 
             val line = Path().apply {
@@ -113,27 +117,27 @@ fun MovementChart(
                 addPath(line)
                 lineTo(size.width, size.height); lineTo(0f, size.height); close()
             }
-            drawPath(area, c.accent.copy(alpha = 0.14f))
-            drawPath(line, c.accent, style = Stroke(width = 1.8f))
+            drawPath(area, c.accent.copy(alpha = 0.18f))
+            drawPath(line, c.accent, style = Stroke(width = 2.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round))
 
             cursor?.let { i ->
                 val x = i * stepX
-                drawLine(c.accent.copy(alpha = 0.75f), Offset(x, 0f), Offset(x, size.height), strokeWidth = 1.5f)
-                drawCircle(c.accent, radius = 4.5f, center = Offset(x, yOf(prof[i])))
+                drawLine(c.text.copy(alpha = 0.6f), Offset(x, 0f), Offset(x, size.height), strokeWidth = 2.dp.toPx(), cap = StrokeCap.Round)
+                drawCircle(c.accent, radius = 6.dp.toPx(), center = Offset(x, yOf(prof[i])))
             }
         }
 
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
             listOf(0, 6, 12, 18, 24).forEach {
-                Text("%02d".format(it), color = c.faint, fontSize = 9.sp, fontFamily = FontFamily.Monospace)
+                Text("%02d".format(it), style = MaterialTheme.typography.labelSmall, color = c.muted)
             }
         }
 
         Text(
             "Steps are estimated from movement intensity per 15-minute bucket, so they land " +
                 "on coarse multiples. The day total is the dependable number.",
-            color = c.faint,
-            fontSize = 10.sp,
+            style = MaterialTheme.typography.bodySmall,
+            color = c.muted,
         )
     }
 }

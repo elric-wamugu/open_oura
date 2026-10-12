@@ -32,6 +32,8 @@ data class DataColors(
     val wake: Color,
     /** Warn as a graphic (bars, chart marks): the dashboard's own amber. */
     val warnMark: Color,
+    /** The HRV lane: the dashboard's teal, fixed so the polysomnograph never repaints. */
+    val hrv: Color,
     /** "Needs attention" — low battery, a reading moving the unhealthy way. */
     val warn: ToneFamily,
     /** A reading against its reference, coded like a lab report: high, low, in range. */
@@ -46,6 +48,7 @@ internal val LightData = DataColors(
     rem = Color(0xFF4FA6B0),
     wake = Color(0xFFD2B06E),
     warnMark = Color(0xFFC9842B),
+    hrv = Color(0xFF0D9488),
     warn = WarnLight,
     high = HighLight,
     low = LowLight,
@@ -58,6 +61,7 @@ internal val DarkData = DataColors(
     rem = Color(0xFF6FA1A8),
     wake = Color(0xFFC1B08F),
     warnMark = Color(0xFFE0A44E),
+    hrv = Color(0xFF2DD4BF),
     warn = WarnDark,
     high = HighDark,
     low = LowDark,

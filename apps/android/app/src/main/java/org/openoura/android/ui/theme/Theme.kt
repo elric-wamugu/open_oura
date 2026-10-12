@@ -9,7 +9,6 @@ import androidx.compose.material3.dynamicDarkColorScheme
 import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
-import androidx.compose.runtime.remember
 import androidx.compose.ui.platform.LocalContext
 
 /**
@@ -35,11 +34,7 @@ fun OpenOuraTheme(
         else -> BrandLight
     }
     val data = if (darkTheme) DarkData else LightData
-    val legacy = remember(scheme, data) { ouraColorsFrom(scheme, data) }
-    CompositionLocalProvider(
-        LocalDataColors provides data,
-        LocalOuraColors provides legacy,
-    ) {
+    CompositionLocalProvider(LocalDataColors provides data) {
         MaterialExpressiveTheme(
             colorScheme = scheme,
             motionScheme = MotionScheme.expressive(),
