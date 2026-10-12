@@ -65,14 +65,14 @@ ROLES = [
     "tertiaryFixed", "tertiaryFixedDim", "onTertiaryFixed", "onTertiaryFixedVariant",
 ]
 
-# The handful the XML side needs: the launch window background and the widget shells,
-# which are drawn before (or outside) any Compose theme exists.
+# Only what the XML side uses: the launch window background (surface) and the widget
+# placeholder and picker previews, which are drawn before or outside any Compose theme.
+# Glance's Material 3 widget background is secondaryContainer with its tone nudged; the
+# previews approximate it with the role itself, and their headline pill is primaryContainer.
 XML_ROLES = [
-    "surface", "onSurface", "onSurfaceVariant", "surfaceContainer", "surfaceContainerHigh",
-    "primary", "primaryContainer", "onPrimaryContainer", "outlineVariant",
-    # Glance's Material 3 widget background is secondaryContainer with its tone nudged;
-    # the picker previews and the loading placeholder approximate it with the role itself.
+    "surface",
     "secondaryContainer", "onSecondaryContainer",
+    "primaryContainer", "onPrimaryContainer",
 ]
 
 

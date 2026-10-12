@@ -1,6 +1,8 @@
 package org.openoura.android.widget
 
+import android.annotation.SuppressLint
 import android.content.Context
+import android.content.res.Configuration
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Paint
@@ -31,7 +33,6 @@ import androidx.glance.background
 import androidx.glance.color.ColorProvider
 import androidx.glance.color.ColorProviders
 import androidx.glance.color.DynamicThemeColorProviders
-import androidx.glance.color.isNightMode
 import androidx.glance.layout.Alignment
 import androidx.glance.layout.Column
 import androidx.glance.layout.ColumnScope
@@ -82,10 +83,17 @@ private fun widgetColors(context: Context): ColorProviders =
     if (ThemePrefs.dynamicColor(context)) DynamicThemeColorProviders
     else ColorProviders(light = BrandLight, dark = BrandDark)
 
+private fun Context.isNight(): Boolean =
+    (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
+
 /** A fixed data colour (stage, status) with its day and night values. */
 private fun data(pick: (DataColors) -> Color): ColorProvider =
     ColorProvider(day = pick(LightData), night = pick(DarkData))
 
+// InlinedApi: the system widget radius only exists from API 31, and that is also the only
+// level at which Glance applies cornerRadius at all — below it the call is a no-op, so the
+// resource is never looked up where it is missing.
+@SuppressLint("InlinedApi")
 @Composable
 private fun Shell(padding: Dp = 12.dp, content: @Composable ColumnScope.() -> Unit) {
     Column(
@@ -205,7 +213,7 @@ class SleepWidget : GlanceAppWidget() {
         val colors = widgetColors(context)
         // A bitmap has no day/night variants, so its colours are picked for the mode in
         // force now. A mode switch leaves it on the old palette until the next refresh.
-        val bar = stageBarBitmap(s, if (context.isNightMode) DarkData else LightData)
+        val bar = stageBarBitmap(s, if (context.isNight()) DarkData else LightData)
         provideContent { GlanceTheme(colors) { SleepContent(s, bar) } }
     }
 }

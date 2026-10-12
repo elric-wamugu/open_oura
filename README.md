@@ -17,7 +17,8 @@ Two branches, both forks of `Th0rgal/open_oura` and both synced with upstream `m
 | `android-client` | Branches off the above and adds `apps/android/` — the native Compose client |
 
 Every computed metric lives once in **`crates/oura-summary`** and both clients render the
-same JSON. Validated end to end on a Ring 3 Heritage (`BLB_03`) and a Pixel 5. See
+same JSON. Validated end to end on a Ring 3 Heritage (`BLB_03`) with a Pixel 5 and a
+Pixel 9a. See
 `docs/clients-web-and-ios.md` for the feature ↔ feature map and
 `docs/android-client-plan.md` for the Android phases.
 
@@ -29,9 +30,12 @@ same JSON. Validated end to end on a Ring 3 Heritage (`BLB_03`) and a Pixel 5. S
 - **Native blood oxygen** — rings emitting `spo2_event` (direct %) rather than the
   `spo2_r_pi_event` R-ratio render Blood Oxygen from those percentages.
 - **Native Android client** (`apps/android/`) — Jetpack Compose on the same Rust core
-  through UniFFI Kotlin. Day card, sleep and activity reports, day browser, profile editor,
-  battery panel, effort sessions. No Rust changes were needed: `oura-core` already declared
-  `cdylib` and `oura-link` already delegated BLE to the platform.
+  through UniFFI Kotlin, designed in **Material 3 Expressive**: Today, History, Ring and You
+  tabs carrying the day card, sleep and activity reports, day browser, profile editor,
+  battery and device panels, and effort sessions, on a teal scheme generated from the
+  dashboard's accent with an optional Material You mode. No Rust changes were needed:
+  `oura-core` already declared `cdylib` and `oura-link` already delegated BLE to the
+  platform.
 - **Home-screen widgets** (Android) — three Glance widgets: Vitals, Last night, Today. They
   read a ~600-byte projection written after each recompute, never the core.
 - **Per-bucket steps + movement scrubber** — `activity_steps` gives 96 × 15-min step counts

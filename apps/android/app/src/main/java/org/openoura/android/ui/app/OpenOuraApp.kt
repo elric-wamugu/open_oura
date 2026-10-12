@@ -50,6 +50,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import androidx.core.content.edit
 import androidx.health.connect.client.HealthConnectClient
 import androidx.health.connect.client.PermissionController
 import androidx.navigation3.runtime.NavKey
@@ -284,12 +285,12 @@ fun OpenOuraApp(
                 batteryExpanded = batteryOpen,
                 onToggleBattery = {
                     batteryOpen = !batteryOpen
-                    prefs.edit().putBoolean("fold_battery", batteryOpen).apply()
+                    prefs.edit { putBoolean("fold_battery", batteryOpen) }
                 },
                 deviceExpanded = deviceOpen,
                 onToggleDevice = {
                     deviceOpen = !deviceOpen
-                    prefs.edit().putBoolean("fold_device", deviceOpen).apply()
+                    prefs.edit { putBoolean("fold_device", deviceOpen) }
                 },
                 busyCapability = capabilityBusy,
                 onToggleCapability = { cap ->

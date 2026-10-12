@@ -200,10 +200,10 @@ Two notes for whoever picks this up:
    - A `WidgetSnapshot` projection (a dozen fields) persisted separately for Glance.
    The full payload is **136 KB** (essentially all `nights`), which parses in milliseconds —
    a plain JSON file is sufficient; Proto DataStore would be over-engineering.
-4. **[agent]** Compose theme from the web client's Material 3 tokens in
-   `dashboard/web/styles.css` — the palette, the teal accent, and the light/dark pairs
-   transfer directly. Enable dynamic color (Material You) as an option, not the default,
-   so the brand palette survives.
+4. **[agent] — DONE, then superseded by the Material 3 Expressive redesign** (see that
+   section below). The theme is now a full M3 scheme generated from the web's teal, with
+   dynamic color (Material You) as a setting rather than the default, so the brand palette
+   survives.
 5. **[agent]** The vitals tile row: HRV, resting HR, sleep efficiency, blood oxygen —
    matching the web's `renderTiles` including the comparison bars.
 6. **[you]** Run and confirm the numbers match the web dashboard exactly.
@@ -223,8 +223,8 @@ HRV, RHR, SpO₂ and step counts are unaffected, which is what makes it easy to 
 the app looked right and was quietly wrong (187 bpm predicted max instead of 184;
 Aug 3 energy 253/1986 kcal instead of 222/1852).
 
-Android ships a profile editor (`ProfileStore` + `ProfileScreen`, reachable from the top
-bar) that writes the same `profile.json` beside the database. Anything that provisions a
+Android ships a profile editor (`ProfileStore` + `ProfileCard`, on the You tab) that writes
+the same `profile.json` beside the database. Anything that provisions a
 database onto a device must provision the profile with it.
 
 ## Phase 2 — the full Compose UI port
@@ -391,6 +391,48 @@ Only once the above is solid:
   it decoded in seven separate passes — turned out to cost under a second a pass. Revisit
   rollups only if a measurement says so; `cargo run --release -p oura-summary --example
   profile_summary -- oura.db` is that measurement.
+
+---
+
+## Material 3 Expressive UI — **DONE** (2026-10-12)
+
+The dashboard-era look (one hand-rolled palette, hairline-bordered cards, monospace
+numbers, a single home screen with sub-screens) was replaced with Material 3 Expressive.
+Android-only and visual: no metric or data changes, so nothing to mirror on web or iOS.
+
+- **Dependencies.** Expressive is public only from `material3` **1.5.0-beta01**; the stable
+  BOM still maps to 1.4.0, which keeps it internal. That beta is pinned explicitly and is
+  the one pre-release dependency. Navigation 3 (1.2.0) runs the tabs; Glance 1.2.0 plus
+  `glance-material3` themes the widgets.
+- **Colour.** `apps/android/gen-theme.py` generates the whole scheme from the dashboard teal
+  `#0D9488` (Fidelity variant, 2025 colour spec) into `ui/theme/BrandSchemes.kt` and
+  `res/values{,-night}/brand_colors.xml`, plus the warn / High / Low / Normal families.
+  Re-run it with `uv run apps/android/gen-theme.py`; `BrandSchemeContrastTest` fails if a
+  re-run makes any text role unreadable. Sleep stages and status colours live in
+  `DataColors` and never follow Material You; charts read `chartColors()`. A
+  "Wallpaper colours" switch on the You tab (`ThemePrefs`) swaps in the system's dynamic
+  scheme for the app and the widgets.
+- **Type.** M3's scale with the emphasized styles and tabular figures everywhere; monospace
+  (`CodeType`) only where the characters are the content — key hex, identifiers, wordmark.
+- **Navigation.** Four tabs — **Today, History, Ring, You** — each its own saveable back
+  stack (`ui/nav/Navigator.kt`, covered by `NavigatorTest`). Back pops within a tab, goes to
+  Today from another tab's root, and leaves the app from Today's root; reselecting a tab
+  returns it to its root. Tab roots fade through, pushed screens slide with the expressive
+  springs, predictive back included.
+- **Shell.** `ui/app/OpenOuraApp.kt`: `ShortNavigationBar`, a Sync extended FAB on Today and
+  Ring (folds while scrolling, `LoadingIndicator` while syncing), snackbars for transient
+  outcomes (sync done, capability written, export finished), and per-screen top app bars
+  via `ScreenScaffold` (large flexible titles on tab roots). Entries read live state through
+  delegated Compose state — Navigation 3 builds an entry once, when it is pushed.
+- **Components.** Segmented list items for grouped rows, `ExpandablePanel` (corners spring
+  rounder as it opens) for Battery and Device & data, `ConnectedChoice` (connected toggle
+  buttons) for Male/Female and Sleep/Activity, shaped icons on `MaterialShapes` cookies,
+  `LinearWavyProgressIndicator` for sync progress.
+- **Widgets.** `ColorProviders(BrandLight, BrandDark)` or `DynamicThemeColorProviders`, the
+  launcher's widget radius, the headline figure on a primary-container pill. The stage bar
+  stays a bitmap and picks its palette for the mode in force when drawn.
+- **Previews.** `ui/preview/` — light/dark `@PreviewLightDark` for the vital tile, day card,
+  sync card, Device & data and the Today screen, on fixed fixture data.
 
 ---
 

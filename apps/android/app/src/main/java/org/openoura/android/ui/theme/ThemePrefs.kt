@@ -2,6 +2,7 @@ package org.openoura.android.ui.theme
 
 import android.content.Context
 import android.os.Build
+import androidx.core.content.edit
 
 /**
  * The appearance setting: brand teal, or Material You colours from the wallpaper.
@@ -23,7 +24,6 @@ object ThemePrefs {
             context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean(KEY_DYNAMIC, false)
 
     fun setDynamicColor(context: Context, on: Boolean) {
-        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .edit().putBoolean(KEY_DYNAMIC, on).apply()
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit { putBoolean(KEY_DYNAMIC, on) }
     }
 }
