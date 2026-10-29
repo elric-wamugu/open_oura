@@ -56,6 +56,7 @@ metric there once and both clients receive it in the JSON.
 | Previous days browser (date · sleep h · eff % · steps) | `openDaysBrowser` → `openDayPage` | `DaysBrowser`, the History tab (Android) / `AllDaysView` (iOS) | day keys | — |
 | Device & data health | `renderDevice` | `DeviceHealthPanel` on the Ring tab, with capability toggles (Android) / device section (iOS) | `device.{streams,insights,measuring,…}` | — |
 | **Battery log + discharge runs** | `renderBattery`, `batteryChart` | `BatteryPanel`, `drawBatteryChart` | `battery.{series,cycles}` | — |
+| **Battery bands + charging** (amber at 20%, red at 10% and 5%) | `.batt` pill classes, Device panel stat | `BatteryTone` on the chip, panel, stat and widget, plus `BatteryAlerts` (Android) / — (iOS shows a plain %) | `device.{battery_status,battery_charging,battery_charge_started_unix,battery_full_unix}` | — |
 | Excluded-period note | `renderDevice` (`.dh-note`) | `DeviceHealthPanel` (Android) / device section stat (iOS) | `device.short_periods_excluded` | — |
 
 ## The day is one unit — pair night + activity by *wake date*
@@ -167,6 +168,18 @@ shows nothing was switched on mid-month. What changed is workload: mean events/d
 from 12 530 (8–17 Jul) to 44 413 (22 Jul on), 3.5x, and the flattering 163 h run spans
 12–14 Jul at ~2 270 events/day — the ring was barely being worn. Always check measurement
 volume before reading a long run as good battery life.
+
+**Bands and charging** come off the same log. `battery_status` is `ok`, `low` (≤ 20%),
+`very_low` (≤ 10%) or `critical` (≤ 5%), judged on `battery_rested_pct` (the highest level
+in the last 30 min) for the sag reason above. `battery_charge_state` finds charges: a rise
+counts only once it clears the level the ring was *resting* at before its trough by the
+same 5 points that split `cycles`, because a sync's voltage dip recovers to where it was and
+never past it; rises under 30 min apart are one charge, so a dip while on the charger cannot
+hide the full. It ships `battery_charging` (still filling, last point under 20 min old),
+`battery_charge_started_unix`, and `battery_full_unix` (the first 100% of the newest charge
+that got there). A ring sitting full logs nothing, so the full time stays put and a client
+can announce it once. `battery.series` thins only points older than a day: an even stride
+over all history once dropped the newest point and emptied the rested window.
 
 ## Effort sessions: the ring's trace, not a labelled workout
 
@@ -284,6 +297,14 @@ which is why Oura's own app has no per-night HRV trend either.
   vascular age sits inside the `cardiovascular` section — so there was no 1:1 swap to mirror.
   Same data, same honesty about the CVA gate; only the layout differs.
 
+- **Battery bands and charge state** (web and Android, not iOS): iOS shows `battery_pct` as a
+  plain stat. It doesn't colour by `battery_status` (amber at `low`, red at `very_low` and
+  `critical`), doesn't say when the ring is charging or full, and doesn't notify. Colouring
+  is a small change to the `ObsStat` in `OuraApp.swift`. Notifications would need a local
+  notification after each sync. iOS declares `bluetooth-central`, which keeps a running sync
+  alive in the background, but nothing starts one unattended, so alerts would come only when
+  the app is opened.
+
 When you close one of these gaps, update this section.
 
 ### Closed 2026-09-17: Android's sleep report was a stage strip
@@ -339,17 +360,30 @@ Two Android features have no web or iOS counterpart, and are not omissions to cl
   because Android discards unfiltered results with the screen off. The ring does advertise
   its service UUID, so that filter matches.
 
-- **Low-battery notifications** (`apps/android/.../battery/BatteryAlerts.kt`): raised after
-  every sync, because that is the only moment the level can have changed. Only the
-  *notifying* is Android-only — **what counts as low is shared**. `oura-summary` owns
-  `BATTERY_LOW_PCT` / `BATTERY_CRITICAL_PCT` and ships `battery_status` plus
-  `battery_rested_pct`; the web pill colours on the first (`.batt.low` / `.batt.critical`)
-  and the Android app notifies on it. Neither re-derives it, and neither should: the gauge
+- **Battery notifications** (`apps/android/.../battery/BatteryAlerts.kt`): checked after
+  every sync, because that is the only moment the level can have changed. "Low" at 20%,
+  "very low" at 10% and "critical" at 5%, each once on the way down and replacing the one
+  before it; "fully charged" once per charge, from `battery_full_unix`. Only the *notifying*
+  is Android-only — **what counts as low, charging or full is shared**. `oura-summary` owns
+  `BATTERY_LOW_PCT` / `BATTERY_VERY_LOW_PCT` / `BATTERY_CRITICAL_PCT` and the charge
+  detection; the web pill and the Android chip colour from `battery_status` and the Android
+  app notifies on it. Neither re-derives it from the number, and neither should: the gauge
   is voltage-derived and **sags under radio load**, so the band is judged on a rested level
   rather than the freshest one — see "Battery: read the ring's own log, not the sync-time
   samples" above. They briefly did disagree (web warned below 20%, Android at 10% and 3%),
-  which is what prompted moving it into the brain. What stays client-side is when to bother
-  someone: the escalate-once/never-repeat hysteresis, and `CLEAR_PCT`.
+  which is what prompted moving it into the brain.
+
+  What stays client-side is when to bother someone:
+  - **When a warning re-arms.** The saved band only gets worse on its own. A detected charge
+    (`battery_charging`, or a newer `battery_charge_started_unix`) re-arms it silently at
+    the current band, and `ok` clears it only at `CLEAR_PCT` (25%).
+  - **Blocked notifications.** A warning that couldn't be posted isn't recorded as given.
+    The Ring tab shows a "Battery alerts are off" card while notifications or a battery
+    channel are off.
+  - **Follow-up syncs.** `AutoSync.followUpDelaySec` queues a one-shot sync 30 min out while
+    charging, to catch the full, and 90 min out at `low` / `very_low`, to catch the next
+    band. Their floor is 20 min instead of 3 h. There is none at `critical`: each sync dips
+    a nearly empty ring's voltage, and there is no warning left to give.
 
 
 ## Ring clock resets → epoch-aware time mapping (all three code paths)
