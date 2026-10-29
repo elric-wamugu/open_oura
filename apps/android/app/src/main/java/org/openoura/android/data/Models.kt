@@ -157,6 +157,15 @@ data class Device(
      */
     @SerialName("battery_rested_pct") val batteryRestedPct: Int? = null,
     @SerialName("battery_status") val batteryStatus: String? = null,
+    /**
+     * Charging, read off the ring's own battery log by `oura-summary`
+     * (`battery_charge_state`), not guessed from the gauge. [batteryFullUnix] is stable
+     * while the ring sits full, so it can be announced once and recognised afterwards; a
+     * newer [batteryChargeStartedUnix] means a charge happened, seen or not.
+     */
+    @SerialName("battery_charging") val batteryCharging: Boolean = false,
+    @SerialName("battery_charge_started_unix") val batteryChargeStartedUnix: Double? = null,
+    @SerialName("battery_full_unix") val batteryFullUnix: Double? = null,
     @SerialName("hardware_id") val hardwareId: String? = null,
     @SerialName("api_version") val apiVersion: String? = null,
     val mac: String? = null,

@@ -5,6 +5,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import org.openoura.android.battery.BatteryLevel
 import org.openoura.android.sync.AutoSync
 import org.openoura.android.sync.SleepWindow
 import org.openoura.android.sync.SyncAftermath
@@ -176,5 +177,55 @@ class AutoSyncTest {
         assertNull(AutoSync.hmToMinutes("7:60"))
         assertNull(AutoSync.hmToMinutes("07"))
         assertNull(AutoSync.hmToMinutes("ab:cd"))
+    }
+    // ── follow-ups while the battery is worth watching ─────────────────────────────────
+
+    private fun followUp(sinceLastSec: Long, minuteOfDay: Int = 12 * 60, window: SleepWindow? = null) =
+        AutoSync.decide(
+            trigger = SyncTrigger.FOLLOW_UP,
+            nowEpochSec = 1_000_000,
+            lastAttemptEpochSec = 1_000_000 - sinceLastSec,
+            minuteOfDay = minuteOfDay,
+            window = window,
+            minIntervalSec = AutoSync.minIntervalFor(SyncTrigger.FOLLOW_UP),
+        )
+
+    @Test
+    fun `a follow-up has its own 20-minute floor, and the others keep three hours`() {
+        assertEquals(SyncDecision.TOO_SOON, followUp(sinceLastSec = 19 * 60))
+        assertEquals(SyncDecision.SYNC, followUp(sinceLastSec = 25 * 60))
+        assertEquals(SyncDecision.TOO_SOON, decide(sinceLastSec = 25 * 60))
+        assertEquals(3 * HOUR, AutoSync.minIntervalFor(SyncTrigger.PERIODIC))
+        assertEquals(3 * HOUR, AutoSync.minIntervalFor(SyncTrigger.APP_OPEN))
+    }
+
+    @Test
+    fun `quiet hours hold a follow-up like the periodic job`() {
+        val night = SleepWindow(23 * 60, 7 * 60)
+        assertEquals(SyncDecision.ASLEEP, followUp(sinceLastSec = HOUR, minuteOfDay = 2 * 60, window = night))
+    }
+
+    @Test
+    fun `charging checks back in 30 minutes whatever the band`() {
+        for (band in listOf(null, BatteryLevel.OK, BatteryLevel.LOW, BatteryLevel.CRITICAL)) {
+            assertEquals(30 * 60L, AutoSync.followUpDelaySec(charging = true, band = band))
+        }
+    }
+
+    @Test
+    fun `20 and 10 percent check back in 90 minutes, critical and ok do not`() {
+        assertEquals(90 * 60L, AutoSync.followUpDelaySec(false, BatteryLevel.LOW))
+        assertEquals(90 * 60L, AutoSync.followUpDelaySec(false, BatteryLevel.VERY_LOW))
+        assertNull(AutoSync.followUpDelaySec(false, BatteryLevel.CRITICAL))
+        assertNull(AutoSync.followUpDelaySec(false, BatteryLevel.OK))
+        assertNull(AutoSync.followUpDelaySec(false, null))
+    }
+
+    @Test
+    fun `every follow-up delay clears its own floor`() {
+        // Otherwise a follow-up would wake only to be refused as too soon.
+        val floor = AutoSync.minIntervalFor(SyncTrigger.FOLLOW_UP)
+        assertTrue(AutoSync.FOLLOW_UP_CHARGING_SEC > floor)
+        assertTrue(AutoSync.FOLLOW_UP_LOW_SEC > floor)
     }
 }

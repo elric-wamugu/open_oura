@@ -13,6 +13,7 @@ import androidx.work.WorkerParameters
 import androidx.work.workDataOf
 import kotlinx.coroutines.CancellationException
 import org.openoura.android.battery.BatteryAlerts
+import org.openoura.android.battery.BatteryLevel
 import org.openoura.android.health.HealthExport
 import org.openoura.android.ble.RingSyncService
 import org.openoura.android.ble.SyncPhase
@@ -38,7 +39,12 @@ data class SleepWindow(val startMin: Int, val endMin: Int) {
 }
 
 /** What asked for a sync. The two are trusted differently — see [AutoSync.decide]. */
-enum class SyncTrigger { PERIODIC, APP_OPEN }
+/**
+ * What woke a sync. [FOLLOW_UP] is a sync this app scheduled for itself because the ring's
+ * battery state is worth watching closely — charging, or running low — and is held to a
+ * much shorter floor than the others.
+ */
+enum class SyncTrigger { PERIODIC, APP_OPEN, FOLLOW_UP }
 
 enum class SyncDecision { SYNC, TOO_SOON, ASLEEP }
 
@@ -86,6 +92,17 @@ object AutoSync {
     private const val KEY_LAST_ATTEMPT = "last_attempt_unix"
     private const val PERIODIC = "auto-sync"
     private const val ONE_SHOT = "auto-sync-now"
+    private const val FOLLOW_UP = "auto-sync-follow-up"
+
+    /** While charging: often enough that "fully charged" arrives soon after it happens. */
+    const val FOLLOW_UP_CHARGING_SEC = 30L * 60
+    /**
+     * At 20% and 10%: at the ring's 1.3–2.2%/h a band lasts 2.5–7 h, so a 3-hour cadence
+     * could step straight over the next warning — and one sync costs the ring very little.
+     */
+    const val FOLLOW_UP_LOW_SEC = 90L * 60
+    /** A follow-up's own floor, well under the delays above and far under [MIN_INTERVAL_SEC]. */
+    const val FOLLOW_UP_MIN_INTERVAL_SEC = 20L * 60
     internal const val KEY_TRIGGER = "trigger"
 
     /**
@@ -112,6 +129,48 @@ object AutoSync {
             window?.contains(minuteOfDay) == true -> SyncDecision.ASLEEP
             else -> SyncDecision.SYNC
         }
+    }
+
+    /** The floor a trigger is held to: [FOLLOW_UP_MIN_INTERVAL_SEC] for follow-ups. */
+    fun minIntervalFor(trigger: SyncTrigger): Long =
+        if (trigger == SyncTrigger.FOLLOW_UP) FOLLOW_UP_MIN_INTERVAL_SEC else MIN_INTERVAL_SEC
+
+    /**
+     * How soon to look at the ring again, given what the last sync said about its battery;
+     * null when the ordinary cadence will do.
+     *
+     * Not at critical: every sync pulls a nearly empty ring's voltage down, and with the 5%
+     * warning given there is nothing left to warn about. The 3-hour job still notices the
+     * ring going onto its charger, which restarts the 30-minute cadence.
+     */
+    fun followUpDelaySec(charging: Boolean, band: BatteryLevel?): Long? = when {
+        charging -> FOLLOW_UP_CHARGING_SEC
+        band == BatteryLevel.LOW || band == BatteryLevel.VERY_LOW -> FOLLOW_UP_LOW_SEC
+        else -> null
+    }
+
+    /**
+     * Schedule (or call off) the next follow-up after a sync.
+     *
+     * Its own unique work, apart from the app-open one-shot, so a pending follow-up never
+     * swallows an app-open sync. From any other sync it REPLACEs, restarting the delay from
+     * now. From inside a follow-up it APPENDs instead, because REPLACE would cancel the very
+     * worker that is asking; the new request then waits for this one to finish. No phone
+     * battery constraint: these are few, short, and only while something is happening.
+     */
+    fun scheduleFollowUp(ctx: Context, delaySec: Long?, fromFollowUp: Boolean) {
+        val work = WorkManager.getInstance(ctx)
+        if (delaySec == null) {
+            if (!fromFollowUp) work.cancelUniqueWork(FOLLOW_UP)
+            return
+        }
+        val req = OneTimeWorkRequestBuilder<AutoSyncWorker>()
+            .setInitialDelay(delaySec, TimeUnit.SECONDS)
+            .setInputData(workDataOf(KEY_TRIGGER to SyncTrigger.FOLLOW_UP.name))
+            .build()
+        val policy = if (fromFollowUp) ExistingWorkPolicy.APPEND_OR_REPLACE else ExistingWorkPolicy.REPLACE
+        work.enqueueUniqueWork(FOLLOW_UP, policy, req)
+        Log.i(TAG, "follow-up sync in ${delaySec / 60} min")
     }
 
     /**
@@ -268,7 +327,8 @@ class AutoSyncWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(c
         val now = System.currentTimeMillis() / 1000
         val nowMinute = LocalTime.now().let { it.hour * 60 + it.minute }
 
-        when (val decision = AutoSync.decide(trigger, now, AutoSync.lastAttempt(ctx), nowMinute, window)) {
+        val floor = AutoSync.minIntervalFor(trigger)
+        when (val decision = AutoSync.decide(trigger, now, AutoSync.lastAttempt(ctx), nowMinute, window, floor)) {
             SyncDecision.SYNC -> Unit
             else -> {
                 Log.i(TAG, "$trigger: skipped ($decision)")
@@ -311,6 +371,13 @@ class AutoSyncWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(c
                 .onFailure { Log.e(TAG, "post-sync recompute failed", it) }
             repo.cached()?.let {
                 BatteryAlerts.check(ctx, it)
+                it.device?.let { d ->
+                    AutoSync.scheduleFollowUp(
+                        ctx,
+                        AutoSync.followUpDelaySec(d.batteryCharging, BatteryAlerts.bandOf(d.batteryStatus)),
+                        fromFollowUp = trigger == SyncTrigger.FOLLOW_UP,
+                    )
+                }
                 // Publish what the sync brought in. Inside the recompute branch on
                 // purpose: if the drain achieved nothing there is nothing new to send.
                 HealthExport.exportAfterSync(ctx, it)
