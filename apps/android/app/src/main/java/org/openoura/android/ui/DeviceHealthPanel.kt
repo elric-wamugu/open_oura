@@ -24,6 +24,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.style.TextAlign
@@ -34,7 +35,6 @@ import org.openoura.android.data.Device
 import org.openoura.android.ui.components.ExpandablePanel
 import org.openoura.android.ui.components.ShapedIcon
 import org.openoura.android.ui.theme.CodeType
-import org.openoura.android.ui.theme.dataColors
 import kotlin.math.roundToInt
 
 /**
@@ -124,15 +124,16 @@ private fun Subhead(text: String) {
     )
 }
 
-private data class Stat(val label: String, val value: String, val warn: Boolean = false, val caption: String? = null)
+private data class Stat(val label: String, val value: String, val tint: Color? = null, val caption: String? = null)
 
 @Composable
 private fun StatGrid(d: Device, dbSize: String?) {
     val cs = MaterialTheme.colorScheme
     val fresh = d.freshHours?.let { if (it < 1) "<1" else it.roundToInt().toString() } ?: "—"
-    val batteryOff = d.batteryStatus != null && d.batteryStatus != "ok"
+    // The brain's band, as everywhere else: amber at 20%, red at 10% and 5%.
+    val batteryTint = batteryTone(d.batteryStatus).colors()?.color
     val items = listOf(
-        Stat("Battery", (d.batteryPct?.let { "$it" } ?: "—") + "%", warn = batteryOff),
+        Stat("Battery", (d.batteryPct?.let { "$it" } ?: "—") + "%", tint = batteryTint),
         Stat("Last sync", "$fresh h ago"),
         Stat("History", "%.1f days".format(d.daysOfData ?: 0.0)),
         Stat("Events", grouped(d.totalEvents ?: 0), caption = dbSize?.let { "$it on this phone" }),
@@ -140,7 +141,7 @@ private fun StatGrid(d: Device, dbSize: String?) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         items.chunked(2).forEach { pair ->
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                pair.forEach { (label, value, warn, caption) ->
+                pair.forEach { (label, value, tint, caption) ->
                     Surface(
                         shape = MaterialTheme.shapes.large,
                         color = cs.surfaceContainerHigh,
@@ -151,7 +152,7 @@ private fun StatGrid(d: Device, dbSize: String?) {
                             Text(
                                 value,
                                 style = MaterialTheme.typography.titleLargeEmphasized,
-                                color = if (warn) MaterialTheme.dataColors.warn.color else cs.onSurface,
+                                color = tint ?: cs.onSurface,
                             )
                             caption?.let {
                                 Text(it, style = MaterialTheme.typography.labelSmall, color = cs.onSurfaceVariant)

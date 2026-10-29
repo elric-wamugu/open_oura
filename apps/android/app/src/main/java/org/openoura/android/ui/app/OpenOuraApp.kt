@@ -2,7 +2,10 @@ package org.openoura.android.ui.app
 
 import android.Manifest
 import android.content.Context
+import android.content.Intent
+import android.content.pm.PackageManager
 import android.os.Build
+import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContentTransitionScope
@@ -50,7 +53,10 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
 import androidx.core.content.edit
+import androidx.lifecycle.compose.LifecycleResumeEffect
+import org.openoura.android.battery.BatteryAlerts
 import androidx.health.connect.client.HealthConnectClient
 import androidx.health.connect.client.PermissionController
 import androidx.navigation3.runtime.NavKey
@@ -215,17 +221,56 @@ fun OpenOuraApp(
             else -> Unit
         }
     }
+    // Whether battery alerts can reach the user. Re-read on every return to the app: they
+    // can be switched off (or back on) in system settings at any time.
+    var alertsOn by remember { mutableStateOf(BatteryAlerts.canAlert(app)) }
+    LifecycleResumeEffect(Unit) {
+        alertsOn = BatteryAlerts.canAlert(app)
+        onPauseOrDispose { }
+    }
     val askSyncPermissions = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
+        alertsOn = BatteryAlerts.canAlert(app)
         // POST_NOTIFICATIONS may be refused without blocking the sync — only the progress
-        // notification is lost — so the Bluetooth ones decide.
+        // notification and the battery alerts are lost — so the Bluetooth ones decide.
         if (BlePermissions.granted(app)) RingSyncService.start(app)
     }
     fun startRingSync() {
         if (RingSyncService.isRunning) return
-        if (BlePermissions.granted(app)) {
+        // Everything missing in one request: Bluetooth to sync at all, and — once — the
+        // notifications that carry the battery warnings. Asking for notifications only
+        // alongside Bluetooth meant a Bluetooth grant from anywhere else (the ring key's
+        // connection test) left them never asked for, and every warning silently dropped.
+        val notify = notificationPermission().filter {
+            ContextCompat.checkSelfPermission(app, it) != PackageManager.PERMISSION_GRANTED &&
+                !prefs.getBoolean(KEY_NOTIF_ASKED, false)
+        }
+        val missing = BlePermissions.missing(app) + notify
+        if (missing.isEmpty()) {
             RingSyncService.start(app)
         } else {
-            askSyncPermissions.launch(BlePermissions.required() + notificationPermission())
+            if (notify.isNotEmpty()) prefs.edit { putBoolean(KEY_NOTIF_ASKED, true) }
+            askSyncPermissions.launch(missing.toTypedArray())
+        }
+    }
+    // The Ring tab's "battery alerts are off" card: ask once if Android still lets us,
+    // otherwise go straight to the app's notification settings, where a refusal is undone.
+    var askedForAlerts by rememberSaveable { mutableStateOf(false) }
+    val askNotifications = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {
+        alertsOn = BatteryAlerts.canAlert(app)
+    }
+    fun enableAlerts() {
+        val permission = notificationPermission().firstOrNull()
+        val granted = permission == null ||
+            ContextCompat.checkSelfPermission(app, permission) == PackageManager.PERMISSION_GRANTED
+        if (!granted && !askedForAlerts) {
+            askedForAlerts = true
+            askNotifications.launch(permission!!)
+        } else {
+            context.startActivity(
+                Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+                    .putExtra(Settings.EXTRA_APP_PACKAGE, app.packageName)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+            )
         }
     }
 
@@ -293,6 +338,9 @@ fun OpenOuraApp(
                     prefs.edit { putBoolean("fold_device", deviceOpen) }
                 },
                 busyCapability = capabilityBusy,
+                // Only worth raising once there is a ring to warn about.
+                alertsOff = !alertsOn && ringKeyFp != null,
+                onEnableAlerts = ::enableAlerts,
                 onToggleCapability = { cap ->
                     // The ring holds one connection; a drain already has it.
                     if (RingSyncService.isRunning) {
@@ -549,9 +597,12 @@ private val TabRootMotion: Map<String, Any> =
         NavDisplay.popTransitionSpec(FadeThrough) +
         NavDisplay.predictivePopTransitionSpec { _ -> FadeThrough() }
 
+/** Set once notifications have been asked for alongside a sync, so a refusal is respected. */
+private const val KEY_NOTIF_ASKED = "notif_asked"
+
 /**
- * POST_NOTIFICATIONS only exists from API 33. Requesting it below that throws, and the
- * sync's progress notification is the only thing it gates.
+ * POST_NOTIFICATIONS only exists from API 33. Requesting it below that throws. It gates the
+ * sync's progress notification and every battery alert (20%, 10%, 5% and fully charged).
  */
 private fun notificationPermission(): Array<String> =
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {

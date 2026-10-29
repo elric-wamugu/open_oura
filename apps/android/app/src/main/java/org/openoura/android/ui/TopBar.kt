@@ -24,7 +24,6 @@ import androidx.compose.ui.unit.dp
 import org.openoura.android.R
 import org.openoura.android.data.Device
 import org.openoura.android.ui.theme.CodeType
-import org.openoura.android.ui.theme.dataColors
 import kotlin.math.roundToInt
 
 // The Today tab's app bar pieces. The web bar's DNA and Blood entries are deliberately
@@ -57,8 +56,8 @@ fun AppTitle(device: Device?) {
 @Composable
 fun BatteryChip(device: Device?, onClick: () -> Unit, modifier: Modifier = Modifier) {
     val pct = device?.batteryPct
-    val low = pct != null && pct < 20
-    val warn = MaterialTheme.dataColors.warn
+    val tone = batteryTone(device?.batteryStatus)
+    val toned = tone.colors()
     val label = buildString {
         append(pct?.let { "$it%" } ?: "—")
         device?.freshHours?.let { h ->
@@ -71,21 +70,21 @@ fun BatteryChip(device: Device?, onClick: () -> Unit, modifier: Modifier = Modif
         label = { Text(label) },
         leadingIcon = {
             Icon(
-                painterResource(if (low) R.drawable.ic_sym_battery_alert else R.drawable.ic_sym_battery_full),
-                contentDescription = "Ring battery",
+                painterResource(batteryIcon(tone, device?.batteryCharging == true)),
+                contentDescription = if (device?.batteryCharging == true) "Ring battery, charging" else "Ring battery",
                 modifier = Modifier.size(AssistChipDefaults.IconSize),
             )
         },
-        colors = if (low) {
+        colors = if (toned != null) {
             AssistChipDefaults.assistChipColors(
-                containerColor = warn.container,
-                labelColor = warn.onContainer,
-                leadingIconContentColor = warn.onContainer,
+                containerColor = toned.container,
+                labelColor = toned.onContainer,
+                leadingIconContentColor = toned.onContainer,
             )
         } else {
             AssistChipDefaults.assistChipColors()
         },
-        border = if (low) null else AssistChipDefaults.assistChipBorder(enabled = true),
+        border = if (toned != null) null else AssistChipDefaults.assistChipBorder(enabled = true),
         modifier = modifier.padding(end = 8.dp),
     )
 }
