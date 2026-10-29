@@ -348,7 +348,15 @@ private fun ActivityContent(s: WidgetSnapshot) {
             // no longer fits and RemoteViews would silently clip it.
             Spacer(GlanceModifier.height(6.dp))
             s.peakHr?.let { Sub("peak $it bpm") }
-            s.batteryPct?.let { Sub("ring $it%") }
+            s.batteryPct?.let { pct ->
+                // Coloured on the brain's band like the app's battery chip: amber, then red.
+                val tint = when (s.batteryStatus) {
+                    "low" -> data { d -> d.warn.color }
+                    "very_low", "critical" -> GlanceTheme.colors.error
+                    else -> GlanceTheme.colors.onSurfaceVariant
+                }
+                Text("ring $pct%", style = TextStyle(color = tint, fontSize = 12.sp))
+            }
         }
     }
 }

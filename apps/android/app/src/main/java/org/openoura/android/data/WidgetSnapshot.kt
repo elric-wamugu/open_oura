@@ -37,6 +37,8 @@ data class WidgetSnapshot(
     val steps: Int? = null,
     val peakHr: Int? = null,
     val batteryPct: Int? = null,
+    /** The brain's band, so the widget colours the level like the app does. */
+    val batteryStatus: String? = null,
 )
 
 object WidgetStore {
@@ -80,6 +82,7 @@ object WidgetStore {
             steps = daily?.steps?.roundToInt(),
             peakHr = daily?.peakHr?.roundToInt(),
             batteryPct = s.device?.batteryPct,
+            batteryStatus = s.device?.batteryStatus,
         )
     }
 }

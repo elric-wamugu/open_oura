@@ -22,6 +22,7 @@ import kotlinx.coroutines.launch
 import org.openoura.android.MainActivity
 import org.openoura.android.R
 import org.openoura.android.battery.BatteryAlerts
+import org.openoura.android.sync.AutoSync
 import org.openoura.android.health.HealthExport
 import org.openoura.android.data.SummaryRepository
 
@@ -94,6 +95,13 @@ class RingSyncService : Service() {
                     // the only moment there is anything new to publish.
                     repo.cached()?.let {
                         BatteryAlerts.check(applicationContext, it)
+                        it.device?.let { d ->
+                            AutoSync.scheduleFollowUp(
+                                applicationContext,
+                                AutoSync.followUpDelaySec(d.batteryCharging, BatteryAlerts.bandOf(d.batteryStatus)),
+                                fromFollowUp = false,
+                            )
+                        }
                         HealthExport.exportAfterSync(applicationContext, it)
                     }
                 }

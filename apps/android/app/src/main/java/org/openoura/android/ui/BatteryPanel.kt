@@ -32,7 +32,6 @@ import org.openoura.android.data.BatteryPoint
 import org.openoura.android.data.Device
 import org.openoura.android.ui.components.ExpandablePanel
 import org.openoura.android.ui.components.segmentShape
-import org.openoura.android.ui.theme.dataColors
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -89,7 +88,6 @@ fun BatteryPanel(
     modifier: Modifier = Modifier,
 ) {
     val cs = MaterialTheme.colorScheme
-    val warn = MaterialTheme.dataColors.warn
     val series = battery.series
     // The reconciled figure from the brain, not the tail of the series — the brain already
     // picked whichever source is freshest, and reading the tail here is exactly what made
@@ -97,17 +95,21 @@ fun BatteryPanel(
     val last = series.lastOrNull()
     val pct = device?.batteryPct ?: last?.pct
     val volts = device?.batteryV ?: last?.let { it.mv / 1000.0 }
-    val low = pct != null && pct < 20
+    val charging = device?.batteryCharging == true
+    val tone = batteryTone(device?.batteryStatus)
+    val toned = tone.colors()
 
     ExpandablePanel(
-        icon = if (low) R.drawable.ic_sym_battery_alert else R.drawable.ic_sym_battery_full,
+        icon = batteryIcon(tone, charging),
         title = "Battery",
         // The header says something useful while collapsed.
-        summary = pct?.let { p -> "$p%" + (volts?.let { " · ${"%.2f".format(it)} V" } ?: "") } ?: "No reading yet",
+        summary = pct?.let { p ->
+            "$p%" + (volts?.let { " · ${"%.2f".format(it)} V" } ?: "") + (if (charging) " · charging" else "")
+        } ?: "No reading yet",
         expanded = expanded,
         onToggle = onToggle,
-        iconContainer = if (low) warn.container else cs.secondaryContainer,
-        iconContent = if (low) warn.onContainer else cs.onSecondaryContainer,
+        iconContainer = toned?.container ?: cs.secondaryContainer,
+        iconContent = toned?.onContainer ?: cs.onSecondaryContainer,
         modifier = modifier,
     ) {
         if (series.size < 2) {
