@@ -14,6 +14,8 @@
   --accent-soft: rgba(13, 148, 136, 0.12);
   --good: var(--accent);
   --warn: #c9842b;
+  /* The battery's red bands (10% and 5%). Same red as the Android app's error role. */
+  --danger: #ba1a1a;
   --shadow: none;
 
   /* sleep stages — vivid hues, lightness-led (deep darkest → awake lightest);
@@ -80,6 +82,7 @@
     --accent-soft: rgba(45, 212, 191, 0.14);
     --good: var(--accent);
     --warn: #e0a44e;
+    --danger: #ffb4ab;
     --shadow: none;
     --deep: #5d6989;
     --light: #8c97b3;
@@ -105,6 +108,7 @@
   --accent-soft: rgba(45, 212, 191, 0.14);
   --good: var(--accent);
   --warn: #e0a44e;
+  --danger: #ffb4ab;
   --shadow: none;
   --deep: #5d6989;
   --light: #8c97b3;
@@ -167,13 +171,14 @@ body {
   box-shadow: var(--sheen);
 }
 .batt .ic { font-size: 15px; }
+/* The brain's battery bands: amber at 20%, red at 10%, and red filled at 5% so the last
+   warning separates from the one before it at a glance. */
 .batt.low { color: var(--warn); }
-/* Critical reads louder without reaching for a red the palette does not have: the same
-   warn hue, but filled, so it separates from `.low` at a glance. */
+.batt.very_low { color: var(--danger); }
 .batt.critical {
-  color: var(--warn); font-weight: 560;
-  border-color: color-mix(in oklab, var(--warn) 45%, var(--line));
-  background: color-mix(in oklab, var(--warn) 10%, var(--surface));
+  color: var(--danger); font-weight: 560;
+  border-color: color-mix(in oklab, var(--danger) 45%, var(--line));
+  background: color-mix(in oklab, var(--danger) 10%, var(--surface));
 }
 .batt { white-space: nowrap; }
 .batt-age { color: var(--faint); font-size: 11px; margin-left: -3px; flex: none; white-space: nowrap; }
@@ -797,6 +802,7 @@ body.page-open { overflow: hidden; }
 /* capabilities + battery tweaks */
 .adv-body .caps { max-width: 400px; margin-top: -2px; }
 .dh-stat.low .v { color: var(--warn); }
+.dh-stat.very_low .v, .dh-stat.critical .v { color: var(--danger); }
 
 /* ═══════════════════════════════════════════════════════════════════════════
    Material Design 3 layer — elevation, MD3 shape scale, tonal state layers,

@@ -1093,7 +1093,8 @@ function renderDevice(d) {
   const stat = (k, v, u) => el("div", "dh-stat", `<div class="k">${k}</div><div class="v">${v}<span class="u">${u || ""}</span></div>`);
   const bpct = dev.battery_pct;
   const bstat = stat("Battery", bpct != null ? bpct : "—", "%");
-  if (bpct != null && bpct < 20) bstat.classList.add("low");
+  // The brain's band, as on the top-bar pill — never a threshold of our own on the number.
+  if (["low", "very_low", "critical"].includes(dev.battery_status)) bstat.classList.add(dev.battery_status);
   stats.append(bstat);
   const fresh = dev.fresh_hours != null ? (dev.fresh_hours < 1 ? "<1" : Math.round(dev.fresh_hours)) : "—";
   stats.append(stat("Last sync", fresh, " h ago"));
@@ -1528,15 +1529,15 @@ function renderActions(d) {
     // judged on a *rested* level, because the freshest reading was taken mid-sync with the
     // voltage pulled down by the radio — 24% has read as 6% that way. The two can
     // legitimately disagree, so when they do, the title says which is which.
-    b.classList.toggle("low", dev.battery_status === "low");
-    b.classList.toggle("critical", dev.battery_status === "critical");
+    for (const band of ["low", "very_low", "critical"]) b.classList.toggle(band, dev.battery_status === band);
     b.hidden = false;
     const longAgo = s == null ? "from event history (approx)"
       : s < 60 ? "as of just now" : `as of ${short} ago`;
     const rested = dev.battery_rested_pct != null && dev.battery_rested_pct > dev.battery_pct + 2
       ? ` · ${dev.battery_rested_pct}% at rest`
       : "";
-    b.title = `Ring battery ${dev.battery_pct}%${dev.battery_v ? " · " + dev.battery_v + " V" : ""}${rested} · ${longAgo}. Not live — sync to refresh.`;
+    const charging = dev.battery_charging ? " · charging" : "";
+    b.title = `Ring battery ${dev.battery_pct}%${dev.battery_v ? " · " + dev.battery_v + " V" : ""}${rested}${charging} · ${longAgo}. Not live — sync to refresh.`;
   } else {
     b.hidden = true;
   }
