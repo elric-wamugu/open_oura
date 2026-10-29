@@ -714,15 +714,21 @@ fn unix_from_offsets(offsets: &[(i64, f64)], ds: i64) -> Option<f64> {
 /// The levels at which the ring needs charging, owned here so every client agrees.
 ///
 /// The web dashboard colours its battery pill on these and the Android app raises its
-/// notifications on them. They were briefly duplicated — web warning below 20%, Android at
-/// 10% and 3% — which is exactly the drift `CLAUDE.md` exists to prevent.
-pub const BATTERY_LOW_PCT: i64 = 10;
-pub const BATTERY_CRITICAL_PCT: i64 = 3;
+/// notifications on them: a first warning at 20% (amber), a second at 10% and a critical
+/// one at 5% (both red). They were once duplicated — web warning below 20%, Android at 10%
+/// and 3% — which is exactly the drift `CLAUDE.md` exists to prevent.
+///
+/// 20% is deliberately early. Checks only happen when a sync reads the ring, syncs are
+/// hours apart and pause overnight, and below ~3.6 V the gauge falls almost vertically:
+/// a first warning at 10% could be crossed and run out between two checks.
+pub const BATTERY_LOW_PCT: i64 = 20;
+pub const BATTERY_VERY_LOW_PCT: i64 = 10;
+pub const BATTERY_CRITICAL_PCT: i64 = 5;
 
 /// How far back to look for a level the ring reported while it was *not* transmitting.
 const BATTERY_RESTED_WINDOW_S: f64 = 30.0 * 60.0;
 
-/// `"ok"` / `"low"` / `"critical"`, or `None` when the level is unknown.
+/// `"ok"` / `"low"` / `"very_low"` / `"critical"`, or `None` when the level is unknown.
 ///
 /// Unknown is deliberately not `"ok"`: a client with no reading should say nothing rather
 /// than imply the ring is fine.
@@ -730,11 +736,119 @@ pub fn battery_band(pct: Option<i64>) -> Option<&'static str> {
     let pct = pct?;
     Some(if pct <= BATTERY_CRITICAL_PCT {
         "critical"
+    } else if pct <= BATTERY_VERY_LOW_PCT {
+        "very_low"
     } else if pct <= BATTERY_LOW_PCT {
         "low"
     } else {
         "ok"
     })
+}
+
+/// A rise of this many points over the level the ring was resting at confirms the charger
+/// went on. Shared by the discharge-run splitter and the charge detector, so the two can't
+/// disagree about what a charge is.
+const RISE_CONFIRMS_CHARGE: i64 = 5;
+/// A fall of this many points below a rise's peak ends the rise; one point is jitter.
+const DROP_ENDS_RISE: i64 = 2;
+/// Two rises this close together are one charge with a dip in it (a sync on the charger).
+const CHARGE_MERGE_GAP_S: f64 = 30.0 * 60.0;
+/// On the charger the level moves about a point a minute, so a rise whose newest point is
+/// older than this has stopped: the ring came off the charger, or the summary is old.
+const CHARGING_STALE_S: f64 = 20.0 * 60.0;
+pub const BATTERY_FULL_PCT: i64 = 100;
+
+/// What the battery log says about charging.
+#[derive(Debug, Default, PartialEq)]
+pub struct ChargeState {
+    /// The ring is on its charger and still filling, as of its newest log point.
+    pub charging: bool,
+    /// When the newest charge began (the low point before the rise), if there was one.
+    pub started_unix: Option<f64>,
+    /// When the newest charge that reached 100% first got there. Stable for as long as the
+    /// ring sits full, so a client can announce it once and recognise it afterwards.
+    pub full_unix: Option<f64>,
+}
+
+/// Charging and full, read from the ring's own battery log.
+///
+/// The log records only *changes*, which is enough: on the charger the level climbs about
+/// a point a minute. The difficulty is everything else that looks like a climb. A sync
+/// pulls the voltage — and so the voltage-derived percentage — down by up to ~18 points,
+/// and it recovers once the radio stops, which as a raw curve is indistinguishable from
+/// plugging in. So a rise only counts as a charge once it clears the level the ring was
+/// *resting* at before it ([`BATTERY_RESTED_WINDOW_S`] before the low point) by
+/// [`RISE_CONFIRMS_CHARGE`]: a recovering dip only ever climbs back to where it was.
+///
+/// `points` must be `(unix, pct, mv)`, sorted by time.
+pub fn battery_charge_state(points: &[(f64, i64, i64)], now: f64) -> ChargeState {
+    if points.len() < 2 {
+        return ChargeState::default();
+    }
+    let pct = |i: usize| points[i].1;
+    let t = |i: usize| points[i].0;
+
+    // 1. Every rise as (low point, peak), with a little hysteresis so jitter doesn't end one.
+    let mut rises: Vec<(usize, usize)> = Vec::new();
+    let mut trough = 0usize;
+    let mut peak: Option<usize> = None;
+    for i in 1..points.len() {
+        match peak {
+            None if pct(i) <= pct(trough) => trough = i,
+            None => peak = Some(i),
+            Some(p) if pct(i) >= pct(p) => peak = Some(i),
+            Some(p) if pct(p) - pct(i) >= DROP_ENDS_RISE => {
+                rises.push((trough, p));
+                trough = i;
+                peak = None;
+            }
+            Some(_) => {}
+        }
+    }
+    let open = peak.is_some();
+    if let Some(p) = peak {
+        rises.push((trough, p));
+    }
+
+    // 2. A short dip on the charger splits one charge into two rises; join them back up.
+    let mut charges: Vec<(usize, usize)> = Vec::new();
+    for (lo, hi) in rises {
+        match charges.last_mut() {
+            Some(prev) if t(lo) - t(prev.1) <= CHARGE_MERGE_GAP_S => prev.1 = hi,
+            _ => charges.push((lo, hi)),
+        }
+    }
+
+    // 3. Keep only real charges: clear of where the ring was resting before the low point.
+    let rested_before = |lo: usize| {
+        points[..lo]
+            .iter()
+            .rev()
+            .take_while(|p| p.0 >= t(lo) - BATTERY_RESTED_WINDOW_S)
+            .map(|p| p.1)
+            .max()
+            .unwrap_or(pct(lo))
+            .max(pct(lo))
+    };
+    let real: Vec<(usize, usize)> = charges
+        .iter()
+        .copied()
+        .filter(|&(lo, hi)| pct(hi) - rested_before(lo) >= RISE_CONFIRMS_CHARGE)
+        .collect();
+
+    let full_at = |(lo, hi): (usize, usize)| (lo..=hi).find(|&i| pct(i) >= BATTERY_FULL_PCT).map(t);
+    let last = points.len() - 1;
+    let newest = real.last().copied();
+    let still_rising = open
+        && newest.is_some_and(|(_, hi)| charges.last().is_some_and(|c| c.1 == hi))
+        && newest.is_some_and(|(_, hi)| pct(last) >= pct(hi));
+    ChargeState {
+        charging: still_rising
+            && newest.is_some_and(|(_, hi)| pct(hi) < BATTERY_FULL_PCT)
+            && now - t(last) <= CHARGING_STALE_S,
+        started_unix: newest.map(|(lo, _)| t(lo).round()),
+        full_unix: real.iter().rev().find_map(|&c| full_at(c)).map(f64::round),
+    }
 }
 
 /// The highest level the ring logged in the last [`BATTERY_RESTED_WINDOW_S`], which stands
@@ -769,16 +883,14 @@ pub fn battery_rested_pct(series: &[Value], now: f64) -> Option<i64> {
 /// recovers at rest, so a percentage read during a long sync understates the charge left.
 /// Showing the volts alongside lets that be seen rather than guessed at.
 ///
-/// `points` must be `(unix, pct, mv)`. Returns `(series, cycles)`.
-fn battery_history(mut points: Vec<(f64, i64, i64)>) -> (Vec<Value>, Vec<Value>) {
-    points.sort_by(|a, b| a.0.total_cmp(&b.0));
-    points.dedup_by_key(|p| p.0 as i64);
+/// `points` must be `(unix, pct, mv)`, sorted by time ([`battery_points`]). Returns
+/// `(series, cycles)`.
+fn battery_history(points: &[(f64, i64, i64)]) -> (Vec<Value>, Vec<Value>) {
     if points.len() < 2 {
         return (Vec::new(), Vec::new());
     }
-    // Zigzag with hysteresis: a rise of this many points confirms the charger went on and
-    // closes the discharge run, so ordinary jitter doesn't chop a run into fragments.
-    const RISE_CONFIRMS_CHARGE: i64 = 5;
+    // Zigzag with hysteresis: a rise of RISE_CONFIRMS_CHARGE points confirms the charger
+    // went on and closes the discharge run, so ordinary jitter doesn't chop a run up.
     // Ignore runs that never dropped far enough to say anything about battery life.
     const MIN_RUN_DROP: i64 = 15;
 
@@ -822,15 +934,32 @@ fn battery_history(mut points: Vec<(f64, i64, i64)>) -> (Vec<Value>, Vec<Value>)
     }
     close(peak, trough, &mut cycles);
 
-    // Cap the charted curve so the payload can't grow without bound as history piles up.
-    const MAX_POINTS: usize = 600;
-    let step = points.len().div_ceil(MAX_POINTS).max(1);
-    let series: Vec<Value> = points
+    // Cap the charted curve so the payload can't grow without bound as history piles up —
+    // but only thin what is more than a day old. Everything that reads the *current* state
+    // off this series (the rested level, the newest point) looks at the last half hour, and
+    // an even stride over the whole history used to drop exactly those points: the newest
+    // reading could vanish, and the rested window could hold nothing or only a sagged one.
+    const MAX_OLD_POINTS: usize = 600;
+    const TAIL_KEEP_S: f64 = 24.0 * 3600.0;
+    let newest = points[points.len() - 1].0;
+    let split = points.partition_point(|p| p.0 < newest - TAIL_KEEP_S);
+    let (old, tail) = points.split_at(split);
+    let step = old.len().div_ceil(MAX_OLD_POINTS).max(1);
+    let series: Vec<Value> = old
         .iter()
         .step_by(step)
+        .chain(tail)
         .map(|(t, p, mv)| json!({ "t": t.round(), "pct": p, "mv": mv }))
         .collect();
     (series, cycles)
+}
+
+/// The ring's battery log points, sorted by time with duplicate timestamps dropped — the
+/// one ordering both [`battery_history`] and [`battery_charge_state`] read.
+fn battery_points(mut points: Vec<(f64, i64, i64)>) -> Vec<(f64, i64, i64)> {
+    points.sort_by(|a, b| a.0.total_cmp(&b.0));
+    points.dedup_by_key(|p| p.0 as i64);
+    points
 }
 
 /// Effort sessions detected from the ring's own exercise-HR trace.
@@ -1668,7 +1797,7 @@ pub fn build_summary(db: &Path, tz: i64, runner: &dyn ModelRunner) -> Result<Val
     let synced_unix = last_sync.map(|t| t as f64);
 
     // The ring's own battery log, on the wall clock.
-    let (battery_series, battery_cycles) = {
+    let battery_pts = {
         let mut pts: Vec<(f64, i64, i64)> = Vec::new();
         for (event_idx, (ds, tag, jstr, _)) in events.iter().enumerate() {
             if name_of(*tag) != "debug_data" || !jstr.contains("battery_level_changed") {
@@ -1685,8 +1814,9 @@ pub fn build_summary(db: &Path, tz: i64, runner: &dyn ModelRunner) -> Result<Val
                 ));
             }
         }
-        battery_history(pts)
+        battery_points(pts)
     };
+    let (battery_series, battery_cycles) = battery_history(&battery_pts);
 
     // ONE battery figure, so the top bar and the battery panel cannot disagree.
     //
@@ -1728,6 +1858,7 @@ pub fn build_summary(db: &Path, tz: i64, runner: &dyn ModelRunner) -> Result<Val
         .map(|d| d.as_secs() as f64)
         .unwrap_or(anchor_unix as f64);
     let battery_rested = battery_rested_pct(&battery_series, now);
+    let charge = battery_charge_state(&battery_pts, now);
     let device = json!({
         "serial": dev.as_ref().map(|d| d.0.clone()),
         "hardware_id": dev.as_ref().map(|d| d.1.clone()).filter(|s| !s.is_empty()),
@@ -1750,6 +1881,12 @@ pub fn build_summary(db: &Path, tz: i64, runner: &dyn ModelRunner) -> Result<Val
         // `battery_rested_pct`. Clients render `battery_status`; none of them re-derive it.
         "battery_rested_pct": battery_rested,
         "battery_status": battery_band(battery_rested.or(battery_pct)),
+        // Read off the ring's log, not the gauge: see `battery_charge_state`. A client
+        // announces `battery_full_unix` once and recognises it afterwards, and uses a newer
+        // `battery_charge_started_unix` to know a charge it never saw happened.
+        "battery_charging": charge.charging,
+        "battery_charge_started_unix": charge.started_unix,
+        "battery_full_unix": charge.full_unix,
         "measuring": measuring,
         "streams": streams,
         "event_counts": event_counts,
@@ -1786,17 +1923,21 @@ pub fn build_summary(db: &Path, tz: i64, runner: &dyn ModelRunner) -> Result<Val
 #[cfg(test)]
 mod tests {
     use super::{
-        battery_band, battery_rested_pct, fit_ds_offsets, unix_from_offsets, BATTERY_CRITICAL_PCT,
-        BATTERY_LOW_PCT,
+        battery_band, battery_charge_state, battery_history, battery_points, battery_rested_pct,
+        fit_ds_offsets, unix_from_offsets, ChargeState, BATTERY_CRITICAL_PCT, BATTERY_LOW_PCT,
+        BATTERY_VERY_LOW_PCT,
     };
     use serde_json::json;
 
     #[test]
     fn battery_bands_sit_where_the_constants_say() {
+        assert_eq!((BATTERY_LOW_PCT, BATTERY_VERY_LOW_PCT, BATTERY_CRITICAL_PCT), (20, 10, 5));
         assert_eq!(battery_band(Some(100)), Some("ok"));
         assert_eq!(battery_band(Some(BATTERY_LOW_PCT + 1)), Some("ok"));
         assert_eq!(battery_band(Some(BATTERY_LOW_PCT)), Some("low"));
-        assert_eq!(battery_band(Some(BATTERY_CRITICAL_PCT + 1)), Some("low"));
+        assert_eq!(battery_band(Some(BATTERY_VERY_LOW_PCT + 1)), Some("low"));
+        assert_eq!(battery_band(Some(BATTERY_VERY_LOW_PCT)), Some("very_low"));
+        assert_eq!(battery_band(Some(BATTERY_CRITICAL_PCT + 1)), Some("very_low"));
         assert_eq!(battery_band(Some(BATTERY_CRITICAL_PCT)), Some("critical"));
         assert_eq!(battery_band(Some(0)), Some("critical"));
     }
@@ -1829,7 +1970,7 @@ mod tests {
             json!({ "t": now - 60.0, "pct": 2, "mv": 3400 }),
         ];
         assert_eq!(battery_rested_pct(&series, now), Some(4));
-        assert_eq!(battery_band(battery_rested_pct(&series, now)), Some("low"));
+        assert_eq!(battery_band(battery_rested_pct(&series, now)), Some("critical"));
     }
 
     #[test]
@@ -1848,6 +1989,146 @@ mod tests {
         let stale = vec![json!({ "t": now - 99_999.0, "pct": 50, "mv": 3900 })];
         assert_eq!(battery_rested_pct(&stale, now), None);
         assert_eq!(battery_rested_pct(&[], now), None);
+    }
+
+    // ── charging and full ───────────────────────────────────────────────────────────────
+
+    const NOW: f64 = 1_000_000.0;
+
+    /// Log points as `(minutes before NOW, pct)`, oldest first.
+    fn log(pts: &[(f64, i64)]) -> Vec<(f64, i64, i64)> {
+        battery_points(pts.iter().map(|&(ago, p)| (NOW - ago * 60.0, p, 3700)).collect())
+    }
+
+    /// A charge climbing a point a minute from `from` to `to`, ending `end_ago` minutes ago.
+    fn charge(from: i64, to: i64, end_ago: f64) -> Vec<(f64, i64)> {
+        let n = (to - from) as f64;
+        (from..=to).map(|p| (end_ago + n - (p - from) as f64, p)).collect()
+    }
+
+    fn at(ago: f64) -> Option<f64> {
+        Some((NOW - ago * 60.0).round())
+    }
+
+    #[test]
+    fn a_steady_charge_is_charging_not_full() {
+        let mut pts = vec![(120.0, 31), (90.0, 30)];
+        pts.extend(charge(30, 72, 2.0));
+        let s = battery_charge_state(&log(&pts), NOW);
+        assert!(s.charging);
+        assert_eq!(s.started_unix, at(44.0));
+        assert_eq!(s.full_unix, None);
+    }
+
+    #[test]
+    fn charging_from_a_critical_dip_is_detected() {
+        // Resting at 8, a sync drags it to 3, then it goes on the charger.
+        let pts = [(40.0, 8), (20.0, 8), (12.0, 3), (10.0, 5), (8.0, 8), (5.0, 11), (1.0, 13)];
+        let s = battery_charge_state(&log(&pts), NOW);
+        assert!(s.charging);
+        assert_eq!(s.started_unix, at(12.0));
+    }
+
+    #[test]
+    fn a_dip_recovering_is_not_a_charge() {
+        // Measured on this ring: 24% at rest, 6% mid-sync, back to 24% once the radio stops.
+        let pts = [(30.0, 24), (25.0, 24), (4.0, 12), (3.0, 6), (2.0, 15), (1.0, 24)];
+        assert_eq!(battery_charge_state(&log(&pts), NOW), ChargeState::default());
+    }
+
+    #[test]
+    fn reaching_100_is_full_and_not_charging() {
+        let mut pts = vec![(200.0, 41), (150.0, 40)];
+        pts.extend(charge(40, 100, 10.0));
+        let s = battery_charge_state(&log(&pts), NOW);
+        assert!(!s.charging);
+        assert_eq!(s.full_unix, at(10.0));
+        assert_eq!(s.started_unix, at(70.0));
+    }
+
+    #[test]
+    fn a_dip_at_full_keeps_the_old_full_time() {
+        let mut pts = charge(40, 100, 60.0);
+        pts.extend([(40.0, 98), (30.0, 100)]);
+        assert_eq!(battery_charge_state(&log(&pts), NOW).full_unix, at(60.0));
+    }
+
+    #[test]
+    fn a_ring_sitting_full_reports_the_same_full_time_hours_later() {
+        let pts = log(&charge(40, 100, 60.0));
+        let then = battery_charge_state(&pts, NOW);
+        let later = battery_charge_state(&pts, NOW + 5.0 * 3600.0);
+        assert_eq!(then.full_unix, later.full_unix);
+        assert!(!later.charging);
+    }
+
+    #[test]
+    fn a_one_point_dip_on_the_charger_does_not_split_the_charge() {
+        let mut pts = charge(20, 60, 50.0);
+        pts.push((49.0, 59));
+        pts.extend(charge(61, 100, 5.0));
+        let s = battery_charge_state(&log(&pts), NOW);
+        assert_eq!(s.full_unix, at(5.0));
+        assert_eq!(s.started_unix, at(90.0));
+    }
+
+    #[test]
+    fn a_sync_dip_on_the_charger_does_not_lose_the_full() {
+        // A three-point dip ends a rise; the next one only climbs 5 over the old peak, but
+        // it is the same charge and its 100% must still count.
+        let mut pts = charge(30, 95, 20.0);
+        pts.extend([(19.0, 92), (15.0, 95)]);
+        pts.extend(charge(96, 100, 2.0));
+        assert_eq!(battery_charge_state(&log(&pts), NOW).full_unix, at(2.0));
+    }
+
+    #[test]
+    fn a_stalled_rise_is_not_charging() {
+        let s = battery_charge_state(&log(&charge(30, 70, 45.0)), NOW);
+        assert!(!s.charging);
+        assert!(s.started_unix.is_some());
+    }
+
+    #[test]
+    fn coming_off_the_charger_is_not_charging() {
+        let mut pts = charge(30, 70, 15.0);
+        pts.push((2.0, 69));
+        assert!(!battery_charge_state(&log(&pts), NOW).charging);
+    }
+
+    #[test]
+    fn a_top_up_from_97_is_not_news() {
+        let mut pts = charge(40, 100, 600.0);
+        pts.extend([(300.0, 97), (60.0, 97)]);
+        pts.extend(charge(97, 100, 30.0));
+        assert_eq!(battery_charge_state(&log(&pts), NOW).full_unix, at(600.0));
+    }
+
+    #[test]
+    fn jitter_is_not_a_charge() {
+        let pts = [(50.0, 50), (40.0, 51), (30.0, 50), (20.0, 51), (10.0, 50), (1.0, 51)];
+        assert_eq!(battery_charge_state(&log(&pts), NOW), ChargeState::default());
+    }
+
+    #[test]
+    fn empty_or_single_point_says_nothing() {
+        assert_eq!(battery_charge_state(&[], NOW), ChargeState::default());
+        assert_eq!(battery_charge_state(&log(&[(5.0, 40)]), NOW), ChargeState::default());
+    }
+
+    #[test]
+    fn the_tail_is_never_thinned() {
+        // Three weeks at a point a minute: far over the cap, so the old part is thinned —
+        // but the last day, which the rested level and the newest point read, ships whole.
+        let pts: Vec<(f64, i64)> = (0..30_000).map(|m| (m as f64, 50 + (m % 7) as i64)).rev().collect();
+        let (series, _) = battery_history(&log(&pts));
+        let last_day = series
+            .iter()
+            .filter(|p| p["t"].as_f64().unwrap() >= NOW - 24.0 * 3600.0)
+            .count();
+        assert_eq!(last_day, 24 * 60 + 1);
+        assert_eq!(series.last().unwrap()["t"].as_f64(), Some(NOW));
+        assert!(series.len() < 24 * 60 + 700);
     }
 
 
