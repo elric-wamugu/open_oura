@@ -768,7 +768,9 @@ private fun SyncFab(phase: SyncPhase, expanded: Boolean, onClick: () -> Unit) {
             if (running != null) {
                 LoadingIndicator(Modifier.size(24.dp), color = LocalContentColor.current)
             } else {
-                Icon(painterResource(R.drawable.ic_sym_sync), contentDescription = null)
+                // Collapsed, the button is this icon alone, so the icon has to carry the
+                // name. Expanded, the text beside it already says it.
+                Icon(painterResource(R.drawable.ic_sym_sync), contentDescription = if (expanded) null else "Sync")
             }
         },
         onClick = { if (running == null) onClick() },

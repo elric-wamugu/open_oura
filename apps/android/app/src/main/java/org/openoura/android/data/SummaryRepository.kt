@@ -125,7 +125,9 @@ class SummaryRepository private constructor(private val ctx: Context) {
      * Returns once the freshest available state has been emitted.
      */
     suspend fun load(refresh: Boolean) {
-        val cached = readCache()
+        // Off the main thread: this is the read and parse of a megabyte of JSON, and at
+        // cold start it used to sit between the process starting and its first frame.
+        val cached = withContext(Dispatchers.Default) { readCache() }
         if (cached != null) _state.value = SummaryState.Ready(cached, stale = true)
         else if (!refresh) _state.value = SummaryState.Empty("No summary computed yet.")
 
@@ -172,7 +174,10 @@ class SummaryRepository private constructor(private val ctx: Context) {
                 val parseMs = (System.nanoTime() - started) / 1_000_000 - coreMs
                 Log.i(TAG, describeRecompute(raw.length / 1024, coreMs, parseMs, parsed.timingsMs))
                 // Only cache what parsed cleanly, so a bad write can't poison cold start.
-                cacheFile.writeText(raw)
+                synchronized(cacheLock) {
+                    cacheFile.writeText(raw)
+                    parsedCache = cacheFile.lastModified() to parsed
+                }
                 parsed
             }
         }
@@ -208,16 +213,33 @@ class SummaryRepository private constructor(private val ctx: Context) {
      */
     fun cached(): Summary? = readCache()
 
-    private fun readCache(): Summary? = runCatching {
+    private val cacheLock = Any()
+
+    /** The cache file as last parsed, with the file's modification time it was parsed at. */
+    private var parsedCache: Pair<Long, Summary>? = null
+
+    /**
+     * The cache file, parsed at most once per version of it.
+     *
+     * Opening the app used to parse it twice — once to draw, once in the app-open sync
+     * worker to work out quiet hours — and every later [cached] call parsed it again. The
+     * lock makes two callers arriving together share one parse rather than race to it.
+     */
+    private fun readCache(): Summary? = synchronized(cacheLock) {
         if (!cacheFile.exists()) return null
-        val started = System.nanoTime()
-        val raw = cacheFile.readText()
-        val parsed = json.decodeFromString<Summary>(raw)
-        // Timed, with the thread, because cold start does this before its first frame.
-        val ms = (System.nanoTime() - started) / 1_000_000
-        Log.i(TAG, "summary cache: ${raw.length / 1024} KB read and parsed in $ms ms on ${Thread.currentThread().name}")
-        parsed
-    }.onFailure { Log.w(TAG, "discarding unreadable summary cache", it) }.getOrNull()
+        val stamp = cacheFile.lastModified()
+        parsedCache?.takeIf { it.first == stamp }?.let { return it.second }
+        runCatching {
+            val started = System.nanoTime()
+            val raw = cacheFile.readText()
+            val parsed = json.decodeFromString<Summary>(raw)
+            // Timed, with the thread, so a parse back on the main thread shows in the log.
+            val ms = (System.nanoTime() - started) / 1_000_000
+            Log.i(TAG, "summary cache: ${raw.length / 1024} KB read and parsed in $ms ms on ${Thread.currentThread().name}")
+            parsedCache = stamp to parsed
+            parsed
+        }.onFailure { Log.w(TAG, "discarding unreadable summary cache", it) }.getOrNull()
+    }
 
     /**
      * Copy a desktop-synced database into app-private storage, which is where the Rust
