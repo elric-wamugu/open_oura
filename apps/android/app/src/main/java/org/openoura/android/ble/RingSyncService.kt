@@ -12,6 +12,8 @@ import android.os.IBinder
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
@@ -27,6 +29,8 @@ import org.openoura.android.sync.AutoSync
 import org.openoura.android.sync.SyncHealth
 import org.openoura.android.health.HealthExport
 import org.openoura.android.data.SummaryRepository
+import org.openoura.android.widget.WidgetSync
+import org.openoura.android.widget.WidgetUpdates
 
 private const val TAG = "OpenOuraBle"
 private const val CHANNEL_ID = "ring_sync"
@@ -112,6 +116,10 @@ class RingSyncService : Service() {
                 }
             } finally {
                 running = false
+                // If the widget's refresh button started this, its icon is still turning.
+                withContext(NonCancellable) {
+                    if (WidgetSync.finish(applicationContext)) WidgetUpdates.refreshAll(applicationContext)
+                }
                 stopSelf()
             }
         }
@@ -168,6 +176,11 @@ class RingSyncService : Service() {
         fun start(ctx: Context) {
             _phase.value = SyncPhase.Running("starting")
             ctx.startForegroundService(Intent(ctx, RingSyncService::class.java))
+        }
+
+        /** [start] set the phase to running before Android refused the service: undo that. */
+        fun acknowledgeRefusedStart() {
+            if (!running) _phase.value = SyncPhase.Idle
         }
 
         /**

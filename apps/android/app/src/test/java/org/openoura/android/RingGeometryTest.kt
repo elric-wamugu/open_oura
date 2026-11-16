@@ -10,6 +10,8 @@ import org.openoura.android.widget.RingLayout
 import org.openoura.android.widget.ringLayout
 import org.openoura.android.widget.RingStage
 import org.openoura.android.widget.WidgetSync
+import org.openoura.android.widget.WidgetSyncPath
+import org.openoura.android.widget.widgetSyncPath
 import org.openoura.android.widget.distanceLabel
 import org.openoura.android.widget.ringCaption
 import org.openoura.android.widget.ringHours
@@ -88,5 +90,14 @@ class RingGeometryTest {
         // Never tapped, or the clock went backwards: not syncing.
         assertTrue(!WidgetSync.isShowing(requestedUnix = 0, nowUnix = 1_000))
         assertTrue(!WidgetSync.isShowing(requestedUnix = 2_000, nowUnix = 1_000))
+    }
+
+    @Test
+    fun `a tap runs in the foreground service when it can, the worker when it cannot`() {
+        assertEquals(WidgetSyncPath.FOREGROUND, widgetSyncPath(serviceRunning = false, bluetoothGranted = true, hasKey = true))
+        assertEquals(WidgetSyncPath.BACKGROUND, widgetSyncPath(serviceRunning = false, bluetoothGranted = false, hasKey = true))
+        assertEquals(WidgetSyncPath.BACKGROUND, widgetSyncPath(serviceRunning = false, bluetoothGranted = true, hasKey = false))
+        // A sync is already going: join it rather than start a second.
+        assertEquals(WidgetSyncPath.ALREADY_RUNNING, widgetSyncPath(serviceRunning = true, bluetoothGranted = true, hasKey = true))
     }
 }
