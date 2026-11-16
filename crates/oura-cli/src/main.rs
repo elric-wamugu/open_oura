@@ -108,6 +108,9 @@ enum Command {
     Events,
     /// Re-run decoders over already-stored raw event bodies (offline).
     Redecode,
+    /// Rewrite the database (`--db`) without its unused space. Nothing in it changes.
+    /// Needs about twice its size free while it runs.
+    Compact,
     /// Write an encrypted backup of the database (`--db`) to a file. The same format the
     /// Android app writes, so either can restore the other's. The passphrase is asked for
     /// on the terminal, or read from `OURA_BACKUP_PASSPHRASE`.
@@ -416,6 +419,16 @@ async fn main() -> Result<()> {
             let store = Store::open(&cli.db)?;
             let (decoded, total) = store.redecode()?;
             println!("Re-decoded {decoded}/{total} stored events.");
+            Ok(())
+        }
+        Command::Compact => {
+            let (before, after) = Store::open(&cli.db)?.compact()?;
+            println!(
+                "{}: {:.0} MB -> {:.0} MB",
+                cli.db.display(),
+                before as f64 / 1e6,
+                after as f64 / 1e6
+            );
             Ok(())
         }
         Command::Backup { out } => cmd_backup(&cli, out),

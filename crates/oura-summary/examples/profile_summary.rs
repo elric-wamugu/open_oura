@@ -1,5 +1,9 @@
 //! Where build_summary's time actually goes.
-//! `cargo run --release -p oura-summary --example profile_summary -- oura.db [tz_hours]`
+//! `cargo run --release -p oura-summary --example profile_summary -- oura.db [tz_hours] [out.json]`
+//!
+//! With `out.json`, the summary is also written there without `timings_ms`,
+//! `generated_at` and `device.fresh_hours`, which are the only parts that differ between two runs over the same
+//! database. Diff that file before and after a change that is meant to be a pure speedup.
 use std::time::Instant;
 
 fn main() -> anyhow::Result<()> {
@@ -30,6 +34,19 @@ fn main() -> anyhow::Result<()> {
     );
     for (stage, ms) in &stages {
         println!("  {stage:<14} {ms:>9.1} ms");
+    }
+    if let Some(out) = std::env::args().nth(3) {
+        let mut stable = summary.clone();
+        if let Some(o) = stable.as_object_mut() {
+            o.remove("timings_ms");
+            o.remove("generated_at");
+        }
+        // Hours since the last sync, measured against the clock on the wall.
+        if let Some(d) = stable.get_mut("device").and_then(|d| d.as_object_mut()) {
+            d.remove("fresh_hours");
+        }
+        std::fs::write(&out, serde_json::to_string_pretty(&stable)?)?;
+        println!("  wrote {out}");
     }
     let t = Instant::now();
     let json = summary.to_string();

@@ -82,6 +82,9 @@ oura --key-file key.hex rdata state
 oura --db oura.db events
 oura --db oura.db redecode
 
+# Offline: rewrite the database without its unused space
+oura --db oura.db compact
+
 # Offline: encrypted backup, and merging one back in (same file the Android app
 # writes; passphrase is prompted for — see docs/backup.md)
 oura --db oura.db backup open_oura.ourabak
