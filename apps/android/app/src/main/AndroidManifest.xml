@@ -99,40 +99,30 @@
             android:exported="false"
             android:foregroundServiceType="connectedDevice" />
 
-        <receiver
-            android:name=".widget.VitalsWidgetReceiver"
-            android:label="@string/widget_vitals_label"
-            android:exported="true">
-            <intent-filter>
-                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
-            </intent-filter>
-            <meta-data
-                android:name="android.appwidget.provider"
-                android:resource="@xml/widget_vitals" />
-        </receiver>
-
-        <receiver
-            android:name=".widget.SleepWidgetReceiver"
-            android:label="@string/widget_sleep_label"
-            android:exported="true">
-            <intent-filter>
-                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
-            </intent-filter>
-            <meta-data
-                android:name="android.appwidget.provider"
-                android:resource="@xml/widget_sleep" />
-        </receiver>
-
+        <!-- ActivityWidgetReceiver keeps its name from the "Today" widget it replaced, so one
+             already on a home screen becomes the stage ring instead of disappearing. -->
         <receiver
             android:name=".widget.ActivityWidgetReceiver"
-            android:label="@string/widget_activity_label"
+            android:label="@string/widget_ring_label"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
             </intent-filter>
             <meta-data
                 android:name="android.appwidget.provider"
-                android:resource="@xml/widget_activity" />
+                android:resource="@xml/widget_ring" />
+        </receiver>
+
+        <receiver
+            android:name=".widget.BatteryWidgetReceiver"
+            android:label="@string/widget_battery_label"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/widget_battery" />
         </receiver>
     </application>
 

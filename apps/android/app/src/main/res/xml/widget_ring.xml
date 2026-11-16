@@ -3,13 +3,15 @@
      Updates are driven explicitly instead — after a summary refresh, and from a periodic
      WorkManager job. See WidgetUpdates.kt. -->
 <appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
-    android:minWidth="180dp"
+    android:minWidth="250dp"
     android:minHeight="110dp"
+    android:minResizeWidth="110dp"
+    android:minResizeHeight="40dp"
     android:targetCellWidth="4"
     android:targetCellHeight="2"
     android:updatePeriodMillis="0"
     android:initialLayout="@layout/widget_loading"
-    android:previewLayout="@layout/preview_sleep"
+    android:previewLayout="@layout/preview_ring"
     android:resizeMode="horizontal|vertical"
     android:widgetCategory="home_screen"
-    android:description="@string/widget_sleep_desc" />
+    android:description="@string/widget_ring_desc" />

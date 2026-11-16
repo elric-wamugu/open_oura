@@ -7,9 +7,8 @@ import androidx.core.content.edit
 /**
  * The appearance setting: brand teal, or Material You colours from the wallpaper.
  *
- * Lives in the same "ui" preferences as the panel fold state. The widgets read it too —
- * their composition runs in this app's process — so a change here has to be followed by
- * a widget refresh to reach the home screen.
+ * Lives in the same "ui" preferences as the panel fold state. The home-screen widgets do
+ * not follow it: they are a fixed dark card.
  */
 object ThemePrefs {
     private const val PREFS = "ui"

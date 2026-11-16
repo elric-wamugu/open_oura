@@ -1,9 +1,8 @@
 <resources>
     <string name="app_name">Open Oura</string>
-    <string name="widget_vitals_desc">Resting heart rate and HRV against your baseline</string>
-    <string name="widget_sleep_desc">Last night: hours, efficiency and sleep stages</string>
-    <string name="widget_activity_desc">Today: steps and peak heart rate</string>
-    <string name="widget_vitals_label">Vitals</string>
-    <string name="widget_sleep_label">Last night</string>
-    <string name="widget_activity_label">Today</string>
+    <string name="widget_ring_label">Last night and today</string>
+    <string name="widget_ring_desc">Sleep stages as a ring, with steps, distance and ring charge</string>
+    <string name="widget_battery_label">Ring battery</string>
+    <string name="widget_battery_desc">How much charge the ring has left</string>
+    <string name="widget_syncing">Syncing with the ring</string>
 </resources>

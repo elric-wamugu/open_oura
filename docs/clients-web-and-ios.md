@@ -344,9 +344,9 @@ nightly need" but "a 7.5 h need". `app.js` hardcodes "an".
   It needs `nights[].start_unix`/`end_unix`, which `oura-summary` emits for this but which
   are not Android-specific: any export of a night as a real interval needs them, and the
   clock strings cannot supply one across midnight.
-- **Material You (wallpaper colours)**: a setting on the You tab that repaints the app and
-  its widgets from the system's dynamic scheme. Android-only by nature — the platform
-  provides the palette. Data colours (sleep stages, status levels) deliberately do not
+- **Material You (wallpaper colours)**: a setting on the You tab that repaints the app from
+  the system's dynamic scheme. Android-only by nature — the platform provides the palette.
+  The home-screen widgets no longer follow it: since 2026-11-16 they are a fixed dark card. Data colours (sleep stages, status levels) deliberately do not
   follow it, so a chart reads the same on every phone.
 - **Database size on disk** in Device & data (header and the Events tile): `oura.db` plus
   any un-checkpointed `oura.db-wal`, read by `SummaryRepository.databaseBytes()` and shown

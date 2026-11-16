@@ -32,3 +32,8 @@
 # with its no-argument constructor before every job. With it stripped, each job fails with
 # "Could not create Input Merger" — no crash, but no background sync and no widget refresh.
 -keep class * extends androidx.work.InputMerger { <init>(); }
+
+# Glance runs a widget's tap action by class name: Class.forName(...).newInstance(). The
+# class survives because actionRunCallback<T>() names it, but its constructor is called by
+# nobody R8 can see — the same shape as the two rules above.
+-keep class * implements androidx.glance.appwidget.action.ActionCallback { <init>(); }

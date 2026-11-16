@@ -2,365 +2,452 @@ package org.openoura.android.widget
 
 import android.annotation.SuppressLint
 import android.content.Context
-import android.content.res.Configuration
 import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Paint
+import android.widget.RemoteViews
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.unit.Dp
-import androidx.compose.ui.unit.DpSize
-import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.graphics.createBitmap
+import androidx.glance.ColorFilter
 import androidx.glance.GlanceId
 import androidx.glance.GlanceModifier
-import androidx.glance.GlanceTheme
 import androidx.glance.Image
+import androidx.glance.LocalContext
 import androidx.glance.ImageProvider
 import androidx.glance.LocalSize
 import androidx.glance.action.actionStartActivity
 import androidx.glance.action.clickable
 import androidx.glance.appwidget.GlanceAppWidget
 import androidx.glance.appwidget.GlanceAppWidgetReceiver
+import androidx.glance.appwidget.AndroidRemoteViews
 import androidx.glance.appwidget.SizeMode
+import androidx.glance.appwidget.action.actionRunCallback
 import androidx.glance.appwidget.appWidgetBackground
 import androidx.glance.appwidget.cornerRadius
 import androidx.glance.appwidget.provideContent
 import androidx.glance.background
 import androidx.glance.color.ColorProvider
-import androidx.glance.color.ColorProviders
-import androidx.glance.color.DynamicThemeColorProviders
 import androidx.glance.layout.Alignment
 import androidx.glance.layout.Column
+import androidx.glance.layout.Box
 import androidx.glance.layout.ColumnScope
 import androidx.glance.layout.ContentScale
 import androidx.glance.layout.Row
 import androidx.glance.layout.Spacer
 import androidx.glance.layout.fillMaxSize
 import androidx.glance.layout.fillMaxWidth
+import androidx.glance.layout.size
 import androidx.glance.layout.height
 import androidx.glance.layout.padding
 import androidx.glance.layout.width
-import androidx.glance.material3.ColorProviders
 import androidx.glance.text.FontWeight
 import androidx.glance.text.Text
 import androidx.glance.text.TextStyle
 import androidx.glance.unit.ColorProvider
 import org.openoura.android.MainActivity
+import org.openoura.android.R
+import org.openoura.android.data.WidgetBus
 import org.openoura.android.data.WidgetSnapshot
 import org.openoura.android.data.WidgetStore
 import org.openoura.android.ui.theme.BrandDark
-import org.openoura.android.ui.theme.BrandLight
 import org.openoura.android.ui.theme.DarkData
 import org.openoura.android.ui.theme.DataColors
-import org.openoura.android.ui.theme.LightData
-import org.openoura.android.ui.theme.ThemePrefs
 
 // Home-screen widgets.
 //
 // App Widgets are RemoteViews, not Compose — Glance only gives them a Compose-shaped API.
 // Practical consequences, all of which shaped what is below:
 //   * No Canvas. Anything proportional has to be drawn into a Bitmap in the app process and
-//     passed as an Image. The stage bar needs exactly this: Glance offers only
-//     `defaultWeight()` (equal shares, no numeric weight), so boxes in a Row would render
-//     four equal blocks regardless of the real percentages.
+//     passed as an Image. Both rings here are that: an arc is not something RemoteViews
+//     can draw, and Glance's only weight is `defaultWeight()` (equal shares).
 //   * No arbitrary modifiers. Rounded corners come from Glance's own `cornerRadius`.
 //   * The update must be cheap and must work with the app closed, so these read the small
 //     WidgetSnapshot and never touch the Rust core or the 200 KB summary.
 //
-// Colours: the composition runs in this app's process, but what it produces is drawn by
-// the launcher, which knows nothing of the app's theme. So colours go over as Glance
-// ColorProviders that carry both a day and a night value and are resolved on the home
-// screen — the widget follows the system's dark mode without being redrawn. They come
-// from the same generated brand scheme as the app, or from the wallpaper when the app's
-// "Wallpaper colours" setting is on.
+// Colours: fixed, and dark. The widgets sit on a near-black card with light text whatever
+// the system's mode and whatever the wallpaper — like a watch face, they are read against
+// a home screen, not inside the app, and the tinted container they used to take from the
+// app's scheme (or from the wallpaper) fought with the stage colours drawn on top of it.
+// So nothing here follows the app's "Wallpaper colours" setting. The data colours are the
+// app's own dark-mode set; the two status colours are the same ones the app warns in.
+private val Surface = solid(Color(0xFF1C1F26))
+private val TextStrong = solid(Color(0xFFF1F3F5))
+private val TextMuted = solid(Color(0xFFAAB1BB))
+private val TrackColor = Color(0xFF343944)
+private val Warn = solid(DarkData.warn.color)
+private val Danger = solid(BrandDark.error)
 
-/** The app's scheme, as the launcher can use it. Read per update, so the setting applies. */
-private fun widgetColors(context: Context): ColorProviders =
-    if (ThemePrefs.dynamicColor(context)) DynamicThemeColorProviders
-    else ColorProviders(light = BrandLight, dark = BrandDark)
-
-private fun Context.isNight(): Boolean =
-    (resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES
-
-/** A fixed data colour (stage, status) with its day and night values. */
-private fun data(pick: (DataColors) -> Color): ColorProvider =
-    ColorProvider(day = pick(LightData), night = pick(DarkData))
+/** One colour for day and night alike. */
+private fun solid(c: Color): ColorProvider = ColorProvider(day = c, night = c)
 
 // InlinedApi: the system widget radius only exists from API 31, and that is also the only
 // level at which Glance applies cornerRadius at all — below it the call is a no-op, so the
 // resource is never looked up where it is missing.
 @SuppressLint("InlinedApi")
 @Composable
-private fun Shell(padding: Dp = 12.dp, content: @Composable ColumnScope.() -> Unit) {
-    Column(
+private fun Shell(corner: (@Composable () -> Unit)? = null, content: @Composable ColumnScope.() -> Unit) {
+    Box(
         modifier = GlanceModifier
             .fillMaxSize()
             .appWidgetBackground()
-            .background(GlanceTheme.colors.widgetBackground)
+            .background(Surface)
             // The launcher's own widget radius, so these sit flush with the system's.
             .cornerRadius(android.R.dimen.system_app_widget_background_radius)
-            .padding(padding)
             .clickable(actionStartActivity<MainActivity>()),
-        // Centre the content: a widget occupies a whole cell whatever its content height,
-        // and top-aligned text leaves the lower half visibly empty.
-        verticalAlignment = Alignment.Vertical.CenterVertically,
-        content = content,
+    ) {
+        Column(
+            modifier = GlanceModifier.fillMaxSize().padding(12.dp),
+            // Centre the content: a widget occupies a whole cell whatever its content
+            // height, and top-aligned text leaves the lower half visibly empty.
+            verticalAlignment = Alignment.Vertical.CenterVertically,
+            content = content,
+        )
+        // Drawn over the content, in the top-right corner, with its own tap.
+        corner?.let {
+            Box(GlanceModifier.fillMaxSize().padding(4.dp), contentAlignment = Alignment.TopEnd) { it() }
+        }
+    }
+}
+
+/** A small glyph in a text colour: the app's own icons, tinted for the dark card. */
+@Composable
+private fun Glyph(icon: Int, size: Dp, tint: ColorProvider = TextMuted) {
+    Image(
+        provider = ImageProvider(icon),
+        contentDescription = null,
+        colorFilter = ColorFilter.tint(tint),
+        modifier = GlanceModifier.size(size),
     )
 }
 
 /**
- * The widget's headline figure on a rounded primary-container pill — the same "one
- * number that matters, on a tonal shape" the app's tiles use.
+ * The refresh button: sync with the ring from the home screen. While a sync it started is
+ * under way the same icon turns in the same place, and is not a button — a second tap
+ * would only queue behind the first.
+ *
+ * The turning one is a plain Android layout, not Glance: a widget cannot run a Compose
+ * animation, but RemoteViews can host a ProgressBar, and a ProgressBar turns whatever
+ * drawable it is given. See `widget_sync_spinner.xml`.
  */
 @Composable
-private fun Hero(label: String?, value: String, unit: String, size: TextUnit = 28.sp) {
-    val on = GlanceTheme.colors.onPrimaryContainer
-    Column(
-        GlanceModifier
-            .fillMaxWidth()
-            .background(GlanceTheme.colors.primaryContainer)
-            .cornerRadius(20.dp)
-            .padding(horizontal = 12.dp, vertical = 8.dp),
+private fun RefreshButton(syncing: Boolean) {
+    if (syncing) {
+        AndroidRemoteViews(RemoteViews(LocalContext.current.packageName, R.layout.widget_sync_spinner))
+        return
+    }
+    // 36 dp to press, 18 dp to look at.
+    Box(
+        GlanceModifier.size(36.dp).cornerRadius(18.dp).clickable(actionRunCallback<SyncFromWidget>()),
+        contentAlignment = Alignment.Center,
     ) {
-        label?.let { Text(it, style = TextStyle(color = on, fontSize = 12.sp, fontWeight = FontWeight.Medium)) }
-        Row(verticalAlignment = Alignment.Bottom) {
-            Text(value, style = TextStyle(color = on, fontSize = size, fontWeight = FontWeight.Bold))
-            if (unit.isNotEmpty()) {
-                Spacer(GlanceModifier.width(4.dp))
-                Text(unit, style = TextStyle(color = on, fontSize = 13.sp, fontWeight = FontWeight.Medium))
-            }
-        }
-    }
-}
-
-@Composable
-private fun Label(text: String) = Text(
-    text,
-    style = TextStyle(color = GlanceTheme.colors.onSurfaceVariant, fontSize = 12.sp, fontWeight = FontWeight.Medium),
-)
-
-@Composable
-private fun Value(value: String, unit: String, tint: ColorProvider = GlanceTheme.colors.onSurface, size: TextUnit = 18.sp) {
-    Row(verticalAlignment = Alignment.Bottom) {
-        Text(value, style = TextStyle(color = tint, fontSize = size, fontWeight = FontWeight.Bold))
-        if (unit.isNotEmpty()) {
-            Spacer(GlanceModifier.width(3.dp))
-            Text(unit, style = TextStyle(color = GlanceTheme.colors.onSurfaceVariant, fontSize = 12.sp))
-        }
-    }
-}
-
-@Composable
-private fun Sub(text: String) =
-    Text(text, style = TextStyle(color = GlanceTheme.colors.onSurfaceVariant, fontSize = 12.sp))
-
-/** "12 below baseline 65" — the comparison is the point, not the bare number. */
-private fun vsBaseline(v: Int?, base: Int?, unit: String): String = when {
-    v == null -> "no reading yet"
-    base == null -> "baseline pending"
-    else -> {
-        val d = v - base
-        val dir = if (d == 0) "at" else if (d < 0) "below" else "above"
-        if (d == 0) "at baseline $base$unit" else "${kotlin.math.abs(d)}$unit $dir baseline $base"
+        Image(
+            provider = ImageProvider(R.drawable.ic_sym_sync),
+            contentDescription = "Sync with the ring",
+            colorFilter = ColorFilter.tint(TextMuted),
+            modifier = GlanceModifier.size(18.dp),
+        )
     }
 }
 
 private fun empty(): String = "Open to sync"
 
-// ── vitals (small) ───────────────────────────────────────────────────────────────────
+/** Ring bitmaps are drawn at this size and scaled by the launcher: sharp up to ~130 dp. */
+private const val RING_PX = 400
+private const val RING_STROKE_PX = 44f
 
-class VitalsWidget : GlanceAppWidget() {
+private fun ringCanvas(): Triple<Bitmap, Canvas, android.graphics.RectF> {
+    val bmp = createBitmap(RING_PX, RING_PX)
+    val inset = RING_STROKE_PX / 2
+    return Triple(bmp, Canvas(bmp), android.graphics.RectF(inset, inset, RING_PX - inset, RING_PX - inset))
+}
+
+private fun ringPaint(color: Color, round: Boolean = false) = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+    style = Paint.Style.STROKE
+    strokeWidth = RING_STROKE_PX
+    strokeCap = if (round) Paint.Cap.ROUND else Paint.Cap.BUTT
+    this.color = color.toArgb()
+}
+
+/**
+ * Last night's stages as a ring, or a plain track when the night was not staged.
+ *
+ */
+private fun stageRingBitmap(s: WidgetSnapshot, d: DataColors, track: Color): Bitmap {
+    val (bmp, canvas, box) = ringCanvas()
+    val arcs = stageArcs(s)
+    if (arcs.isEmpty()) {
+        canvas.drawArc(box, 0f, 360f, false, ringPaint(track))
+        return bmp
+    }
+    arcs.forEach { arc ->
+        val color = when (arc.stage) {
+            RingStage.DEEP -> d.deep
+            RingStage.LIGHT -> d.light
+            RingStage.REM -> d.rem
+            RingStage.AWAKE -> d.wake
+        }
+        canvas.drawArc(box, arc.startDeg, arc.sweepDeg, false, ringPaint(color))
+    }
+    return bmp
+}
+
+/** The ring's charge as an arc over a track, clockwise from twelve o'clock. */
+private fun batteryRingBitmap(pct: Int?, fill: Color, track: Color): Bitmap {
+    val (bmp, canvas, box) = ringCanvas()
+    canvas.drawArc(box, 0f, 360f, false, ringPaint(track))
+    val level = pct?.coerceIn(0, 100) ?: 0
+    if (level > 0) canvas.drawArc(box, -90f, 360f * level / 100f, false, ringPaint(fill, round = level < 100))
+    return bmp
+}
+
+/** A ring with something written in its middle. */
+@Composable
+private fun Ring(bitmap: Bitmap, size: Dp, describe: String, centre: @Composable ColumnScope.() -> Unit) {
+    Box(GlanceModifier.size(size), contentAlignment = Alignment.Center) {
+        Image(
+            provider = ImageProvider(bitmap),
+            contentDescription = describe,
+            contentScale = ContentScale.Fit,
+            modifier = GlanceModifier.fillMaxSize(),
+        )
+        Column(horizontalAlignment = Alignment.Horizontal.CenterHorizontally, content = centre)
+    }
+}
+
+// ── last night and today: the stage ring ─────────────────────────────────────────────
+
+/** Wide enough for the three figures to sit beside the ring. */
+private val STATS_BESIDE_MIN_WIDTH = 230.dp
+
+/** Tall enough, when not that wide, for them to sit under it. */
+private val STATS_BELOW_MIN_HEIGHT = 190.dp
+
+/**
+ * What the three figures take up when stacked under the ring, in their compact size: three
+ * 15 sp lines at about 22 dp each, the gaps between them and the gap above. Erring high —
+ * the first cut reserved too little and the launcher clipped the last line.
+ */
+private val STATS_HEIGHT = 86.dp
+
+/** Smaller than this either way and there is no free corner for the refresh button. */
+private val REFRESH_MIN_SIZE = 100.dp
+
+/** How the stage ring widget arranges itself in the space it was given. */
+internal enum class RingLayout { RING_ONLY, STATS_BESIDE, STATS_BELOW }
+
+internal fun ringLayout(width: Dp, height: Dp): RingLayout = when {
+    width >= STATS_BESIDE_MIN_WIDTH && height >= 90.dp -> RingLayout.STATS_BESIDE
+    height >= STATS_BELOW_MIN_HEIGHT && width >= 140.dp -> RingLayout.STATS_BELOW
+    else -> RingLayout.RING_ONLY
+}
+
+class StageRingWidget : GlanceAppWidget() {
+    // Exact, so LocalSize is the space actually granted. With Responsive it is the
+    // *declared* size that was matched, and a ring sized from that came out a fraction of
+    // its cell: the same four cells are very different sizes from one launcher to the next.
+    override val sizeMode = SizeMode.Exact
+
     override suspend fun provideGlance(context: Context, id: GlanceId) {
-        val s = WidgetStore.read(context)
-        val colors = widgetColors(context)
-        provideContent { GlanceTheme(colors) { VitalsContent(s) } }
+        provideContent {
+            // Read inside the composition, keyed on the bus: see WidgetBus for why reading
+            // once out here left a tapped widget showing what it had before the sync.
+            val version by WidgetBus.version.collectAsState()
+            val s = remember(version) { WidgetStore.read(context) }
+            val ring = remember(version) { stageRingBitmap(s, DarkData, TrackColor) }
+            val syncing = remember(version) { WidgetSync.isSyncing(context) }
+            StageRingContent(s, ring, syncing)
+        }
     }
 }
 
 @Composable
-private fun VitalsContent(s: WidgetSnapshot) = Shell {
-    // Falling resting HR is the training-responsive signal, so it leads.
-    Hero("Resting HR", s.rhr?.toString() ?: "—", if (s.rhr != null) "bpm" else "")
-    Spacer(GlanceModifier.height(6.dp))
-    Sub(if (s.rhr == null) empty() else vsBaseline(s.rhr, s.rhrBaseline, ""))
-    Spacer(GlanceModifier.height(8.dp))
-    Label("HRV")
-    Row(verticalAlignment = Alignment.Bottom) {
-        Value(s.hrv?.toString() ?: "—", if (s.hrv != null) "ms" else "")
-        Spacer(GlanceModifier.width(6.dp))
-        if (s.hrv != null) {
+private fun StageRingContent(s: WidgetSnapshot, ring: Bitmap, syncing: Boolean) {
+    val size = LocalSize.current
+    val layout = ringLayout(size.width, size.height)
+    // The ring takes the room there is, within what its bitmap stays sharp at. 24 dp is
+    // the shell's padding, top and bottom.
+    val room = when (layout) {
+        RingLayout.STATS_BELOW -> minOf(size.width - 24.dp, size.height - 24.dp - STATS_HEIGHT)
+        else -> minOf(size.width, size.height) - 24.dp
+    }
+    val ringSize = room.coerceIn(40.dp, 150.dp)
+    // In a cell this small the corner is the ring: a button there would sit on top of it.
+    val refresh = minOf(size.width, size.height) >= REFRESH_MIN_SIZE
+    Shell(corner = if (refresh) ({ RefreshButton(syncing) }) else null) {
+        when (layout) {
+            RingLayout.STATS_BESIDE -> Row(
+                modifier = GlanceModifier.fillMaxSize(),
+                verticalAlignment = Alignment.Vertical.CenterVertically,
+            ) {
+                StageRing(s, ring, ringSize)
+                Spacer(GlanceModifier.width(16.dp))
+                Column(GlanceModifier.defaultWeight()) { Stats(s) }
+                // Keeps the figures' right edge clear of the refresh button above them.
+                Spacer(GlanceModifier.width(20.dp))
+            }
+            RingLayout.STATS_BELOW -> Column(
+                modifier = GlanceModifier.fillMaxSize(),
+                verticalAlignment = Alignment.Vertical.CenterVertically,
+                horizontalAlignment = Alignment.Horizontal.CenterHorizontally,
+            ) {
+                StageRing(s, ring, ringSize)
+                Spacer(GlanceModifier.height(6.dp))
+                Stats(s, compact = true)
+            }
+            RingLayout.RING_ONLY -> Row(
+                modifier = GlanceModifier.fillMaxSize(),
+                verticalAlignment = Alignment.Vertical.CenterVertically,
+                horizontalAlignment = Alignment.Horizontal.CenterHorizontally,
+            ) { StageRing(s, ring, ringSize) }
+        }
+    }
+}
+
+@Composable
+private fun StageRing(s: WidgetSnapshot, ring: Bitmap, ringSize: Dp) {
+    val hours = ringHours(s)
+    val big = if (ringSize >= 100.dp) 26.sp else if (ringSize >= 72.dp) 20.sp else 14.sp
+    Ring(ring, ringSize, "Last night's sleep stages") {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            if (ringSize >= 72.dp) {
+                Glyph(R.drawable.ic_sym_bedtime, if (ringSize >= 100.dp) 18.dp else 14.dp)
+                Spacer(GlanceModifier.width(4.dp))
+            }
+            Text(hours ?: "—", style = TextStyle(color = TextStrong, fontSize = big, fontWeight = FontWeight.Bold))
+            if (hours != null) {
+                Text("h", style = TextStyle(color = TextStrong, fontSize = if (ringSize >= 100.dp) 14.sp else 11.sp))
+            }
+        }
+        // A one-row cell leaves room inside the ring for the number and nothing else.
+        if (ringSize >= 72.dp) {
             Text(
-                vsBaseline(s.hrv, s.hrvBaseline, ""),
-                style = TextStyle(color = GlanceTheme.colors.onSurfaceVariant, fontSize = 11.sp),
+                if (hours == null) empty() else ringCaption(s, roomy = ringSize >= 112.dp),
+                style = TextStyle(color = TextMuted, fontSize = 11.sp),
             )
         }
     }
 }
 
-class VitalsWidgetReceiver : GlanceAppWidgetReceiver() {
-    override val glanceAppWidget: GlanceAppWidget = VitalsWidget()
-}
-
-// ── last night (medium) ──────────────────────────────────────────────────────────────
-
-class SleepWidget : GlanceAppWidget() {
-    override suspend fun provideGlance(context: Context, id: GlanceId) {
-        val s = WidgetStore.read(context)
-        val colors = widgetColors(context)
-        // A bitmap has no day/night variants, so its colours are picked for the mode in
-        // force now. A mode switch leaves it on the old palette until the next refresh.
-        val bar = stageBarBitmap(s, if (context.isNight()) DarkData else LightData)
-        provideContent { GlanceTheme(colors) { SleepContent(s, bar) } }
-    }
-}
-
+/** Steps, Distance, Ring charge — in that order. [compact] is for the stack under the ring. */
 @Composable
-private fun SleepContent(s: WidgetSnapshot, bar: Bitmap?) = Shell {
-    Label("Last night")
-    Spacer(GlanceModifier.height(4.dp))
-    if (s.sleepHours == null) {
-        Value("—", "", size = 28.sp)
-        Sub(empty())
-        return@Shell
-    }
-    Row(verticalAlignment = Alignment.CenterVertically, modifier = GlanceModifier.fillMaxWidth()) {
-        Row(
-            GlanceModifier
-                .background(GlanceTheme.colors.primaryContainer)
-                .cornerRadius(20.dp)
-                .padding(horizontal = 12.dp, vertical = 4.dp),
-            verticalAlignment = Alignment.Bottom,
-        ) {
-            val on = GlanceTheme.colors.onPrimaryContainer
-            Text("%.1f".format(s.sleepHours), style = TextStyle(color = on, fontSize = 28.sp, fontWeight = FontWeight.Bold))
-            Spacer(GlanceModifier.width(3.dp))
-            Text("h", style = TextStyle(color = on, fontSize = 13.sp, fontWeight = FontWeight.Medium))
-        }
-        Spacer(GlanceModifier.width(12.dp))
-        // Coded like the app's vitals pill: in range green, short of it blue, between plain.
-        s.efficiency?.let {
-            val tint = when {
-                it >= 85 -> data { d -> d.normal.color }
-                it >= 75 -> GlanceTheme.colors.onSurface
-                else -> data { d -> d.low.color }
-            }
-            Value("$it%", "efficiency", tint, size = 20.sp)
-        }
-    }
-    Spacer(GlanceModifier.height(10.dp))
-    bar?.let {
-        Image(
-            provider = ImageProvider(it),
-            contentDescription = "Sleep stages",
-            contentScale = ContentScale.FillBounds,
-            modifier = GlanceModifier.fillMaxWidth().height(12.dp).cornerRadius(6.dp),
-        )
-        Spacer(GlanceModifier.height(8.dp))
-    }
-    Sub(
-        listOfNotNull(
-            s.deepPct?.let { "deep $it%" },
-            s.remPct?.let { "REM $it%" },
-            s.spo2?.let { "SpO₂ $it%" },
-        ).joinToString(" · "),
+private fun Stats(s: WidgetSnapshot, compact: Boolean = false) {
+    val gap = if (compact) 2.dp else 6.dp
+    Stat(R.drawable.ic_sym_directions_walk, "Steps", stepsLabel(s.steps), compact = compact)
+    Spacer(GlanceModifier.height(gap))
+    Stat(R.drawable.ic_sym_straighten, "Distance", distanceLabel(s.distanceKm), unit = if (s.distanceKm != null) "km" else "", compact = compact)
+    Spacer(GlanceModifier.height(gap))
+    // The one figure that changes colour: amber and red on the brain's bands, as in the app.
+    Stat(
+        R.drawable.ic_sym_battery_full,
+        "Ring charge",
+        s.batteryPct?.let { "$it%" } ?: "—",
+        compact = compact,
+        tint = if (s.batteryStatus in LOW_BANDS) batteryTint(s.batteryStatus) else TextStrong,
     )
 }
 
-/**
- * Stage proportions as a rendered bitmap.
- *
- * Glance exposes only `defaultWeight()` — equal shares, no numeric weight — so four boxes in
- * a Row come out the same width whatever the percentages are, which would be actively
- * misleading. Proportional segments therefore have to be drawn, and a widget cannot host a
- * Canvas, so it is drawn into a Bitmap here in the app process and handed over as an Image.
- * Thin gaps separate the stages, as in the app's own stage bar.
- */
-private fun stageBarBitmap(s: WidgetSnapshot, d: DataColors, widthPx: Int = 600, heightPx: Int = 24): Bitmap? {
-    val parts = listOf(s.deepPct to d.deep, s.lightPct to d.light, s.remPct to d.rem, s.wakePct to d.wake)
-        .mapNotNull { (p, c) -> p?.takeIf { it > 0 }?.let { it to c } }
-    val total = parts.sumOf { it.first }
-    if (total <= 0) return null
-    val gap = 4f
-    val usable = widthPx - gap * (parts.size - 1)
-    val bmp = createBitmap(widthPx, heightPx)
-    val canvas = Canvas(bmp)
-    val paint = Paint(Paint.ANTI_ALIAS_FLAG)
-    var x = 0f
-    parts.forEach { (pct, color) ->
-        val w = usable * (pct.toFloat() / total)
-        paint.color = color.toArgb()
-        canvas.drawRect(x, 0f, x + w, heightPx.toFloat(), paint)
-        x += w + gap
+private val LOW_BANDS = setOf("low", "very_low", "critical")
+
+/** One figure: its icon and name on the left, the number on the right edge. */
+@Composable
+private fun Stat(
+    icon: Int,
+    label: String,
+    value: String,
+    unit: String = "",
+    compact: Boolean = false,
+    tint: ColorProvider = TextStrong,
+) {
+    Row(GlanceModifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        Glyph(icon, if (compact) 14.dp else 16.dp)
+        Spacer(GlanceModifier.width(6.dp))
+        Text(
+            label,
+            style = TextStyle(color = TextMuted, fontSize = if (compact) 12.sp else 13.sp),
+            modifier = GlanceModifier.defaultWeight(),
+        )
+        Text(value, style = TextStyle(color = tint, fontSize = if (compact) 15.sp else 18.sp, fontWeight = FontWeight.Bold))
+        if (unit.isNotEmpty()) {
+            Spacer(GlanceModifier.width(3.dp))
+            Text(unit, style = TextStyle(color = TextMuted, fontSize = 12.sp))
+        }
     }
-    return bmp
 }
 
-class SleepWidgetReceiver : GlanceAppWidgetReceiver() {
-    override val glanceAppWidget: GlanceAppWidget = SleepWidget()
+/** Coloured on the brain's band like the app's battery chip: amber, then red. */
+private fun batteryTint(status: String?): ColorProvider = when (status) {
+    "low" -> Warn
+    "very_low", "critical" -> Danger
+    else -> TextMuted
 }
-
-// ── today (2x2) ──────────────────────────────────────────────────────────────────────
 
 /**
- * The smallest useful shape: the steps figure alone, for a cell too short for anything else.
- * 40 dp is what Android's conservative `70n - 30` formula promises for a single row.
+ * Named for the "Today" widget it replaced, and kept that way on purpose: the launcher
+ * ties a placed widget to its receiver's class name, so one already on a home screen
+ * becomes the stage ring in place. A new name would have made it vanish on update.
  */
-private val TODAY_COMPACT = DpSize(110.dp, 40.dp)
+class ActivityWidgetReceiver : GlanceAppWidgetReceiver() {
+    override val glanceAppWidget: GlanceAppWidget = StageRingWidget()
+}
 
-/** Label, figure and the two supporting lines. Fits a two-row cell. */
-private val TODAY_FULL = DpSize(110.dp, 110.dp)
+// ── the ring's battery (small) ───────────────────────────────────────────────────────
 
-class ActivityWidget : GlanceAppWidget() {
-    // Keyed off the space actually granted, not the cell count. "One row" is 40 dp by the
-    // formula but much more on a real launcher, so a widget that decided by cells would
-    // render the stripped-down layout with room for everything. Glance picks the largest
-    // declared size that fits, so only a genuinely tiny cell falls back.
-    override val sizeMode = SizeMode.Responsive(setOf(TODAY_COMPACT, TODAY_FULL))
+class BatteryWidget : GlanceAppWidget() {
+    override val sizeMode = SizeMode.Exact
 
     override suspend fun provideGlance(context: Context, id: GlanceId) {
-        val s = WidgetStore.read(context)
-        val colors = widgetColors(context)
-        provideContent { GlanceTheme(colors) { ActivityContent(s) } }
+        provideContent {
+            val version by WidgetBus.version.collectAsState()
+            val s = remember(version) { WidgetStore.read(context) }
+            val ring = remember(version) {
+                val fill = when (s.batteryStatus) {
+                    "low" -> DarkData.warnMark
+                    "very_low", "critical" -> BrandDark.error
+                    else -> BrandDark.primary
+                }
+                batteryRingBitmap(s.batteryPct, fill, TrackColor)
+            }
+            BatteryContent(s, ring)
+        }
     }
 }
 
 @Composable
-private fun ActivityContent(s: WidgetSnapshot) {
-    val compact = LocalSize.current.height < TODAY_FULL.height
-    val steps = s.steps?.let { "%,d".format(it) } ?: "—"
-    Shell(padding = if (compact) 8.dp else 12.dp) {
-        if (compact) {
-            // The figure has to carry the widget on its own: no pill, no label — "steps"
-            // next to the number already says what it is.
-            Value(steps, if (s.steps != null) "steps" else "", GlanceTheme.colors.primary, size = 20.sp)
-            return@Shell
-        }
-        Hero("Today", steps, if (s.steps != null) "steps" else "")
-        if (s.steps == null) {
-            Spacer(GlanceModifier.height(6.dp))
-            Sub(empty())
-        } else {
-            // One fact per line, not a single " · "-joined row. At two cells wide that row
-            // no longer fits and RemoteViews would silently clip it.
-            Spacer(GlanceModifier.height(6.dp))
-            s.peakHr?.let { Sub("peak $it bpm") }
-            s.batteryPct?.let { pct ->
-                // Coloured on the brain's band like the app's battery chip: amber, then red.
-                val tint = when (s.batteryStatus) {
-                    "low" -> data { d -> d.warn.color }
-                    "very_low", "critical" -> GlanceTheme.colors.error
-                    else -> GlanceTheme.colors.onSurfaceVariant
-                }
-                Text("ring $pct%", style = TextStyle(color = tint, fontSize = 12.sp))
+private fun BatteryContent(s: WidgetSnapshot, ring: Bitmap) {
+    val size = LocalSize.current
+    val ringSize = (minOf(size.width, size.height) - 24.dp).coerceIn(40.dp, 150.dp)
+    Shell {
+        Row(
+            GlanceModifier.fillMaxSize(),
+            horizontalAlignment = Alignment.Horizontal.CenterHorizontally,
+            verticalAlignment = Alignment.Vertical.CenterVertically,
+        ) {
+            Ring(ring, ringSize, "Ring battery") {
+                Text(
+                    s.batteryPct?.let { "$it%" } ?: "—",
+                    style = TextStyle(
+                        color = TextStrong,
+                        fontSize = if (ringSize >= 100.dp) 22.sp else 16.sp,
+                        fontWeight = FontWeight.Bold,
+                    ),
+                )
+                Text(
+                    if (s.batteryPct != null) "ring" else empty(),
+                    style = TextStyle(color = batteryTint(s.batteryStatus), fontSize = 11.sp),
+                )
             }
         }
     }
 }
 
-class ActivityWidgetReceiver : GlanceAppWidgetReceiver() {
-    override val glanceAppWidget: GlanceAppWidget = ActivityWidget()
+class BatteryWidgetReceiver : GlanceAppWidgetReceiver() {
+    override val glanceAppWidget: GlanceAppWidget = BatteryWidget()
 }

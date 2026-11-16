@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The widgets' fixed dark card, for the loading placeholder and the picker previews.
+     Kept in step with the constants at the top of Widgets.kt. Not in brand_colors.xml:
+     that file is generated, and these deliberately do not follow the theme or the mode. -->
+<resources>
+    <color name="widget_surface">#1C1F26</color>
+    <color name="widget_text">#F1F3F5</color>
+    <color name="widget_text_muted">#AAB1BB</color>
+</resources>
