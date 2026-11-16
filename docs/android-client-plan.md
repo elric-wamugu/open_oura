@@ -306,15 +306,22 @@ What shaped them:
   busy wallpaper would not be reliably readable. The ring-charge figure is the one thing
   that changes colour — amber and red on the brain's bands.
 - **A refresh button in the corner** (`WidgetSync.kt`): syncs with the ring and redraws
-  without opening the app. The tap queues the same background sync the app-open trigger
-  uses, as `SyncTrigger.WIDGET` — no 3-hour floor and no quiet hours, because someone
-  asked, with a one-minute floor only to swallow a double tap. While it runs the icon
+  without opening the app. While it runs the icon
   turns. A widget cannot run a Compose animation, so the turning icon is a plain layout
   (`widget_sync_spinner.xml`) holding a `ProgressBar` whose indeterminate drawable is the
   icon inside a `<rotate>`. "Syncing" is a timestamp that lapses after 90 s, not a flag,
-  so a worker the system never ran cannot leave it turning. Measured on the Pixel 9a: tap to fresh
-  figures took about 40 s, of which the recompute was 18 s — the same recompute that takes
-  3.2 s with the app on screen. A background process gets far less CPU; not addressed here.
+  so a worker the system never ran cannot leave it turning.
+- **The tap runs the sync in the foreground service, not the worker.** The first version
+  queued the background worker, and on the Pixel 9a a tap took about 40 s to show fresh
+  figures: the recompute alone was 17.8–19.5 s, against about 3 s with the app on screen,
+  because a process with nothing in the foreground is confined to the small cores. A
+  widget tap is one of the moments Android allows a foreground-service start from the
+  background, so `SyncFromWidget` starts `RingSyncService` — the service the app's own
+  Sync button uses — and the same tap now takes **8 s** (sync 3.3 s for 109 events,
+  recompute 4.1 s). The service's notification shows while it runs. Without the Bluetooth
+  permissions or a ring key, or if Android refuses the start, it falls back to the worker
+  as `SyncTrigger.WIDGET`. The scheduled syncs still recompute in the background at the
+  slow rate; nobody is waiting on those.
 - **A widget on screen has to be told its data changed.** Glance keeps a composition alive
   for a while after a draw or a tap, and `updateAll` only recomposes it — the code that
   loaded the snapshot does not run again. The first version read the snapshot once, up
