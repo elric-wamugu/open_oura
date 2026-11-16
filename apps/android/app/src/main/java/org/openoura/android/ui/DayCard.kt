@@ -8,12 +8,12 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -23,7 +23,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.drawscope.Stroke
@@ -36,7 +35,6 @@ import org.openoura.android.data.Summary
 import org.openoura.android.ui.components.SegmentGap
 import org.openoura.android.ui.components.ShapedIcon
 import org.openoura.android.ui.components.segmentShape
-import org.openoura.android.ui.theme.DataColors
 import org.openoura.android.ui.theme.dataColors
 import kotlin.math.min
 import kotlin.math.roundToInt
@@ -106,19 +104,14 @@ private fun Segment(index: Int, count: Int, onClick: () -> Unit, content: @Compo
 
 @Composable
 private fun SleepPart(n: NightRow) {
-    val d = MaterialTheme.dataColors
     PartHead(
         icon = R.drawable.ic_sym_bedtime,
         title = "Sleep",
         meta = "${n.start ?: "—"}–${n.end ?: "—"} · ${num(n.inBedH)} h in bed",
     )
-    n.stages?.takeIf { it.isNotEmpty() }?.let { Hypnogram(it, d) }
-    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-        StageLegend("Deep", n.deepPct, d.deep)
-        StageLegend("Light", n.lightPct, d.light)
-        StageLegend("REM", n.remPct, d.rem)
-        StageLegend("Awake", n.wakePct, d.wake)
-    }
+    // The split, not the night as it unfolded: how much of each stage is what a glance at
+    // Today can take in, and the hour-by-hour picture is one tap away on the sleep page.
+    StageSplit(n)
 }
 
 @Composable
@@ -158,38 +151,52 @@ private fun PartHead(@DrawableRes icon: Int, title: String, meta: String) {
     }
 }
 
+/**
+ * A night's stage split as one rounded bar, each stage's share drawn to scale, with the
+ * percentages underneath — the proportions read at a glance, the figures on a second look.
+ *
+ * Shared by the Today card and the sleep page's "Sleep architecture", so the two show the
+ * same thing the same way.
+ */
 @Composable
-private fun StageLegend(label: String, pct: Double?, swatch: Color) {
-    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-        Box(Modifier.size(10.dp).clip(CircleShape).background(swatch))
-        Text(label, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Text("${num(pct)}%", style = MaterialTheme.typography.labelLargeEmphasized)
-    }
-}
-
-/** Stage strip: one cell per downsampled epoch. 1=deep 2=light 3=rem 4=wake. */
-@Composable
-fun Hypnogram(stages: List<Int>, d: DataColors, height: Dp = 40.dp) {
-    Canvas(
-        Modifier
-            .fillMaxWidth()
-            .height(height)
-            .clip(RoundedCornerShape(10.dp)),
-    ) {
-        if (stages.isEmpty()) return@Canvas
-        val w = size.width / stages.size
-        stages.forEachIndexed { i, code ->
-            val color = when (code) {
-                1 -> d.deep
-                2 -> d.light
-                3 -> d.rem
-                else -> d.wake
+fun StageSplit(n: NightRow, modifier: Modifier = Modifier) {
+    val d = MaterialTheme.dataColors
+    val parts = listOf(
+        Triple("Deep", n.deepPct, d.deep),
+        Triple("Light", n.lightPct, d.light),
+        Triple("REM", n.remPct, d.rem),
+        Triple("Awake", n.wakePct, d.wake),
+    )
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        val total = parts.sumOf { it.second ?: 0.0 }
+        if (total > 0) {
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .height(20.dp)
+                    .clip(CircleShape),
+                horizontalArrangement = Arrangement.spacedBy(3.dp),
+            ) {
+                parts.forEach { (_, pct, colour) ->
+                    val w = (pct ?: 0.0).toFloat()
+                    if (w > 0f) Box(Modifier.weight(w).fillMaxHeight().background(colour))
+                }
             }
-            drawRect(
-                color = color,
-                topLeft = Offset(i * w, 0f),
-                size = Size(w + 0.6f, size.height),
-            )
+        }
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            parts.forEach { (label, pct, colour) ->
+                Column {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Box(Modifier.size(10.dp).clip(CircleShape).background(colour))
+                        Text(
+                            label,
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Text("${(pct ?: 0.0).roundToInt()}%", style = MaterialTheme.typography.titleLargeEmphasized)
+                }
+            }
         }
     }
 }

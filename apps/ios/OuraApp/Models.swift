@@ -26,6 +26,10 @@ struct NightSeries: Decodable {
 struct NightRow: Decodable, Identifiable {
     var date: String?; var ymd: String?; var start_ds: Int64?; var start: String?; var end: String?
     var in_bed_h: Double?; var hrv_ms: Double?; var rhr: Double?
+    // Whether this is the main sleep of the day it was woken from (false for a nap or a
+    // long rest on a day that also has a night). `vitals` is built from main sleeps only;
+    // nil on a summary that predates the field, where every night counts.
+    var main: Bool? = nil
     var skin_temp: Double?; var spo2_mean: Double?
     // model-derived (present once the hypnogram runner is wired): per-30s stage codes
     // 1=deep 2=light 3=rem 4=wake, the stage percentages, and efficiency.

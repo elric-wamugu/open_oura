@@ -101,7 +101,7 @@ object WidgetStore {
             sleepHours = night?.inBedH,
             asleepHours = night?.metrics?.asleepMin?.let { it / 60.0 },
             efficiency = night?.efficiency?.roundToInt(),
-            spo2 = s.nights.firstOrNull { it.spo2Mean != null }?.spo2Mean?.roundToInt(),
+            spo2 = s.nights.firstOrNull { it.main && it.spo2Mean != null }?.spo2Mean?.roundToInt(),
             deepPct = night?.deepPct?.roundToInt(),
             lightPct = night?.lightPct?.roundToInt(),
             remPct = night?.remPct?.roundToInt(),

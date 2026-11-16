@@ -1,5 +1,7 @@
 package org.openoura.android.ui
 
+import androidx.compose.ui.semantics.Role
+import androidx.compose.foundation.clickable
 import androidx.annotation.DrawableRes
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -80,10 +82,20 @@ fun VitalTile(
     referenceLabel: String = "baseline",
     status: TileStatus? = null,
     subtitle: String? = null,
+    /** Where a tap goes, with what a screen reader should call it. Null: not tappable. */
+    onClick: (() -> Unit)? = null,
+    onClickLabel: String? = null,
 ) {
     val cs = MaterialTheme.colorScheme
     Card(
-        modifier = modifier,
+        // Clipped first, so the press ripple keeps to the card's rounded corners.
+        modifier = if (onClick != null) {
+            modifier
+                .clip(MaterialTheme.shapes.large)
+                .clickable(onClickLabel = onClickLabel, role = Role.Button, onClick = onClick)
+        } else {
+            modifier
+        },
         shape = MaterialTheme.shapes.large,
         colors = CardDefaults.cardColors(containerColor = cs.surfaceContainer),
     ) {

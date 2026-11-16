@@ -71,6 +71,11 @@ data class NightRow(
     @SerialName("start_unix") val startUnix: Long? = null,
     @SerialName("end_unix") val endUnix: Long? = null,
     @SerialName("in_bed_h") val inBedH: Double? = null,
+    /** Whether this is the main sleep of the day it was woken from. False for a nap or a
+     *  long rest on a day that also has a night; `vitals` is built without those, so a
+     *  tile that wants "the latest night" must skip them too. True when the summary
+     *  predates the field. */
+    val main: Boolean = true,
     @SerialName("hrv_ms") val hrvMs: Double? = null,
     val rhr: Double? = null,
     @SerialName("skin_temp") val skinTemp: Double? = null,

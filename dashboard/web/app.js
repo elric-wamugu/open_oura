@@ -150,7 +150,11 @@ function renderTiles(d) {
   box.innerHTML = "";
   box.classList.add("reveal");
   const hv = d.vitals?.hrv || {}, rh = d.vitals?.rhr || {};
-  const n0 = (d.nights || [])[0] || {};
+  // The newest *main* sleep, not simply the newest night: a nap or a long rest on a day
+  // that also has a night is in the list too, and `vitals` is built without those.
+  // (`main` is absent on an older summary, where every night counts.)
+  const mainNights = (d.nights || []).filter((n) => n.main !== false);
+  const n0 = mainNights[0] || {};
   box.append(metricCard("HRV (RMSSD)", hv.latest, " ms", { deltaPct: hv.delta_pct, ref: hv.baseline, good: "up" }));
   box.append(metricCard("Resting HR", rh.latest, " bpm", { deltaPct: rh.delta_pct, ref: rh.baseline, good: "down" }));
   const eff = n0.efficiency;
@@ -160,7 +164,7 @@ function renderTiles(d) {
   }));
   // Blood oxygen holds the fourth tile: it comes straight off the ring's own
   // spo2_event data, so unlike vascular age it has a number on most nights.
-  const spo2 = ((d.nights || []).find((n) => n.spo2_mean != null) || {}).spo2_mean;
+  const spo2 = (mainNights.find((n) => n.spo2_mean != null) || {}).spo2_mean;
   if (spo2 != null) {
     box.append(metricCard("Blood oxygen", spo2, "%", {
       ref: SPO2_HEALTHY, refLabel: "healthy", good: "up",
