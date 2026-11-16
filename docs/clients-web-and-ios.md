@@ -363,6 +363,14 @@ nightly need" but "a 7.5 h need". `app.js` hardcodes "an".
   comparison is withheld when the earlier period has fewer than three values. Nothing new
   is computed — a night counts on the day it was woken from, as the day cards pair them.
 
+- **Encrypted backup** (`crates/oura-backup`; `oura backup` / `oura restore` on the desktop,
+  You → Ring & data → Backup on Android): one passphrase-encrypted `.ourabak` file holding
+  every raw event, which either client writes and either restores by merging. **Desktop
+  CLI and Android only** — the web dashboard and iOS have no screen for it, and the desktop
+  command covers the web's database. The format and its rules are in `docs/backup.md`. The
+  ring's auth key is never in a backup, and the Android app still has no `INTERNET`
+  permission: the file goes wherever the system file picker can reach.
+
 Two Android features have no web or iOS counterpart, and are not omissions to close:
 
 - **Unattended sync** (`apps/android/.../sync/AutoSync.kt`): a 3-hour WorkManager floor plus

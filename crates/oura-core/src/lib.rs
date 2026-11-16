@@ -44,6 +44,92 @@ pub fn summary_json(db_path: String, tz_offset: i64) -> String {
     }
 }
 
+/// The client implements this to follow a backup or a restore: events handled so far, out
+/// of how many.
+#[uniffi::export(callback_interface)]
+pub trait BackupProgressListener: Send + Sync {
+    fn on_progress(&self, done: u64, total: u64);
+}
+
+/// Take ownership of a file descriptor the client opened. The client must have detached
+/// it (Android: `ParcelFileDescriptor.detachFd()`), because it is closed when this drops.
+#[cfg(unix)]
+fn owned_file(fd: i32) -> std::fs::File {
+    use std::os::unix::io::FromRawFd;
+    // SAFETY: the contract above — the caller hands over a valid descriptor it no longer owns.
+    unsafe { std::fs::File::from_raw_fd(fd) }
+}
+
+fn backup_error(e: oura_backup::Error) -> String {
+    let code = match e {
+        oura_backup::Error::WrongPassphrase => "wrong_passphrase",
+        oura_backup::Error::NotABackup => "not_a_backup",
+        oura_backup::Error::NewerFormat(_) => "newer_format",
+        oura_backup::Error::Damaged(_) => "damaged",
+        _ => "failed",
+    };
+    json!({ "error": e.to_string(), "code": code }).to_string()
+}
+
+/// Write an encrypted backup of the database to an open file descriptor — see
+/// `oura-backup` for the format. A descriptor rather than a path because Android's
+/// document picker hands out descriptors, possibly a pipe into a cloud provider, and the
+/// format is written without seeking so that works.
+///
+/// Returns `{ events, readings, devices }`, or `{ error, code }`.
+#[cfg(unix)]
+#[uniffi::export]
+pub fn backup_to_fd(
+    db_path: String,
+    passphrase: String,
+    fd: i32,
+    listener: Box<dyn BackupProgressListener>,
+) -> String {
+    let out = std::io::BufWriter::new(owned_file(fd));
+    match oura_backup::write_backup(
+        std::path::Path::new(&db_path),
+        &passphrase,
+        out,
+        &mut |done, total| listener.on_progress(done, total),
+    ) {
+        Ok(s) => json!({ "events": s.events, "readings": s.readings, "devices": s.devices }).to_string(),
+        Err(e) => backup_error(e),
+    }
+}
+
+/// Merge the backup read from an open file descriptor into the database, creating it if
+/// there is none. All or nothing: a wrong passphrase or a damaged file changes nothing.
+///
+/// Returns `{ events, events_added, readings_added, files_written, created_unix }`, or
+/// `{ error, code }` where `code` is `wrong_passphrase`, `not_a_backup`, `newer_format`,
+/// `damaged` or `failed`.
+#[cfg(unix)]
+#[uniffi::export]
+pub fn restore_from_fd(
+    db_path: String,
+    passphrase: String,
+    fd: i32,
+    listener: Box<dyn BackupProgressListener>,
+) -> String {
+    let input = std::io::BufReader::new(owned_file(fd));
+    match oura_backup::restore_backup(
+        input,
+        &passphrase,
+        std::path::Path::new(&db_path),
+        &mut |done, total| listener.on_progress(done, total),
+    ) {
+        Ok(s) => json!({
+            "events": s.events,
+            "events_added": s.events_added,
+            "readings_added": s.readings_added,
+            "files_written": s.files_written,
+            "created_unix": s.created_unix,
+        })
+        .to_string(),
+        Err(e) => backup_error(e),
+    }
+}
+
 /// A lightweight, model-free summary (device + data-health only) — kept as a fast
 /// path / fallback. Returns `{ serials, device, event_counts, decoded_events }`.
 #[uniffi::export]

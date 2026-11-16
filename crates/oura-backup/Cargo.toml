@@ -1,0 +1,21 @@
+[package]
+name = "oura-backup"
+description = "Encrypted, mergeable backups of the ring database, shared by the Android app and the desktop CLI"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+oura-store = { path = "../oura-store" }
+serde_json = "1"
+thiserror = "1"
+# Passphrase → key. Argon2id is memory-hard, so guessing a passphrase costs real RAM per try.
+argon2 = "0.5"
+# Authenticated encryption, in the STREAM construction so a file is sealed chunk by chunk
+# and cannot be truncated or reordered without detection.
+chacha20poly1305 = { version = "0.10", features = ["stream"] }
+# Salt and nonce. `getrandom` is the OS generator on every platform we build for.
+getrandom = "0.2"
+# Pure-Rust deflate: no C toolchain needed when cross-compiling for Android.
+flate2 = "1"

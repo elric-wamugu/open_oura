@@ -26,6 +26,7 @@ import org.openoura.android.R
 @Serializable data object RingKeyRoute : NavKey
 
 @Serializable data object HealthConnectRoute : NavKey
+@Serializable data object BackupRoute : NavKey
 
 /** The bottom-bar destinations, each the root of its own back stack. */
 enum class Tab(

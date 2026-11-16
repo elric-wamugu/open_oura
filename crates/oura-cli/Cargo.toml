@@ -16,6 +16,9 @@ oura-link = { path = "../oura-link" }
 oura-store = { path = "../oura-store" }
 oura-summary = { path = "../oura-summary" }
 oura-dna = { path = "../oura-dna" }
+oura-backup = { path = "../oura-backup" }
+# Reads the backup passphrase from the terminal without echoing it.
+rpassword = "7"
 clap = { version = "4", features = ["derive"] }
 tokio = { version = "1", features = ["full"] }
 anyhow = "1"

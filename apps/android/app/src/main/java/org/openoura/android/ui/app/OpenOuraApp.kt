@@ -89,7 +89,11 @@ import org.openoura.android.data.SummaryState
 import org.openoura.android.health.ExportResult
 import org.openoura.android.health.HealthExport
 import org.openoura.android.ui.DayReportScreen
+import org.openoura.android.data.BackupResult
+import org.openoura.android.data.Backups
+import org.openoura.android.ui.BackupScreen
 import org.openoura.android.ui.DaysBrowser
+import org.openoura.android.ui.describeBackup
 import org.openoura.android.ui.TrendsScreen
 import org.openoura.android.ui.components.ChoiceOption
 import org.openoura.android.ui.components.ConnectedChoice
@@ -103,6 +107,7 @@ import org.openoura.android.ui.YouScreen
 import org.openoura.android.ui.components.ScreenScaffold
 import org.openoura.android.ui.dayTitle
 import org.openoura.android.ui.nav.DayReportRoute
+import org.openoura.android.ui.nav.BackupRoute
 import org.openoura.android.ui.nav.HealthConnectRoute
 import org.openoura.android.ui.nav.HistoryRoute
 import org.openoura.android.ui.nav.RingKeyRoute
@@ -307,6 +312,35 @@ fun OpenOuraApp(
     var batteryOpen by remember { mutableStateOf(prefs.getBoolean("fold_battery", false)) }
     var deviceOpen by remember { mutableStateOf(prefs.getBoolean("fold_device", false)) }
     var cardioOpen by remember { mutableStateOf(prefs.getBoolean("fold_cardio", false)) }
+    // The Backup screen. Held here because the work outlives the screen, and because the
+    // system file picker is launched from here. The passphrase waits in memory only for
+    // as long as the picker is open, and is cleared the moment it comes back.
+    var backupBusy by remember { mutableStateOf(false) }
+    var backupProgress by remember { mutableStateOf<Float?>(null) }
+    var backupMessage by remember { mutableStateOf<String?>(null) }
+    var backupPassphrase by remember { mutableStateOf<String?>(null) }
+    var restoreFrom by remember { mutableStateOf<android.net.Uri?>(null) }
+    val createBackup = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("application/octet-stream"),
+    ) { uri ->
+        val passphrase = backupPassphrase
+        backupPassphrase = null
+        when {
+            uri == null -> Unit // the picker was dismissed
+            // The Activity was recreated while the picker was open and the passphrase,
+            // which is deliberately not saved anywhere, went with it.
+            passphrase == null -> backupMessage = "Please enter the passphrase again."
+            else -> work.launch {
+                backupBusy = true
+                backupProgress = null
+                backupMessage = describeBackup(Backups.backup(app, uri, passphrase) { backupProgress = it })
+                backupBusy = false
+            }
+        }
+    }
+    val pickBackup = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) restoreFrom = uri
+    }
     // History shows the days or the trends across them; both choices outlive a restart.
     var historyTrends by remember { mutableStateOf(prefs.getBoolean("history_trends", false)) }
     var trendRange by remember { mutableIntStateOf(prefs.getInt("trend_range", 30)) }
@@ -448,6 +482,7 @@ fun OpenOuraApp(
                 },
                 onRingKey = { navigator.push(RingKeyRoute) },
                 onHealthConnect = { navigator.push(HealthConnectRoute) },
+                onBackup = { navigator.push(BackupRoute) },
                 onImportDatabase = { pickDatabase.launch(arrayOf("*/*")) },
                 alerts = alertSwitches,
                 notificationsAllowed = notificationsAllowed,
@@ -497,6 +532,50 @@ fun OpenOuraApp(
                     onTestConnection = {
                         if (BlePermissions.granted(app)) runProbe() else askBlePermissions.launch(BlePermissions.required())
                     },
+                    modifier = Modifier.padding(padding),
+                )
+            }
+        }
+        entry<BackupRoute> {
+            ScreenScaffold(title = "Backup", onBack = navigator::back) { padding ->
+                BackupScreen(
+                    hasDatabase = repo.hasDatabase,
+                    busy = backupBusy,
+                    progress = backupProgress,
+                    message = backupMessage,
+                    restorePicked = restoreFrom != null,
+                    onBackup = { passphrase ->
+                        backupPassphrase = passphrase
+                        backupMessage = null
+                        createBackup.launch(Backups.fileName())
+                    },
+                    onPickRestore = {
+                        backupMessage = null
+                        // Any type: cloud providers rarely know what an .ourabak is, and
+                        // the file says for itself whether it is one.
+                        pickBackup.launch(arrayOf("*/*"))
+                    },
+                    onRestore = { passphrase ->
+                        val from = restoreFrom ?: return@BackupScreen
+                        // The ring holds one writer's attention: a restore under a sync
+                        // would fight it for the database.
+                        if (RingSyncService.isRunning) {
+                            backupMessage = "A sync is running. Try again when it finishes."
+                            return@BackupScreen
+                        }
+                        work.launch {
+                            backupBusy = true
+                            backupProgress = null
+                            val result = Backups.restore(app, from, passphrase) { backupProgress = it }
+                            backupMessage = describeBackup(result)
+                            if (result is BackupResult.Restored) {
+                                restoreFrom = null
+                                if (result.added > 0) repo.recompute()
+                            }
+                            backupBusy = false
+                        }
+                    },
+                    onCancelRestore = { restoreFrom = null },
                     modifier = Modifier.padding(padding),
                 )
             }

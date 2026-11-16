@@ -81,6 +81,11 @@ oura --key-file key.hex rdata state
 # Offline: event counts; re-decode stored raw bodies with current decoders
 oura --db oura.db events
 oura --db oura.db redecode
+
+# Offline: encrypted backup, and merging one back in (same file the Android app
+# writes; passphrase is prompted for — see docs/backup.md)
+oura --db oura.db backup open_oura.ourabak
+oura --db oura.db restore open_oura.ourabak
 ```
 
 > After pairing a ring yourself, its measurement features (daytime HR, SpO2…) are
