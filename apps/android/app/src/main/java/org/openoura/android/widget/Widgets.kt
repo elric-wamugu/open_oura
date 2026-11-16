@@ -54,6 +54,7 @@ import androidx.glance.text.TextStyle
 import androidx.glance.unit.ColorProvider
 import org.openoura.android.MainActivity
 import org.openoura.android.R
+import org.openoura.android.data.Goals
 import org.openoura.android.data.WidgetBus
 import org.openoura.android.data.WidgetSnapshot
 import org.openoura.android.data.WidgetStore
@@ -199,12 +200,13 @@ private fun stageRingBitmap(s: WidgetSnapshot, d: DataColors, track: Color): Bit
     return bmp
 }
 
-/** The ring's charge as an arc over a track, clockwise from twelve o'clock. */
-private fun batteryRingBitmap(pct: Int?, fill: Color, track: Color): Bitmap {
+/** A share of a whole as an arc over a track, clockwise from twelve o'clock. */
+private fun progressRingBitmap(fraction: Float, fill: Color, track: Color): Bitmap {
     val (bmp, canvas, box) = ringCanvas()
     canvas.drawArc(box, 0f, 360f, false, ringPaint(track))
-    val level = pct?.coerceIn(0, 100) ?: 0
-    if (level > 0) canvas.drawArc(box, -90f, 360f * level / 100f, false, ringPaint(fill, round = level < 100))
+    val share = fraction.coerceIn(0f, 1f)
+    // Round ends while it is an arc; a full ring has no ends to round.
+    if (share > 0f) canvas.drawArc(box, -90f, 360f * share, false, ringPaint(fill, round = share < 1f))
     return bmp
 }
 
@@ -263,13 +265,22 @@ class StageRingWidget : GlanceAppWidget() {
             val s = remember(version) { WidgetStore.read(context) }
             val ring = remember(version) { stageRingBitmap(s, DarkData, TrackColor) }
             val syncing = remember(version) { WidgetSync.isSyncing(context) }
-            StageRingContent(s, ring, syncing)
+            RingCard(syncing, ring = { StageRing(s, ring, it) }) { compact -> Stats(s, compact) }
         }
     }
 }
 
+/**
+ * The card both ring widgets share: a ring, three figures, and the refresh button, arranged
+ * for the space granted. [ring] is given the size it should be; [stats] is told whether it
+ * is stacked under the ring, where it has to be compact.
+ */
 @Composable
-private fun StageRingContent(s: WidgetSnapshot, ring: Bitmap, syncing: Boolean) {
+private fun RingCard(
+    syncing: Boolean,
+    ring: @Composable (Dp) -> Unit,
+    stats: @Composable ColumnScope.(compact: Boolean) -> Unit,
+) {
     val size = LocalSize.current
     val layout = ringLayout(size.width, size.height)
     // The ring takes the room there is, within what its bitmap stays sharp at. 24 dp is
@@ -287,9 +298,9 @@ private fun StageRingContent(s: WidgetSnapshot, ring: Bitmap, syncing: Boolean) 
                 modifier = GlanceModifier.fillMaxSize(),
                 verticalAlignment = Alignment.Vertical.CenterVertically,
             ) {
-                StageRing(s, ring, ringSize)
+                ring(ringSize)
                 Spacer(GlanceModifier.width(16.dp))
-                Column(GlanceModifier.defaultWeight()) { Stats(s) }
+                Column(GlanceModifier.defaultWeight()) { stats(false) }
                 // Keeps the figures' right edge clear of the refresh button above them.
                 Spacer(GlanceModifier.width(20.dp))
             }
@@ -298,41 +309,46 @@ private fun StageRingContent(s: WidgetSnapshot, ring: Bitmap, syncing: Boolean) 
                 verticalAlignment = Alignment.Vertical.CenterVertically,
                 horizontalAlignment = Alignment.Horizontal.CenterHorizontally,
             ) {
-                StageRing(s, ring, ringSize)
+                ring(ringSize)
                 Spacer(GlanceModifier.height(6.dp))
-                Stats(s, compact = true)
+                stats(true)
             }
             RingLayout.RING_ONLY -> Row(
                 modifier = GlanceModifier.fillMaxSize(),
                 verticalAlignment = Alignment.Vertical.CenterVertically,
                 horizontalAlignment = Alignment.Horizontal.CenterHorizontally,
-            ) { StageRing(s, ring, ringSize) }
+            ) { ring(ringSize) }
         }
+    }
+}
+
+/** A ring's middle: an icon, the figure, an optional unit, and a caption under them. */
+@Composable
+private fun RingCentre(icon: Int, ringSize: Dp, value: String?, unit: String, caption: String?) {
+    val big = if (ringSize >= 100.dp) 26.sp else if (ringSize >= 72.dp) 20.sp else 14.sp
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        if (ringSize >= 72.dp) {
+            Glyph(icon, if (ringSize >= 100.dp) 18.dp else 14.dp)
+            Spacer(GlanceModifier.width(4.dp))
+        }
+        Text(value ?: "—", style = TextStyle(color = TextStrong, fontSize = big, fontWeight = FontWeight.Bold))
+        if (value != null && unit.isNotEmpty()) {
+            Text(unit, style = TextStyle(color = TextStrong, fontSize = if (ringSize >= 100.dp) 14.sp else 11.sp))
+        }
+    }
+    // A one-row cell leaves room inside the ring for the number and nothing else.
+    if (ringSize >= 72.dp) {
+        Text(
+            if (value == null) empty() else caption.orEmpty(),
+            style = TextStyle(color = TextMuted, fontSize = 11.sp),
+        )
     }
 }
 
 @Composable
 private fun StageRing(s: WidgetSnapshot, ring: Bitmap, ringSize: Dp) {
-    val hours = ringHours(s)
-    val big = if (ringSize >= 100.dp) 26.sp else if (ringSize >= 72.dp) 20.sp else 14.sp
     Ring(ring, ringSize, "Last night's sleep stages") {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            if (ringSize >= 72.dp) {
-                Glyph(R.drawable.ic_sym_bedtime, if (ringSize >= 100.dp) 18.dp else 14.dp)
-                Spacer(GlanceModifier.width(4.dp))
-            }
-            Text(hours ?: "—", style = TextStyle(color = TextStrong, fontSize = big, fontWeight = FontWeight.Bold))
-            if (hours != null) {
-                Text("h", style = TextStyle(color = TextStrong, fontSize = if (ringSize >= 100.dp) 14.sp else 11.sp))
-            }
-        }
-        // A one-row cell leaves room inside the ring for the number and nothing else.
-        if (ringSize >= 72.dp) {
-            Text(
-                if (hours == null) empty() else ringCaption(s, roomy = ringSize >= 112.dp),
-                style = TextStyle(color = TextMuted, fontSize = 11.sp),
-            )
-        }
+        RingCentre(R.drawable.ic_sym_bedtime, ringSize, ringHours(s), "h", ringCaption(s, roomy = ringSize >= 112.dp))
     }
 }
 
@@ -344,7 +360,12 @@ private fun Stats(s: WidgetSnapshot, compact: Boolean = false) {
     Spacer(GlanceModifier.height(gap))
     Stat(R.drawable.ic_sym_straighten, "Distance", distanceLabel(s.distanceKm), unit = if (s.distanceKm != null) "km" else "", compact = compact)
     Spacer(GlanceModifier.height(gap))
-    // The one figure that changes colour: amber and red on the brain's bands, as in the app.
+    ChargeStat(s, compact)
+}
+
+/** The ring's charge: the one figure that changes colour, amber and red on the brain's bands. */
+@Composable
+private fun ChargeStat(s: WidgetSnapshot, compact: Boolean) {
     Stat(
         R.drawable.ic_sym_battery_full,
         "Ring charge",
@@ -398,6 +419,65 @@ class ActivityWidgetReceiver : GlanceAppWidgetReceiver() {
     override val glanceAppWidget: GlanceAppWidget = StageRingWidget()
 }
 
+// ── today's steps: the same card, turned round ───────────────────────────────────────
+
+/**
+ * The stage ring widget with its two halves swapped: the ring is today's steps towards the
+ * daily target (set on the You tab), with the distance under the count, and the figures
+ * beside it are last night — time asleep, sleep efficiency — and the ring's charge.
+ */
+class StepsWidget : GlanceAppWidget() {
+    override val sizeMode = SizeMode.Exact
+
+    override suspend fun provideGlance(context: Context, id: GlanceId) {
+        provideContent {
+            val version by WidgetBus.version.collectAsState()
+            val s = remember(version) { WidgetStore.read(context) }
+            val ring = remember(version) {
+                progressRingBitmap(stepProgress(s.steps, Goals.stepTarget(context)), BrandDark.primary, TrackColor)
+            }
+            val syncing = remember(version) { WidgetSync.isSyncing(context) }
+            RingCard(
+                syncing,
+                ring = { size ->
+                    Ring(ring, size, "Today's steps towards the daily target") {
+                        RingCentre(
+                            R.drawable.ic_sym_directions_walk,
+                            size,
+                            s.steps?.let { stepsLabel(it) },
+                            unit = "",
+                            caption = distanceCaption(s.distanceKm),
+                        )
+                    }
+                },
+            ) { compact -> NightStats(s, compact) }
+        }
+    }
+}
+
+/** Asleep, Sleep efficiency, Ring charge — in that order. */
+@Composable
+private fun NightStats(s: WidgetSnapshot, compact: Boolean) {
+    val gap = if (compact) 2.dp else 6.dp
+    val hours = ringHours(s)
+    // An unscored night has only time in bed, and says so rather than passing it off.
+    Stat(
+        R.drawable.ic_sym_bedtime,
+        if (s.asleepHours != null || s.sleepHours == null) "Asleep" else "In bed",
+        hours ?: "—",
+        unit = if (hours != null) "h" else "",
+        compact = compact,
+    )
+    Spacer(GlanceModifier.height(gap))
+    Stat(R.drawable.ic_sym_percent, "Sleep efficiency", s.efficiency?.let { "$it%" } ?: "—", compact = compact)
+    Spacer(GlanceModifier.height(gap))
+    ChargeStat(s, compact)
+}
+
+class StepsWidgetReceiver : GlanceAppWidgetReceiver() {
+    override val glanceAppWidget: GlanceAppWidget = StepsWidget()
+}
+
 // ── the ring's battery (small) ───────────────────────────────────────────────────────
 
 class BatteryWidget : GlanceAppWidget() {
@@ -413,7 +493,7 @@ class BatteryWidget : GlanceAppWidget() {
                     "very_low", "critical" -> BrandDark.error
                     else -> BrandDark.primary
                 }
-                batteryRingBitmap(s.batteryPct, fill, TrackColor)
+                progressRingBitmap((s.batteryPct ?: 0) / 100f, fill, TrackColor)
             }
             BatteryContent(s, ring)
         }

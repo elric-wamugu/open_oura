@@ -23,6 +23,7 @@ object WidgetUpdates {
     /** Repaint every placed widget from the current snapshot. Cheap: no core call. */
     suspend fun refreshAll(ctx: Context) {
         runCatching { StageRingWidget().updateAll(ctx) }
+        runCatching { StepsWidget().updateAll(ctx) }
         runCatching { BatteryWidget().updateAll(ctx) }
     }
 

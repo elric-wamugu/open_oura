@@ -43,6 +43,21 @@ pub struct HeartRateSample {
     pub ibi_ms: u16,
 }
 
+/// What a live heart-rate measurement saw, for saying *why* when there were no beats.
+#[derive(Clone, Debug, Default)]
+pub struct LiveHrStats {
+    /// Every notification that arrived while measuring.
+    pub frames: u32,
+    /// Those that were live-HR notifications (`2f .. 28`), valid beat or not.
+    pub live_frames: u32,
+    /// Those that carried a valid beat.
+    pub beats: u32,
+    /// The ring's result byte for the switch to live mode; 0 is accepted.
+    pub mode_result: Option<u8>,
+    /// The first few notifications, raw.
+    pub first_frames: Vec<Vec<u8>>,
+}
+
 /// One live accelerometer sample (signed raw counts) from the ACM stream.
 #[derive(Clone, Copy, Debug)]
 pub struct AcmSample {
@@ -240,7 +255,8 @@ impl<T: Transport> OuraClient<T> {
 
     /// Request that completes when an extended (`0x2f`) packet with `ext` arrives.
     async fn request_ext(&self, bytes: &[u8], ext: u8) -> Result<Vec<Packet>> {
-        self.request_until(bytes, |p| p.ext_tag() == Some(ext)).await
+        self.request_until(bytes, |p| p.ext_tag() == Some(ext))
+            .await
     }
 
     /// Event-batch request: terminates on `terminal` like [`Self::request_until`],
@@ -305,7 +321,9 @@ impl<T: Transport> OuraClient<T> {
     pub async fn capabilities(&self) -> Result<Vec<Capability>> {
         let mut caps = Vec::new();
         for page in 0u8..2 {
-            let packets = self.request_ext(&protocol::req_capabilities(page), 0x02).await?;
+            let packets = self
+                .request_ext(&protocol::req_capabilities(page), 0x02)
+                .await?;
             if let Some(p) = packets.iter().find(|p| p.ext_tag() == Some(0x02)) {
                 caps.extend(device::parse_capabilities(p));
             }
@@ -504,25 +522,18 @@ impl<T: Transport> OuraClient<T> {
         // ext 0x42) — the same terminator the official app waits for. An ext
         // status packet (payload[0]=0x00, "unsupported") also ends the request.
         let batch_terminal = |p: &Packet| {
-            p.tag == 0x11
-                || (p.tag == 0x2f && matches!(p.payload.first(), Some(0x42) | Some(0x00)))
+            p.tag == 0x11 || (p.tag == 0x2f && matches!(p.payload.first(), Some(0x42) | Some(0x00)))
         };
         // Safety bound against a misbehaving ring that never reports drained.
         for _ in 0..100_000 {
             let t_flush = std::time::Instant::now();
-            let mut packets = self
-                .request_tag(&protocol::req_data_flush(), 0x29)
-                .await?;
+            let mut packets = self.request_tag(&protocol::req_data_flush(), 0x29).await?;
             let flush_ms = t_flush.elapsed().as_millis();
             let t_fetch = std::time::Instant::now();
             if use_extended {
                 let ext = self
                     .request_batch(
-                        &protocol::req_ext_get_event(
-                            (start as u64) * 100,
-                            EXT_BATCH_MAX_EVENTS,
-                            0,
-                        ),
+                        &protocol::req_ext_get_event((start as u64) * 100, EXT_BATCH_MAX_EVENTS, 0),
                         batch_terminal,
                     )
                     .await?;
@@ -532,8 +543,11 @@ impl<T: Transport> OuraClient<T> {
                 if unsupported {
                     use_extended = false;
                     packets.extend(
-                        self.request_batch(&protocol::req_get_event(start, 255, -1), batch_terminal)
-                            .await?,
+                        self.request_batch(
+                            &protocol::req_get_event(start, 255, -1),
+                            batch_terminal,
+                        )
+                        .await?,
                     );
                 } else {
                     packets.extend(ext);
@@ -602,8 +616,7 @@ impl<T: Transport> OuraClient<T> {
                 flush_ms,
                 fetch_ms,
                 bytes_left,
-                events_per_sec =
-                    (batch_events as f64 / (fetch_ms.max(1) as f64 / 1000.0)) as u32,
+                events_per_sec = (batch_events as f64 / (fetch_ms.max(1) as f64 / 1000.0)) as u32,
                 "batch timing"
             );
 
@@ -641,7 +654,10 @@ impl<T: Transport> OuraClient<T> {
         // it is a `0x11` it would be mistaken for that batch's summary and truncate it.
         // Callers issue no further requests after a drain.
         if total > 0 {
-            let _ = self.transport.write(&protocol::req_get_event_ack(start)).await;
+            let _ = self
+                .transport
+                .write(&protocol::req_get_event_ack(start))
+                .await;
         }
 
         Ok(SyncOutcome {
@@ -670,14 +686,11 @@ impl<T: Transport> OuraClient<T> {
         send_ack: bool,
     ) -> Result<PeekOutcome> {
         let batch_terminal = |p: &Packet| {
-            p.tag == 0x11
-                || (p.tag == 0x2f && matches!(p.payload.first(), Some(0x42) | Some(0x00)))
+            p.tag == 0x11 || (p.tag == 0x2f && matches!(p.payload.first(), Some(0x42) | Some(0x00)))
         };
 
         let t_flush = std::time::Instant::now();
-        let mut packets = self
-            .request_tag(&protocol::req_data_flush(), 0x29)
-            .await?;
+        let mut packets = self.request_tag(&protocol::req_data_flush(), 0x29).await?;
         let flush_ms = t_flush.elapsed().as_millis();
 
         // Prefer the extended path, exactly as the drain does, so the probe
@@ -927,18 +940,52 @@ impl<T: Transport> OuraClient<T> {
             .ok_or_else(|| Error::Protocol("no RData page response".into()))
     }
 
-    /// Enable live heart rate (daytime HR, `CONNECTED_LIVE`) and invoke `on_sample`
-    /// for each valid beat for up to `duration`. Restores `AUTOMATIC` mode on exit.
+    /// Enable live heart rate (daytime HR in `CONNECTED_LIVE`, subscribed to its latest
+    /// value) and invoke `on_sample` for each valid beat for up to `duration`. Restores
+    /// `AUTOMATIC` mode and drops the subscription on exit.
     /// The ring must be worn for samples to appear.
     pub async fn live_heart_rate<F>(
         &self,
         duration: Duration,
         debug: bool,
-        mut on_sample: F,
+        on_sample: F,
     ) -> Result<()>
     where
         F: FnMut(HeartRateSample),
     {
+        self.live_heart_rate_until(
+            duration,
+            feature_mode::AUTOMATIC,
+            debug,
+            || false,
+            on_sample,
+        )
+        .await
+        .map(|_| ())
+    }
+
+    /// [`Self::live_heart_rate`], for a caller with a person in front of it: it can be
+    /// stopped early, and it puts the ring back in the mode it was in.
+    ///
+    /// `should_stop` is asked at least four times a second, whether or not beats are
+    /// arriving — a ring that is off the finger sends none, and "Stop" has to work then
+    /// too. `restore_mode` is the daytime-HR mode to leave the ring in: `CONNECTED_LIVE`
+    /// is a mode the ring stays in until told otherwise, so leaving without restoring it
+    /// (or restoring `AUTOMATIC` over a feature its owner had switched off) changes what
+    /// the ring does after the measurement is over.
+    pub async fn live_heart_rate_until<F, S>(
+        &self,
+        duration: Duration,
+        restore_mode: u8,
+        debug: bool,
+        should_stop: S,
+        mut on_sample: F,
+    ) -> Result<LiveHrStats>
+    where
+        F: FnMut(HeartRateSample),
+        S: Fn() -> bool,
+    {
+        const POLL: Duration = Duration::from_millis(250);
         let mut rx = self.transport.subscribe();
         // Drain backlog.
         while rx.try_recv().is_ok() {}
@@ -950,35 +997,75 @@ impl<T: Transport> OuraClient<T> {
             ))
             .await?;
 
+        let mut stats = LiveHrStats::default();
+        // Live mode alone is accepted and then produces nothing: on a Ring 3 (Gen3) the
+        // per-beat notifications (`2f .. 28`) are *indications of the latest value*, and
+        // the ring only sends those to a subscriber. Measured 2026-11-16 on fw Gen3: mode
+        // `CONNECTED_LIVE` by itself, 0 notifications in 30 s; with this subscription, 27,
+        // about one a second. The ring acknowledges the subscription (`2f 03 27 02 00`)
+        // yet goes on reporting `subscription = 0` in its feature status, which is why an
+        // earlier probe that checked the status concluded it had not taken.
+        self.transport
+            .write(&protocol::req_set_feature_subscription(
+                feature::DAYTIME_HR,
+                protocol::subscription_mode::LATEST,
+            ))
+            .await?;
         let deadline = tokio::time::Instant::now() + duration;
         loop {
             let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
-            if remaining.is_zero() {
+            if remaining.is_zero() || should_stop() {
                 break;
             }
-            match tokio::time::timeout(remaining, rx.recv()).await {
+            match tokio::time::timeout(remaining.min(POLL), rx.recv()).await {
                 Ok(Ok(frame)) => {
                     if debug {
                         eprintln!("raw notify: {}", hex::encode(&frame));
                     }
+                    stats.frames += 1;
+                    if stats.first_frames.len() < 8 {
+                        stats.first_frames.push(frame.clone());
+                    }
+                    // The ring's answer to the mode change: `2f len 23 feature result`.
+                    if frame.len() >= 5
+                        && frame[0] == 0x2f
+                        && frame[2] == 0x23
+                        && stats.mode_result.is_none()
+                    {
+                        stats.mode_result = Some(frame[4]);
+                    }
+                    if frame.len() >= 4 && frame[0] == 0x2f && frame[2] == 0x28 {
+                        stats.live_frames += 1;
+                    }
                     if let Some(sample) = parse_live_hr_frame(&frame) {
+                        stats.beats += 1;
                         on_sample(sample);
                     }
                 }
                 Ok(Err(tokio::sync::broadcast::error::RecvError::Lagged(_))) => continue,
-                _ => break,
+                // The channel closed: the link is gone.
+                Ok(Err(_)) => break,
+                // Nothing in this slice; go round and look at the clock and the stop flag.
+                Err(_) => continue,
             }
         }
 
-        // Best-effort restore to automatic mode.
+        // Best-effort restore: the subscription off, then the mode the ring was in.
+        let _ = self
+            .transport
+            .write(&protocol::req_set_feature_subscription(
+                feature::DAYTIME_HR,
+                protocol::subscription_mode::OFF,
+            ))
+            .await;
         let _ = self
             .transport
             .write(&protocol::req_set_feature_mode(
                 feature::DAYTIME_HR,
-                feature_mode::AUTOMATIC,
+                restore_mode,
             ))
             .await;
-        Ok(())
+        Ok(stats)
     }
 
     /// Stream live accelerometer samples (the "wave to test motion" path): enable

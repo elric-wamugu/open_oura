@@ -23,6 +23,17 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardType
+import org.openoura.android.data.Goals
 import org.openoura.android.R
 import org.openoura.android.alerts.AlertKind
 import org.openoura.android.data.RingProfile
@@ -43,6 +54,9 @@ fun YouScreen(
     onBackup: () -> Unit,
     onImportDatabase: () -> Unit,
     onCompactDatabase: () -> Unit,
+    /** The daily step target the steps widget's ring fills towards. */
+    stepTarget: Int,
+    onStepTarget: (Int) -> Unit,
     /** Each alert's switch, and whether Android lets the app notify at all. */
     alerts: Map<AlertKind, Boolean>,
     notificationsAllowed: Boolean,
@@ -104,6 +118,30 @@ fun YouScreen(
                 ),
             )
 
+            SectionHeader("Goals", Modifier.padding(top = 8.dp))
+            var editingSteps by rememberSaveable { mutableStateOf(false) }
+            Group(
+                listOf(
+                    LinkRow(
+                        icon = R.drawable.ic_sym_directions_walk,
+                        title = "Daily step target",
+                        detail = "%,d steps. The steps widget's ring fills towards it".format(stepTarget),
+                        onClick = { editingSteps = true },
+                        chevron = false,
+                    ),
+                ),
+            )
+            if (editingSteps) {
+                StepTargetDialog(
+                    current = stepTarget,
+                    onSave = {
+                        onStepTarget(it)
+                        editingSteps = false
+                    },
+                    onDismiss = { editingSteps = false },
+                )
+            }
+
             SectionHeader("Notifications", Modifier.padding(top = 8.dp))
             AlertRows(alerts, notificationsAllowed, onAlert, onNotificationSettings)
 
@@ -125,6 +163,34 @@ fun YouScreen(
             )
         }
     }
+}
+
+@Composable
+private fun StepTargetDialog(current: Int, onSave: (Int) -> Unit, onDismiss: () -> Unit) {
+    var text by rememberSaveable { mutableStateOf(current.toString()) }
+    val parsed = Goals.parseSteps(text)
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Daily step target") },
+        text = {
+            OutlinedTextField(
+                value = text,
+                onValueChange = { input -> text = input.filter { it.isDigit() }.take(6) },
+                label = { Text("Steps a day") },
+                singleLine = true,
+                isError = parsed == null,
+                supportingText = {
+                    Text(
+                        if (parsed == null) "Between %,d and %,d".format(Goals.MIN_STEPS, Goals.MAX_STEPS)
+                        else "The ring on the steps widget is full at this many",
+                    )
+                },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number, imeAction = ImeAction.Done),
+            )
+        },
+        confirmButton = { TextButton(onClick = { parsed?.let(onSave) }, enabled = parsed != null) { Text("Save") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
 }
 
 private data class LinkRow(

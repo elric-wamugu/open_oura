@@ -31,6 +31,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
 import org.openoura.android.R
+import org.openoura.android.ble.HeartReading
 import org.openoura.android.ble.SyncPhase
 import org.openoura.android.data.Summary
 import org.openoura.android.data.SummaryState
@@ -64,6 +65,9 @@ fun TodayScreen(
     onOpenRing: () -> Unit,
     cardioExpanded: Boolean,
     onToggleCardio: () -> Unit,
+    /** The last heart-rate measurement, for the card that starts a new one. */
+    lastHeartRate: HeartReading?,
+    onMeasureHeartRate: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val ready = state as? SummaryState.Ready
@@ -124,7 +128,7 @@ fun TodayScreen(
                         }
                     }
 
-                    is SummaryState.Ready -> readyItems(state, onOpenDay, onBrowseDays, cardioExpanded, onToggleCardio)
+                    is SummaryState.Ready -> readyItems(state, onOpenDay, onBrowseDays, cardioExpanded, onToggleCardio, lastHeartRate, onMeasureHeartRate)
                 }
             }
         }
@@ -137,6 +141,8 @@ private fun androidx.compose.foundation.lazy.LazyListScope.readyItems(
     onBrowseDays: () -> Unit,
     cardioExpanded: Boolean,
     onToggleCardio: () -> Unit,
+    lastHeartRate: HeartReading?,
+    onMeasureHeartRate: () -> Unit,
 ) {
     val s = state.summary
     s.digest?.takeIf { it.isNotBlank() }?.let { digest ->
@@ -181,6 +187,9 @@ private fun androidx.compose.foundation.lazy.LazyListScope.readyItems(
             SectionHeader("Vitals")
             VitalsGrid(s)
         }
+    }
+    item(key = "heart-rate") {
+        HeartRateCard(lastHeartRate, nowUnix = System.currentTimeMillis() / 1000, onMeasure = onMeasureHeartRate)
     }
     item(key = "cardio") { CardioPanel(s, cardioExpanded, onToggleCardio) }
     item(key = "footer") { Footer(s, state.stale) }

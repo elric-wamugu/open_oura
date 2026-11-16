@@ -14,6 +14,7 @@ import androidx.work.workDataOf
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
+import org.openoura.android.ble.LiveHeartRate
 import org.openoura.android.widget.WidgetSync
 import org.openoura.android.widget.WidgetUpdates
 import org.openoura.android.battery.BatteryAlerts
@@ -352,6 +353,11 @@ class AutoSyncWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(c
         // A manual sync owns the radio; two drains on one link would fight.
         if (RingSyncService.isRunning) {
             Log.i(TAG, "$trigger: a manual sync is already running")
+            return Result.success()
+        }
+        // Same for a heart-rate measurement: it holds the link for half a minute.
+        if (LiveHeartRate.isRunning) {
+            Log.i(TAG, "$trigger: a heart-rate measurement is running")
             return Result.success()
         }
         if (!RingKeyStore(ctx).hasKey) {

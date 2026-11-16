@@ -5,6 +5,7 @@ import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import androidx.compose.ui.unit.dp
+import org.openoura.android.data.Goals
 import org.openoura.android.data.WidgetSnapshot
 import org.openoura.android.widget.RingLayout
 import org.openoura.android.widget.ringLayout
@@ -12,7 +13,9 @@ import org.openoura.android.widget.RingStage
 import org.openoura.android.widget.WidgetSync
 import org.openoura.android.widget.WidgetSyncPath
 import org.openoura.android.widget.widgetSyncPath
+import org.openoura.android.widget.distanceCaption
 import org.openoura.android.widget.distanceLabel
+import org.openoura.android.widget.stepProgress
 import org.openoura.android.widget.ringCaption
 import org.openoura.android.widget.ringHours
 import org.openoura.android.widget.stageArcs
@@ -99,5 +102,25 @@ class RingGeometryTest {
         assertEquals(WidgetSyncPath.BACKGROUND, widgetSyncPath(serviceRunning = false, bluetoothGranted = true, hasKey = false))
         // A sync is already going: join it rather than start a second.
         assertEquals(WidgetSyncPath.ALREADY_RUNNING, widgetSyncPath(serviceRunning = true, bluetoothGranted = true, hasKey = true))
+    }
+
+    @Test
+    fun `the steps ring fills towards the target and stops at full`() {
+        assertEquals(0.5f, stepProgress(3_500, 7_000), 0.0001f)
+        assertEquals(1f, stepProgress(9_800, 7_000), 0.0001f)
+        assertEquals(0f, stepProgress(null, 7_000), 0.0001f)
+        assertEquals(0f, stepProgress(100, 0), 0.0001f)
+        assertEquals("5.3 km", distanceCaption(5.27))
+        assertNull(distanceCaption(null))
+    }
+
+    @Test
+    fun `a step target is a whole number in a sensible range`() {
+        assertEquals(7_000, Goals.parseSteps("7000"))
+        assertEquals(12_500, Goals.parseSteps("12,500"))
+        assertNull(Goals.parseSteps("120"))
+        assertNull(Goals.parseSteps("250000"))
+        assertNull(Goals.parseSteps(""))
+        assertNull(Goals.parseSteps("lots"))
     }
 }

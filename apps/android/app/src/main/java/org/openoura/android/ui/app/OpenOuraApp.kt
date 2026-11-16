@@ -37,6 +37,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -92,8 +93,13 @@ import org.openoura.android.ui.DayReportScreen
 import org.openoura.android.data.BackupResult
 import org.openoura.android.data.Backups
 import org.openoura.android.data.DatabaseCare
+import org.openoura.android.data.Goals
 import org.openoura.android.sync.AutoBackup
 import org.openoura.android.ui.BackupScreen
+import org.openoura.android.ui.HeartRateScreen
+import org.openoura.android.ble.LiveHeartRate
+import org.openoura.android.ui.nav.HeartRateRoute
+import org.openoura.android.widget.WidgetUpdates
 import org.openoura.android.ui.DaysBrowser
 import org.openoura.android.ui.describeBackup
 import org.openoura.android.ui.TrendsScreen
@@ -252,6 +258,11 @@ fun OpenOuraApp(
     var notificationsAllowed by remember { mutableStateOf(Alerts.allowed(app)) }
     // The You tab's per-alert switches.
     var alertSwitches by remember { mutableStateOf(AlertPrefs.all(app)) }
+    // A heart-rate measurement, and the last one's result for the Today card. Re-read
+    // whenever a measurement ends, which is the only time it changes.
+    val heartState by LiveHeartRate.state.collectAsState()
+    val lastHeartRate = remember(heartState) { LiveHeartRate.last(app) }
+    var stepTarget by remember { mutableIntStateOf(Goals.stepTarget(app)) }
     fun refreshAlertState() {
         alertsOn = BatteryAlerts.canAlert(app)
         notificationsAllowed = Alerts.allowed(app)
@@ -268,6 +279,11 @@ fun OpenOuraApp(
     }
     fun startRingSync() {
         if (RingSyncService.isRunning) return
+        // One link to the ring at a time.
+        if (LiveHeartRate.isRunning) {
+            messages.show("A heart-rate measurement is running. Try again in a moment.")
+            return
+        }
         // Everything missing in one request: Bluetooth to sync at all, and — once — the
         // notifications that carry the battery warnings. Asking for notifications only
         // alongside Bluetooth meant a Bluetooth grant from anywhere else (the ring key's
@@ -394,6 +410,13 @@ fun OpenOuraApp(
                     cardioOpen = !cardioOpen
                     prefs.edit { putBoolean("fold_cardio", cardioOpen) }
                 },
+                lastHeartRate = lastHeartRate,
+                onMeasureHeartRate = {
+                    // Straight into measuring: the card said what it does, and a second
+                    // "Measure" button on the next screen would only be a second tap.
+                    LiveHeartRate.start(app)
+                    navigator.push(HeartRateRoute)
+                },
             )
         }
         entry<HistoryRoute>(metadata = TabRootMotion) {
@@ -512,6 +535,13 @@ fun OpenOuraApp(
                 onHealthConnect = { navigator.push(HealthConnectRoute) },
                 onBackup = { navigator.push(BackupRoute) },
                 onImportDatabase = { pickDatabase.launch(arrayOf("*/*")) },
+                stepTarget = stepTarget,
+                onStepTarget = { steps ->
+                    Goals.setStepTarget(app, steps)
+                    stepTarget = steps
+                    // Redraw the steps widget against the new target now, not at the next sync.
+                    work.launch { WidgetUpdates.refreshAll(app) }
+                },
                 onCompactDatabase = {
                     work.launch {
                         messages.show("Compacting the database. Keep the app open…")
@@ -566,6 +596,26 @@ fun OpenOuraApp(
                     onTestConnection = {
                         if (BlePermissions.granted(app)) runProbe() else askBlePermissions.launch(BlePermissions.required())
                     },
+                    modifier = Modifier.padding(padding),
+                )
+            }
+        }
+        entry<HeartRateRoute> {
+            // Leaving mid-measurement ends it — by asking the ring to stop, not by dropping
+            // the link, so it is put back in its ordinary mode.
+            DisposableEffect(Unit) {
+                onDispose {
+                    LiveHeartRate.stop()
+                    LiveHeartRate.acknowledge()
+                }
+            }
+            ScreenScaffold(title = "Heart rate", onBack = navigator::back) { padding ->
+                HeartRateScreen(
+                    state = heartState,
+                    last = lastHeartRate,
+                    restingBpm = (state as? SummaryState.Ready)?.summary?.vitals?.rhr?.latest?.roundToInt(),
+                    onStart = { LiveHeartRate.start(app) },
+                    onStop = { LiveHeartRate.stop() },
                     modifier = Modifier.padding(padding),
                 )
             }

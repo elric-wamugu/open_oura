@@ -285,6 +285,14 @@ replaced:
   night) and the night's sleep efficiency under it. Then, in this order: **Steps, Distance
   (km), Ring charge**. HRV and resting heart rate are not shown, by choice.
 - **Ring battery** (`BatteryWidget`): the charge as an arc, coloured on the brain's band.
+- **Steps today** (`StepsWidget`, added the same day): the stage ring widget with its two
+  halves swapped. The ring is today's steps towards a **daily step target**, with the
+  distance under the count; the figures are **Asleep, Sleep efficiency, Ring charge**. It
+  shares the card, the layouts and the refresh button with the stage ring (`RingCard`).
+  The target is a setting — You → Goals → Daily step target, 7,000 by default, kept in
+  `Goals` — and it is a preference, not a metric: `oura-summary` knows nothing of it and
+  the web has no counterpart. The ring stops at full; a day past the target is a full ring
+  and the count says the rest.
 
 What shaped them:
 
@@ -678,6 +686,54 @@ Where 1,033 MB (5,655,007 events) went, from SQLite's `dbstat`:
   runners (`tools/run_*_model.py`, `tools/build_daily.py`) and the iOS app
   (`EventStore.swift`, `CvaModel.swift`), so that is a migration of every reader plus a
   rewrite of each user's only database — its own piece of work.
+
+### Measuring heart rate now (2026-11-16)
+
+A "Measure heart rate" card on Today, between Vitals and Cardiovascular, opens a screen
+that reads the pulse live for 30 seconds.
+
+- **The ring could, but not the way the code asked.** `OuraClient::live_heart_rate` put
+  daytime HR in `CONNECTED_LIVE` and waited for per-beat notifications. On this Ring 3 the
+  mode change is accepted and nothing follows: the first measurement from the phone ran
+  its 30 seconds and received no live frames at all. The notifications are indications of
+  the feature's *latest value*, and the ring only sends them to a subscriber, so the
+  method now also sends `SetFeatureSubscription(DAYTIME_HR, LATEST)` — after which the
+  same ring sent 27 in 30 s — and drops it again on the way out. `oura live-hr` on the
+  desktop gets the same fix. The ring sends about one reading a second, not one per beat.
+- **A measurement reports what the ring sent**, not only the beats (`HeartRateReport`:
+  notifications seen, how many were live-HR ones, the ring's answer to the mode change,
+  the first few raw). That is what turned "no reading" into the finding above, and it is
+  logged every time.
+- **`live_heart_rate_until`** is that method made fit for a person: it can be stopped
+  early, checking a flag four times a second whether or not beats are arriving (a ring off
+  the finger sends none, and Stop has to work then too), and it restores a mode it is
+  given rather than always `AUTOMATIC`. `RingSession::live_heart_rate` reads that mode from
+  `feature_modes.json`, so a measurement cannot switch daytime HR on for someone who had
+  it off.
+- **Stop, do not cancel.** The Kotlin side ends a measurement with
+  `RingSession::stop_heart_rate` and waits for the call to return. Cancelling the
+  coroutine would drop the Rust future before it restores the mode. The exception is
+  while still looking for the ring, when nothing has been asked of it yet and the search
+  is simply abandoned.
+- **One link at a time.** A measurement refuses to start during a sync, and the app's Sync
+  button, the background sync worker and the widget's refresh all stand back while one
+  runs.
+- **What is shown.** Each beat's figure comes from that beat's interval alone, so the raw
+  stream jitters and occasionally contains a mistimed beat. The screen shows the median of
+  the last five; the result's average, low and high are taken over that smoothed series,
+  and fewer than eight beats is reported as no reading.
+- **Not saved as history.** Nothing goes into `oura.db` and Health Connect is not told;
+  the last result alone is kept, for the card.
+- **Tried on the ring, 2026-11-16:** 26 readings in 30 s, result 77 bpm (75–79), no
+  freeze. Not checked: Stop mid-measurement, leaving the screen mid-measurement, the ring
+  off the finger, and that the ring's mode reads back as restored afterwards.
+- **Off the main thread, in its own scope.** The first build ran the measurement in the
+  Activity's scope and froze the app the moment it connected: the BLE bridge waits for
+  GATT callbacks that Android delivers on the main thread, so a write made from the main
+  thread waited for a reply that could not arrive until it stopped waiting. Every thread
+  was asleep, which is what gave it away. Syncs and feature toggles already ran on
+  `Dispatchers.IO` for this; `LiveHeartRate` now has its own IO scope, which also means a
+  rotation cannot cancel a measurement half-way and strand the ring in live mode.
 
 ---
 
