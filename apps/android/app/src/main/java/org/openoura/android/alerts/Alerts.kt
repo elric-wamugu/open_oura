@@ -35,6 +35,11 @@ enum class AlertKind(val key: String, val title: String, val detail: String) {
         "Sync overdue",
         "After 2 days without a sync, and before the ring starts overwriting data",
     ),
+    BACKUP_FAILED(
+        "backup_failed",
+        "Automatic backup failing",
+        "When the daily backup can't be written",
+    ),
 }
 
 object AlertPrefs {

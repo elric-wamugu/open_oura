@@ -91,9 +91,45 @@ summary is recomputed afterwards if anything was added.
 Measured on a Pixel 9a, release build: 5,655,007 events backed up in 23 s; the same file
 restored into an empty database on a laptop in 23 s.
 
+## Automatic backup (Android)
+
+Off by default. Switched on from the same screen, it writes a backup once a day to **one
+file chosen once**, with nobody there to type a passphrase. Code:
+`apps/android/.../sync/AutoBackup.kt`.
+
+- **Where.** The system file picker again (`CreateDocument`), and the app keeps the grant
+  with `takePersistableUriPermission`. It is one document, not a folder: Google Drive does
+  not offer folders to `ACTION_OPEN_DOCUMENT_TREE`. So each run replaces
+  `open_oura-auto.ourabak`, and each backup is complete. The provider's own version
+  history, where it has one, is the only history.
+- **The provider uploads, not the app.** There is still no `INTERNET` permission. "Backed
+  up" on the screen means the file was handed to the provider; whether and when it reached
+  the cloud is the provider's business and the app cannot see it.
+- **When.** A 24-hour WorkManager job that needs charging and an unmetered network, so the
+  provider's upload most likely follows on Wi-Fi. It is skipped when neither `oura.db` nor
+  its WAL has been modified since the last backup began — a file `stat`, because the
+  alternative is opening a gigabyte database every night to count rows. Daily is enough:
+  the ring holds about eight and a half days, so a phone lost between backups loses nothing
+  the ring still has.
+- **The passphrase is stored — this is the trade.** It is kept the way the ring key is:
+  encrypted by an AES/GCM key that never leaves the Android Keystore, ciphertext in
+  SharedPreferences (`BackupSecretStore`). That keeps it from other apps and from an adb
+  pull, not from this app's own process on an unlocked, compromised phone. Manual backups
+  still ask every time and store nothing. Turning automatic backup off deletes the
+  passphrase and its wrapper key and releases the file grant; the backup file stays.
+- **A failed run never replaces a good file.** The backup is built in the app's cache and
+  only a finished one is copied over the destination. What is not covered: a copy that is
+  cut off part-way leaves a truncated file, which `restore` will refuse as damaged rather
+  than half-restore. The next day's run rewrites it.
+- **Saying when it breaks.** One notification ("Automatic backup isn't working", its own
+  switch on the You tab) after three failed days in a row, or at once when only the user
+  can fix it: the file grant is gone, or the stored passphrase cannot be read.
+
+The desktop has no scheduler of its own: `OURA_BACKUP_PASSPHRASE=… oura backup <file>`
+from cron does the same job.
+
 ## Not done yet
 
-- **Automatic backup.** This is manual. A scheduled one needs somewhere to keep a key,
-  which is a different trade-off from "never stored" and is deliberately a separate step.
-- **Incremental backups.** Every backup is complete. At 80 MB that is affordable by hand
-  and wasteful on a schedule.
+- **Incremental backups.** Every backup is complete. One document is all the picker grants
+  in Drive, so increments would need the Drive API, an account sign-in and the `INTERNET`
+  permission — a deliberate non-goal so far.

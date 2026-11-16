@@ -215,6 +215,7 @@ private fun alertIcon(kind: AlertKind): Int = when (kind) {
     AlertKind.BATTERY_FULL -> R.drawable.ic_sym_battery_charging_full
     AlertKind.NIGHT_FORECAST -> R.drawable.ic_sym_bedtime
     AlertKind.SYNC_OVERDUE -> R.drawable.ic_sym_sync
+    AlertKind.BACKUP_FAILED -> R.drawable.ic_sym_database
 }
 
 /**

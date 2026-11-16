@@ -32,6 +32,8 @@ import androidx.compose.ui.unit.dp
 import org.openoura.android.R
 import org.openoura.android.data.BackupResult
 import org.openoura.android.data.Backups
+import org.openoura.android.sync.AutoBackup
+import org.openoura.android.sync.AutoBackupState
 import org.openoura.android.ui.components.SectionHeader
 import org.openoura.android.ui.components.ShapedIcon
 import java.time.Instant
@@ -66,8 +68,9 @@ internal fun describeBackup(result: BackupResult): String = when (result) {
  *
  * Its own screen for the same reason Health Connect has one: this is the one place the
  * app's data can leave the phone, so what goes where, and what protects it, is said plainly
- * before anything happens. The passphrase lives in this screen's memory only — typed, used,
- * and gone when the screen closes.
+ * before anything happens. A manual backup's passphrase lives in this screen's memory only —
+ * typed, used, and gone when the screen closes. The automatic backup's is the exception,
+ * and its section says so before asking for one.
  */
 @Composable
 fun BackupScreen(
@@ -82,12 +85,20 @@ fun BackupScreen(
     onPickRestore: () -> Unit,
     onRestore: (passphrase: String) -> Unit,
     onCancelRestore: () -> Unit,
+    auto: AutoBackupState,
+    /** Passphrase chosen; next the picker asks where the file lives. */
+    onAutoSetup: (passphrase: String) -> Unit,
+    onAutoNow: () -> Unit,
+    onAutoOff: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val cs = MaterialTheme.colorScheme
     var passphrase by remember { mutableStateOf("") }
     var confirm by remember { mutableStateOf("") }
     var restorePassphrase by remember { mutableStateOf("") }
+    var autoSettingUp by remember { mutableStateOf(false) }
+    var autoPassphrase by remember { mutableStateOf("") }
+    var autoConfirm by remember { mutableStateOf("") }
     Column(
         modifier
             .fillMaxSize()
@@ -108,8 +119,8 @@ fun BackupScreen(
         Text(
             "The ring only keeps about a week, so this phone holds the only copy of everything " +
                 "older. The file is encrypted here, before it goes anywhere, with a passphrase " +
-                "you choose. The passphrase is not stored: without it nobody can open the " +
-                "backup, including you.",
+                "you choose. Without it nobody can open the backup, including you. It is " +
+                "stored on this phone only if you turn on automatic backup.",
             style = MaterialTheme.typography.bodyMedium,
             color = cs.onSurfaceVariant,
         )
@@ -163,6 +174,85 @@ fun BackupScreen(
                         shapes = ButtonDefaults.shapes(),
                         modifier = Modifier.fillMaxWidth(),
                     ) { Text("Choose where to save") }
+                }
+            }
+        }
+
+        SectionHeader("Automatic backup")
+        Surface(shape = MaterialTheme.shapes.extraLarge, color = cs.surfaceContainer, modifier = Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                when {
+                    auto.enabled -> {
+                        Text("On · ${auto.destination ?: "backup file"}", style = MaterialTheme.typography.titleMedium)
+                        Text(
+                            AutoBackup.describe(auto),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = if (auto.lastError != null) cs.error else cs.onSurfaceVariant,
+                        )
+                        Text(
+                            "Once a day while charging on Wi-Fi, when the ring has brought in " +
+                                "something new. The same file is replaced each time.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = cs.onSurfaceVariant,
+                        )
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            FilledTonalButton(
+                                onClick = onAutoNow,
+                                enabled = !busy && hasDatabase,
+                                shapes = ButtonDefaults.shapes(),
+                                modifier = Modifier.weight(1f),
+                            ) { Text("Back up now") }
+                            TextButton(onClick = onAutoOff, enabled = !busy) { Text("Turn off") }
+                        }
+                    }
+                    !hasDatabase -> Text("Nothing to back up yet. Sync with the ring first.", color = cs.onSurfaceVariant)
+                    autoSettingUp -> {
+                        val problem = Backups.passphraseProblem(autoPassphrase, autoConfirm)
+                        Text(
+                            "This passphrase is kept on this phone, encrypted by Android's " +
+                                "Keystore, so backups can run without asking. You still need " +
+                                "to remember it to restore anywhere else.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = cs.onSurfaceVariant,
+                        )
+                        PassphraseField("Passphrase", autoPassphrase, { autoPassphrase = it }, enabled = !busy)
+                        PassphraseField(
+                            "Passphrase again",
+                            autoConfirm,
+                            { autoConfirm = it },
+                            enabled = !busy,
+                            supporting = problem.takeIf { autoPassphrase.isNotEmpty() },
+                        )
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Button(
+                                onClick = {
+                                    onAutoSetup(autoPassphrase)
+                                    autoPassphrase = ""
+                                    autoConfirm = ""
+                                    autoSettingUp = false
+                                },
+                                enabled = !busy && problem == null,
+                                shapes = ButtonDefaults.shapes(),
+                                modifier = Modifier.weight(1f),
+                            ) { Text("Choose the backup file") }
+                            TextButton(onClick = { autoSettingUp = false }, enabled = !busy) { Text("Cancel") }
+                        }
+                    }
+                    else -> {
+                        Text(
+                            "Back up once a day to one file you choose, for example in Google " +
+                                "Drive. It runs while the phone is charging on Wi-Fi and " +
+                                "replaces the same file each time.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = cs.onSurfaceVariant,
+                        )
+                        FilledTonalButton(
+                            onClick = { autoSettingUp = true },
+                            enabled = !busy,
+                            shapes = ButtonDefaults.shapes(),
+                            modifier = Modifier.fillMaxWidth(),
+                        ) { Text("Set up") }
+                    }
                 }
             }
         }

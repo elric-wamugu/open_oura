@@ -2,6 +2,7 @@ package org.openoura.android.data
 
 import android.content.Context
 import android.net.Uri
+import android.os.ParcelFileDescriptor
 import android.util.Log
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -37,12 +38,16 @@ sealed interface BackupResult {
  * and no account of its own: the provider the user picked does the uploading. The core
  * writes the file without seeking, which is what makes a cloud provider's pipe usable.
  *
- * The passphrase is never stored. It is asked for each time and handed straight to the core.
+ * A manual backup's passphrase is never stored: it is asked for each time and handed
+ * straight to the core. Only the automatic backup keeps one — see [BackupSecretStore].
  */
 object Backups {
 
     /** Short enough to type on a phone, long enough that Argon2id makes guessing it slow. */
     const val MIN_PASSPHRASE = 8
+
+    /** The automatic backup's one file, replaced daily — so no date in the name. */
+    const val AUTO_FILE_NAME = "open_oura-auto.ourabak"
 
     fun fileName(today: LocalDate = LocalDate.now()): String = "open_oura-$today.ourabak"
 
@@ -74,20 +79,39 @@ object Backups {
     }
 
     suspend fun backup(ctx: Context, to: Uri, passphrase: String, onProgress: (Float?) -> Unit): BackupResult =
-        run(ctx, to, "wt", restoring = false) { fd -> backupToFd(dbPath(ctx), passphrase, fd, listener(onProgress)) }
+        run(restoring = false, open = { ctx.contentResolver.openFileDescriptor(to, "wt") }) { fd ->
+            backupToFd(dbPath(ctx), passphrase, fd, listener(onProgress))
+        }
+
+    /**
+     * Back up into a plain file. The automatic backup writes here first and copies the
+     * finished file to its destination, so a backup that fails part-way never replaces the
+     * good one already there.
+     */
+    suspend fun backupToFile(ctx: Context, to: File, passphrase: String, onProgress: (Float?) -> Unit): BackupResult =
+        run(
+            restoring = false,
+            open = {
+                ParcelFileDescriptor.open(
+                    to,
+                    ParcelFileDescriptor.MODE_WRITE_ONLY or ParcelFileDescriptor.MODE_CREATE or
+                        ParcelFileDescriptor.MODE_TRUNCATE,
+                )
+            },
+        ) { fd -> backupToFd(dbPath(ctx), passphrase, fd, listener(onProgress)) }
 
     suspend fun restore(ctx: Context, from: Uri, passphrase: String, onProgress: (Float?) -> Unit): BackupResult =
-        run(ctx, from, "r", restoring = true) { fd -> restoreFromFd(dbPath(ctx), passphrase, fd, listener(onProgress)) }
+        run(restoring = true, open = { ctx.contentResolver.openFileDescriptor(from, "r") }) { fd ->
+            restoreFromFd(dbPath(ctx), passphrase, fd, listener(onProgress))
+        }
 
     private suspend fun run(
-        ctx: Context,
-        uri: Uri,
-        mode: String,
         restoring: Boolean,
+        open: () -> ParcelFileDescriptor?,
         call: (Int) -> String,
     ): BackupResult = withContext(Dispatchers.IO) {
         runCatching {
-            val pfd = requireNotNull(ctx.contentResolver.openFileDescriptor(uri, mode)) { "could not open the file" }
+            val pfd = requireNotNull(open()) { "could not open the file" }
             // Detached: the core owns the descriptor from here and closes it when done,
             // which for a cloud provider is also what tells it the upload is complete.
             parse(call(pfd.detachFd()), restoring)
