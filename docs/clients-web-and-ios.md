@@ -51,7 +51,8 @@ logs it and `profile_summary` prints it — see "Release build and profiling" in
 | Stage breakdown | `stageBar` | `StageBreakdown` | `nights[].{deep,light,rem,wake}_pct` | SleepNet |
 | **Autonomic recovery by stage** (mean HR/HRV in deep/light/REM) | `sleepReport` autonomic grid | `SleepReport` `autonomicGrid` | `nights[].autonomic` | SleepNet (needs hypnogram) |
 | **Cardiovascular age** | `renderVascular` — a fold *inside* the Cardiovascular panel | Cardio section | `cardio` | CVA (web: Python · iOS: `CvaModel`) |
-| **Fitness = resting-HR trend** (headline) | `renderCardio` | Fitness section | `vitals.rhr` | — |
+| **Fitness = resting-HR trend** (headline) | `renderCardio` | `CardioPanel` on Today, with VO₂max and vascular age in the same panel (Android) / Fitness section (iOS) | `vitals.rhr` | — |
+| **Trends over 7 / 30 / 90 days** (HRV, resting HR, time asleep, efficiency, SpO₂, skin temp, steps) | — (not on the web yet) | `TrendsScreen` behind History's Days / Trends switch (Android) / — (iOS) | `nights[]`, `activity_daily` | — |
 | **VO₂max estimate** (demoted baseline) | `renderCardio` kv | Fitness section | `fitness.vo2max` | — (Jackson, model-free) |
 | **Peak sustained HR** (daily) | `activityReport` metric + note | `ActivityReport` readout + note | `activity_daily[].peak_hr`, `fitness.hr_max_predicted` | — |
 | Movement ridge | `ridgeSvg` | `MovementRidge` | `activity_profile` | — (MET, model-free) |
@@ -352,6 +353,15 @@ nightly need" but "a 7.5 h need". `app.js` hardcodes "an".
   in Android's short file-size form. Deliberately a client-side `stat` rather than a
   summary field: it describes the local file, not the ring's data, and each client can
   read its own. The web or iOS could show theirs the same way if it ever earns the space.
+
+- **Trends** (`apps/android/.../ui/Trends.kt`): the History tab switches between the list
+  of days and a Trends view — each measure's average over the last 7, 30 or 90 days, how
+  that compares with the same number of days before, and a chart. **Android-only so far,
+  and unlike the rest of this list it is a gap to close**: the web has the same data and
+  no such view. Two rules worth carrying over when it gets one: a day keeps its place on
+  the x axis whether or not it has a value, so time off the finger shows as a gap, and the
+  comparison is withheld when the earlier period has fewer than three values. Nothing new
+  is computed — a night counts on the day it was woken from, as the day cards pair them.
 
 Two Android features have no web or iOS counterpart, and are not omissions to close:
 
