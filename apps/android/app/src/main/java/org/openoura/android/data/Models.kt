@@ -256,6 +256,10 @@ data class Summary(
     val cardio: Cardio? = null,
     val fitness: Fitness? = null,
     @SerialName("sleep_debt") val sleepDebt: SleepDebt? = null,
+    /** When the core built this, unix seconds. `device.freshHours` is relative to it. */
+    @SerialName("generated_at") val generatedAt: Double? = null,
+    /** Where the core's recompute went, stage → ms. Diagnostic: logged, never rendered. */
+    @SerialName("timings_ms") val timingsMs: Map<String, Double> = emptyMap(),
     val error: String? = null,
 ) {
     /**

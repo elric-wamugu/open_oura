@@ -4,9 +4,31 @@
 # For more details, see
 #   https://d.android.com/r/tools/r8/keep-rules
 
-# If your project uses WebView with JS, uncomment the following
-# and specify the fully qualified class name to the JavaScript interface
-# class:
-#-keepclassmembers class fqcn.of.javascript.interface.for.webview {
-#   public *;
-#}
+# Shrink and optimise, but keep names. Obfuscation buys nothing for an open-source app, and
+# it costs three things here: stack traces in logcat stop being readable, the navigation
+# back stack is saved by serialised class name (a rename between two builds would fail to
+# restore it), and JNA below finds everything by name.
+-dontobfuscate
+
+# JNA. Its native dispatch library calls back into these classes by name over JNI, and reads
+# Structure fields and Callback methods reflectively, so R8 can see none of the uses.
+-keep class com.sun.jna.** { *; }
+-keep class * implements com.sun.jna.** { *; }
+# JNA's desktop-only AWT helpers, which Android does not have.
+-dontwarn java.awt.**
+
+# The generated UniFFI bindings to liboura_core.so. JNA binds the `UniffiLib` interface to
+# the library's symbols by method name, and lays out `RustBuffer` and the other Structures
+# from their fields, so the whole package is reached reflectively.
+-keep class uniffi.** { *; }
+
+# Room creates a database by reflection: Class.forName("<Database>_Impl").newInstance().
+# Room 2.5.0, which WorkManager 2.9.1 brings in, keeps those classes but not their
+# constructors, and R8 strips a constructor nothing calls directly. The first release build
+# crashed at startup on 2026-11-15 creating WorkManager's own WorkDatabase.
+-keep class * extends androidx.room.RoomDatabase { <init>(); }
+
+# The same gap in WorkManager 2.9.1's own rules: an InputMerger is created by class name
+# with its no-argument constructor before every job. With it stripped, each job fails with
+# "Could not create Input Merger" — no crash, but no background sync and no widget refresh.
+-keep class * extends androidx.work.InputMerger { <init>(); }

@@ -1,5 +1,6 @@
 package org.openoura.android
 
+import android.content.Intent
 import android.graphics.Color
 import android.os.Build
 import android.os.Bundle
@@ -19,11 +20,30 @@ import org.openoura.android.data.SummaryRepository
 import org.openoura.android.sync.AutoSync
 import org.openoura.android.sync.SyncTrigger
 import org.openoura.android.ui.app.OpenOuraApp
+import org.openoura.android.ui.nav.Tab
 import org.openoura.android.ui.theme.OpenOuraTheme
 import org.openoura.android.ui.theme.ThemePrefs
 import org.openoura.android.widget.WidgetUpdates
 
 class MainActivity : ComponentActivity() {
+
+    companion object {
+        /** A [Tab] name: which tab a tapped notification should open the app on. */
+        const val EXTRA_OPEN_TAB = "open_tab"
+    }
+
+    /** The tab a notification asked for, until the app has gone there. */
+    private var openTab by mutableStateOf<Tab?>(null)
+
+    private fun tabOf(intent: Intent?): Tab? =
+        intent?.getStringExtra(EXTRA_OPEN_TAB)?.let { runCatching { Tab.valueOf(it) }.getOrNull() }
+
+    /** A notification tapped while the app is already open arrives here, not in onCreate. */
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        openTab = tabOf(intent)
+    }
 
     /**
      * Opening the app is the opportunistic sync trigger, and it belongs here rather than in
@@ -49,6 +69,10 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge(navigationBarStyle = SystemBarStyle.auto(Color.TRANSPARENT, Color.TRANSPARENT))
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) window.isNavigationBarContrastEnforced = false
 
+        // Only on a fresh start: a recreated Activity still carries the intent that first
+        // opened it, and following it again would yank the user back to that tab on rotation.
+        if (savedInstanceState == null) openTab = tabOf(intent)
+
         val repo = SummaryRepository.get(applicationContext)
         // Render the cached snapshot immediately; only compute when there is nothing
         // cached. A full recompute is an explicit user action or a post-sync step rather
@@ -65,6 +89,8 @@ class MainActivity : ComponentActivity() {
                     profiles = ProfileStore(applicationContext),
                     ringKeys = RingKeyStore(applicationContext),
                     work = lifecycleScope,
+                    openTab = openTab,
+                    onTabOpened = { openTab = null },
                     dynamicColor = dynamic,
                     onDynamicColor = { on ->
                         dynamic = on

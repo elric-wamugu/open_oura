@@ -3,16 +3,19 @@ package org.openoura.android.battery
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
-import android.app.PendingIntent
 import android.content.Context
-import android.content.Intent
 import android.util.Log
 import androidx.core.app.NotificationCompat
-import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.edit
-import org.openoura.android.MainActivity
 import org.openoura.android.R
+import org.openoura.android.alerts.ALERT_AMBER
+import org.openoura.android.alerts.ALERT_RED
+import org.openoura.android.alerts.ALERT_TEAL
+import org.openoura.android.alerts.AlertKind
+import org.openoura.android.alerts.AlertPrefs
+import org.openoura.android.alerts.Alerts
 import org.openoura.android.data.Summary
+import org.openoura.android.ui.nav.Tab
 
 private const val TAG = "OpenOuraBattery"
 
@@ -23,11 +26,6 @@ private const val CHANNEL_FULL = "ring_battery_full"
 /** One id for every low warning, so each escalation replaces the last rather than stacking. */
 private const val NOTIF_LOW = 1002
 private const val NOTIF_FULL = 1003
-
-/** The notification accent per band: the brain's amber, then red. */
-private const val AMBER = 0xFFC9842B.toInt()
-private const val RED = 0xFFBA1A1A.toInt()
-private const val TEAL = 0xFF0D9488.toInt()
 
 /** Ordered worst-last: a band is only worth announcing if it is worse than the last one. */
 enum class BatteryLevel { OK, LOW, VERY_LOW, CRITICAL }
@@ -126,14 +124,7 @@ object BatteryAlerts {
      * Whether battery alerts can reach the user at all: notifications on for the app, and
      * none of the battery channels switched off. The Ring tab shows a card when not.
      */
-    fun canAlert(ctx: Context): Boolean {
-        val compat = NotificationManagerCompat.from(ctx)
-        if (!compat.areNotificationsEnabled()) return false
-        val manager = ctx.getSystemService(NotificationManager::class.java) ?: return false
-        return listOf(CHANNEL_LOW, CHANNEL_CRITICAL, CHANNEL_FULL).none { id ->
-            manager.getNotificationChannel(id)?.importance == NotificationManager.IMPORTANCE_NONE
-        }
-    }
+    fun canAlert(ctx: Context): Boolean = Alerts.canPost(ctx, CHANNEL_LOW, CHANNEL_CRITICAL, CHANNEL_FULL)
 
     /**
      * Check a freshly computed summary: warn if the ring is running down, say so if it has
@@ -157,7 +148,7 @@ object BatteryAlerts {
             later(seenStart, device.batteryChargeStartedUnix)?.let { putFloat64(KEY_CHARGE_START, it) }
             later(lastFull, full)?.let { putFloat64(KEY_FULL, it) }
         }
-        if (announce && canPost && manager != null) {
+        if (announce && canPost && manager != null && AlertPrefs.enabled(ctx, AlertKind.BATTERY_FULL)) {
             manager.cancel(NOTIF_LOW)
             postFull(ctx, manager, full!!)
             Log.i(TAG, "ring fully charged")
@@ -172,6 +163,12 @@ object BatteryAlerts {
             alert.notify == null -> {
                 store(ctx, alert.state)
                 Log.i(TAG, "ring at $level (${alert.state}${if (device.batteryCharging) ", charging" else ""})")
+            }
+            // Switched off on the You tab: a decision, so the band is noted and never said —
+            // switching the alert back on must not replay warnings from while it was off.
+            !AlertPrefs.enabled(ctx, AlertKind.BATTERY_LOW) -> {
+                store(ctx, alert.state)
+                Log.i(TAG, "ring at $level — ${alert.notify} warning switched off")
             }
             // A warning that cannot be shown is not a warning given: leave the state where it
             // was, so it fires once notifications are allowed.
@@ -195,13 +192,6 @@ object BatteryAlerts {
         ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit { putString(KEY_STATE, level.name) }
     }
 
-    private fun openApp(ctx: Context): PendingIntent = PendingIntent.getActivity(
-        ctx,
-        0,
-        Intent(ctx, MainActivity::class.java),
-        PendingIntent.FLAG_IMMUTABLE,
-    )
-
     private fun postLow(ctx: Context, manager: NotificationManager, level: BatteryLevel, pct: Int?) {
         ensureChannels(manager)
         val (title, text) = when (level) {
@@ -217,11 +207,11 @@ object BatteryAlerts {
             .setContentTitle(title + (pct?.let { " — $it%" } ?: ""))
             .setContentText(text)
             .setSmallIcon(R.drawable.ic_launcher_monochrome)
-            .setColor(if (level == BatteryLevel.LOW) AMBER else RED)
+            .setColor(if (level == BatteryLevel.LOW) ALERT_AMBER else ALERT_RED)
             .setPriority(if (critical) NotificationCompat.PRIORITY_HIGH else NotificationCompat.PRIORITY_DEFAULT)
             .setCategory(NotificationCompat.CATEGORY_STATUS)
             .setAutoCancel(true)
-            .setContentIntent(openApp(ctx))
+            .setContentIntent(Alerts.open(ctx, Tab.RING))
             .build()
         manager.notify(NOTIF_LOW, notification)
     }
@@ -232,7 +222,7 @@ object BatteryAlerts {
             .setContentTitle("Ring fully charged")
             .setContentText("Put it back on to keep recording.")
             .setSmallIcon(R.drawable.ic_launcher_monochrome)
-            .setColor(TEAL)
+            .setColor(ALERT_TEAL)
             // Stamped with when it reached 100%, which can be a while before the sync that
             // noticed — the shade then says "2:14 pm", not "now".
             .setWhen((fullUnix * 1000).toLong())
@@ -240,7 +230,7 @@ object BatteryAlerts {
             .setTimeoutAfter(FULL_MAX_AGE_SEC * 1000)
             .setCategory(NotificationCompat.CATEGORY_STATUS)
             .setAutoCancel(true)
-            .setContentIntent(openApp(ctx))
+            .setContentIntent(Alerts.open(ctx, Tab.RING))
             .build()
         manager.notify(NOTIF_FULL, notification)
     }

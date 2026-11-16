@@ -13,7 +13,7 @@
 //! `docs/clients-web-and-ios.md`.
 
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::{anyhow, Context, Result};
 use serde_json::{json, Value};
@@ -1036,7 +1036,54 @@ fn effort_sessions(
 
 /// Assemble the full dashboard summary as a JSON value. The torch models are
 /// supplied by `runner` (Python subprocess on desktop, `.ptl` on-device).
+/// Wall-clock per stage of [`build_summary`], shipped as `timings_ms`.
+///
+/// A recompute re-reads the ring's whole history, so its cost grows with every day of
+/// data: 7.5–8.3 s on a Pixel 9a over 2.4M events (2026-10-29). This says *where* that
+/// went without a profiler attached, which matters on a phone — the split between reading
+/// the database and computing over it there is nothing like a laptop's.
+///
+/// Diagnostic only. No client renders it and none should branch on it; the Android app
+/// logs it beside its own `summary_json` timing.
+struct Stages {
+    started: Instant,
+    last: Instant,
+    ms: serde_json::Map<String, Value>,
+}
+
+impl Stages {
+    fn new() -> Self {
+        let now = Instant::now();
+        Stages {
+            started: now,
+            last: now,
+            ms: serde_json::Map::new(),
+        }
+    }
+
+    /// Close the stage that has been running since the previous mark.
+    fn mark(&mut self, stage: &str) {
+        let now = Instant::now();
+        self.ms
+            .insert(stage.to_string(), json!(tenths_ms(now - self.last)));
+        self.last = now;
+    }
+
+    fn finish(mut self) -> Value {
+        self.ms.insert(
+            "total".to_string(),
+            json!(tenths_ms(self.started.elapsed())),
+        );
+        Value::Object(self.ms)
+    }
+}
+
+fn tenths_ms(d: std::time::Duration) -> f64 {
+    (d.as_secs_f64() * 10_000.0).round() / 10.0
+}
+
 pub fn build_summary(db: &Path, tz: i64, runner: &dyn ModelRunner) -> Result<Value> {
+    let mut stages = Stages::new();
     let db_abs = std::fs::canonicalize(db).unwrap_or_else(|_| {
         std::env::current_dir()
             .map(|d| d.join(db))
@@ -1058,6 +1105,7 @@ pub fn build_summary(db: &Path, tz: i64, runner: &dyn ModelRunner) -> Result<Val
             db.display()
         ));
     }
+    stages.mark("read_events");
     // `ring_timestamp` (ds) is a per-boot deciseconds counter. During continuous wear
     // it advances at ~10/sec of real time, so the newest event ≈ "now" (its sync's
     // capture time) and everything else sits (newest_ds − ds)/10 seconds earlier —
@@ -1148,6 +1196,7 @@ pub fn build_summary(db: &Path, tz: i64, runner: &dyn ModelRunner) -> Result<Val
     };
     // Wall-clock "now" reference (newest sync).
     let anchor_unix = epochs.iter().map(|e| e.anchor_unix).max().unwrap_or(0);
+    stages.mark("clock");
 
     let mut beds: Vec<(i64, i64, usize)> = Vec::new();
     let mut present_recent = std::collections::HashSet::new();
@@ -1286,6 +1335,8 @@ pub fn build_summary(db: &Path, tz: i64, runner: &dyn ModelRunner) -> Result<Val
         }
     }
 
+    stages.mark("night_signals");
+
     // the model seam — sleep / cva / activity (Python subprocess or on-device .ptl)
     let sleep_ranges: Vec<Value> = nights
         .iter()
@@ -1308,6 +1359,7 @@ pub fn build_summary(db: &Path, tz: i64, runner: &dyn ModelRunner) -> Result<Val
         demo: &demo,
         sleep_ranges: &sleep_ranges,
     });
+    stages.mark("models");
 
     let hyps: std::collections::HashMap<String, Value> = sleep_batch
         .as_ref()
@@ -1450,6 +1502,7 @@ pub fn build_summary(db: &Path, tz: i64, runner: &dyn ModelRunner) -> Result<Val
             "need_h": need_h,
         })
     };
+    stages.mark("sleep");
 
     let mut activity = activity_raw
         .as_ref()
@@ -1536,6 +1589,8 @@ pub fn build_summary(db: &Path, tz: i64, runner: &dyn ModelRunner) -> Result<Val
         }
     }
 
+    stages.mark("activity");
+
     // Peak sustained HR per day, from the quality-gated beat stream (`green_ibi_quality_event`
     // carries a per-beat quality flag; the ungated `ibi_and_amplitude_event` is full of
     // 30-bpm/2000-ms artefacts). Beat times step forward by each beat's own IBI.
@@ -1613,6 +1668,7 @@ pub fn build_summary(db: &Path, tz: i64, runner: &dyn ModelRunner) -> Result<Val
             peak_sustained_hr(v).map(|p| (k.clone(), p.round()))
         })
         .collect();
+    stages.mark("heart");
 
     let activity_daily: Value = daily
         .iter()
@@ -1895,9 +1951,11 @@ pub fn build_summary(db: &Path, tz: i64, runner: &dyn ModelRunner) -> Result<Val
     });
 
     let digest = make_digest(&hrv_stat, &rhr_stat);
+    stages.mark("device");
 
     Ok(json!({
         "generated_at": now,
+        "timings_ms": stages.finish(),
         "tz": tz,
         "digest": digest,
         "device": device,
@@ -1924,10 +1982,24 @@ pub fn build_summary(db: &Path, tz: i64, runner: &dyn ModelRunner) -> Result<Val
 mod tests {
     use super::{
         battery_band, battery_charge_state, battery_history, battery_points, battery_rested_pct,
-        fit_ds_offsets, unix_from_offsets, ChargeState, BATTERY_CRITICAL_PCT, BATTERY_LOW_PCT,
-        BATTERY_VERY_LOW_PCT,
+        fit_ds_offsets, unix_from_offsets, ChargeState, Stages, BATTERY_CRITICAL_PCT,
+        BATTERY_LOW_PCT, BATTERY_VERY_LOW_PCT,
     };
     use serde_json::json;
+
+    #[test]
+    fn stage_timings_cover_the_whole_run() {
+        let mut stages = Stages::new();
+        std::thread::sleep(std::time::Duration::from_millis(2));
+        stages.mark("read_events");
+        stages.mark("clock");
+        let t = stages.finish();
+        let ms = |k: &str| t[k].as_f64().unwrap_or(-1.0);
+        assert!(ms("read_events") >= 2.0, "{t}");
+        assert!(ms("clock") >= 0.0, "{t}");
+        // Every stage is inside the total, so the remainder is what was not marked.
+        assert!(ms("total") >= ms("read_events") + ms("clock"), "{t}");
+    }
 
     #[test]
     fn battery_bands_sit_where_the_constants_say() {

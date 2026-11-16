@@ -22,7 +22,9 @@ import kotlinx.coroutines.launch
 import org.openoura.android.MainActivity
 import org.openoura.android.R
 import org.openoura.android.battery.BatteryAlerts
+import org.openoura.android.battery.NightForecast
 import org.openoura.android.sync.AutoSync
+import org.openoura.android.sync.SyncHealth
 import org.openoura.android.health.HealthExport
 import org.openoura.android.data.SummaryRepository
 
@@ -83,6 +85,8 @@ class RingSyncService : Service() {
                     if (phase is SyncPhase.Running) notify(describeSync(phase))
                 }
                 _phase.value = result
+                SyncHealth.record(applicationContext, result)
+                SyncHealth.check(applicationContext)
 
                 if (result is SyncPhase.Done) {
                     // Only now is the database newer than the cached summary. recompute()
@@ -95,6 +99,7 @@ class RingSyncService : Service() {
                     // the only moment there is anything new to publish.
                     repo.cached()?.let {
                         BatteryAlerts.check(applicationContext, it)
+                        NightForecast.check(applicationContext, it)
                         it.device?.let { d ->
                             AutoSync.scheduleFollowUp(
                                 applicationContext,

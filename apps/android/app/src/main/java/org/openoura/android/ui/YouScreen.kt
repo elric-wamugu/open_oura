@@ -1,5 +1,6 @@
 package org.openoura.android.ui
 
+import android.content.pm.ApplicationInfo
 import androidx.annotation.DrawableRes
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -23,6 +24,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
 import org.openoura.android.R
+import org.openoura.android.alerts.AlertKind
 import org.openoura.android.data.RingProfile
 import org.openoura.android.ui.components.ScreenScaffold
 import org.openoura.android.ui.components.SectionHeader
@@ -39,6 +41,11 @@ fun YouScreen(
     onRingKey: () -> Unit,
     onHealthConnect: () -> Unit,
     onImportDatabase: () -> Unit,
+    /** Each alert's switch, and whether Android lets the app notify at all. */
+    alerts: Map<AlertKind, Boolean>,
+    notificationsAllowed: Boolean,
+    onAlert: (AlertKind, Boolean) -> Unit,
+    onNotificationSettings: () -> Unit,
     dynamicColor: Boolean,
     onDynamicColor: (Boolean) -> Unit,
     modifier: Modifier = Modifier,
@@ -81,6 +88,9 @@ fun YouScreen(
                     ),
                 ),
             )
+
+            SectionHeader("Notifications", Modifier.padding(top = 8.dp))
+            AlertRows(alerts, notificationsAllowed, onAlert, onNotificationSettings)
 
             SectionHeader("Appearance", Modifier.padding(top = 8.dp))
             AppearanceRow(dynamicColor, onDynamicColor)
@@ -167,25 +177,84 @@ private fun AppearanceRow(dynamicColor: Boolean, onDynamicColor: (Boolean) -> Un
                 },
             )
         },
-        trailingContent = {
-            Switch(
-                checked = dynamicColor,
-                onCheckedChange = onDynamicColor,
-                enabled = supported,
-                thumbContent = if (dynamicColor) {
-                    {
-                        Icon(
-                            painterResource(R.drawable.ic_sym_check),
-                            contentDescription = null,
-                            modifier = Modifier.size(SwitchDefaults.IconSize),
-                        )
-                    }
-                } else {
-                    null
-                },
-            )
-        },
+        trailingContent = { CheckSwitch(dynamicColor, onDynamicColor, enabled = supported) },
     ) { Text("Wallpaper colours") }
+}
+
+/** A switch that shows a tick in its thumb while on. */
+@Composable
+private fun CheckSwitch(checked: Boolean, onCheckedChange: (Boolean) -> Unit, enabled: Boolean = true) {
+    Switch(
+        checked = checked,
+        onCheckedChange = onCheckedChange,
+        enabled = enabled,
+        thumbContent = if (checked) {
+            {
+                Icon(
+                    painterResource(R.drawable.ic_sym_check),
+                    contentDescription = null,
+                    modifier = Modifier.size(SwitchDefaults.IconSize),
+                )
+            }
+        } else {
+            null
+        },
+    )
+}
+
+@DrawableRes
+private fun alertIcon(kind: AlertKind): Int = when (kind) {
+    AlertKind.BATTERY_LOW -> R.drawable.ic_sym_battery_alert
+    AlertKind.BATTERY_FULL -> R.drawable.ic_sym_battery_charging_full
+    AlertKind.NIGHT_FORECAST -> R.drawable.ic_sym_bedtime
+    AlertKind.SYNC_OVERDUE -> R.drawable.ic_sym_sync
+}
+
+/**
+ * One switch per alert, then the way into Android's own settings — where sound and
+ * importance live, and where a blocked app is unblocked. The switches stay usable while
+ * Android blocks notifications, so the last row says so rather than greying everything out.
+ */
+@Composable
+private fun AlertRows(
+    alerts: Map<AlertKind, Boolean>,
+    notificationsAllowed: Boolean,
+    onAlert: (AlertKind, Boolean) -> Unit,
+    onNotificationSettings: () -> Unit,
+) {
+    val kinds = AlertKind.entries
+    val count = kinds.size + 1
+    Column(verticalArrangement = Arrangement.spacedBy(ListItemDefaults.SegmentedGap)) {
+        kinds.forEachIndexed { i, kind ->
+            val on = alerts[kind] != false
+            SegmentedListItem(
+                onClick = { onAlert(kind, !on) },
+                shapes = ListItemDefaults.segmentedShapes(i, count),
+                colors = groupColors(),
+                leadingContent = { ShapedIcon(alertIcon(kind)) },
+                supportingContent = { Text(kind.detail) },
+                trailingContent = { CheckSwitch(on, { onAlert(kind, it) }) },
+            ) { Text(kind.title) }
+        }
+        SegmentedListItem(
+            onClick = onNotificationSettings,
+            shapes = ListItemDefaults.segmentedShapes(count - 1, count),
+            colors = groupColors(),
+            leadingContent = {
+                ShapedIcon(if (notificationsAllowed) R.drawable.ic_sym_info else R.drawable.ic_sym_error)
+            },
+            supportingContent = {
+                Text(
+                    if (notificationsAllowed) {
+                        "Sound, vibration and importance for each alert"
+                    } else {
+                        "Android is blocking notifications from open_oura, so none of these can be shown."
+                    },
+                )
+            },
+            trailingContent = { Icon(painterResource(R.drawable.ic_sym_chevron_right), contentDescription = null) },
+        ) { Text(if (notificationsAllowed) "Android notification settings" else "Notifications are blocked") }
+    }
 }
 
 /** Rows sit on the container tone, so a group reads as one block against the page. */
@@ -196,6 +265,10 @@ internal fun groupColors() = ListItemDefaults.segmentedColors(containerColor = M
 private fun rememberVersion(): String? {
     val context = LocalContext.current
     return remember {
+        // Both builds carry the same version and install over each other, so the debug one
+        // says what it is: it is the slower of the two, and the only one `run-as` works on.
+        val debug = context.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0
         runCatching { context.packageManager.getPackageInfo(context.packageName, 0).versionName }.getOrNull()
+            ?.let { if (debug) "$it (debug)" else it }
     }
 }
