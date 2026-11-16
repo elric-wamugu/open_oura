@@ -14,7 +14,7 @@ runtime colour library and makes every shipped colour reviewable in a diff.
 
 Writes:
   app/src/main/java/org/openoura/android/ui/theme/BrandSchemes.kt   BrandLight / BrandDark
-  app/src/main/res/values/brand_colors.xml, values-night/...        window + widget XML
+  app/src/main/res/values/brand_colors.xml, values-night/...        window background XML
 
 The variant defaults to Fidelity, which keeps the seed's own saturation, so the app still
 reads as the dashboard's teal. Material You (the wallpaper toggle) uses the system's
@@ -65,14 +65,11 @@ ROLES = [
     "tertiaryFixed", "tertiaryFixedDim", "onTertiaryFixed", "onTertiaryFixedVariant",
 ]
 
-# Only what the XML side uses: the launch window background (surface) and the widget
-# placeholder and picker previews, which are drawn before or outside any Compose theme.
-# Glance's Material 3 widget background is secondaryContainer with its tone nudged; the
-# previews approximate it with the role itself, and their headline pill is primaryContainer.
+# The roles needed as XML resources: only the window background, which is drawn before any
+# Compose theme exists. The home-screen widgets used to take their card and pill colours
+# from here too; they are a fixed dark card now (res/values/widget_colors.xml).
 XML_ROLES = [
     "surface",
-    "secondaryContainer", "onSecondaryContainer",
-    "primaryContainer", "onPrimaryContainer",
 ]
 
 

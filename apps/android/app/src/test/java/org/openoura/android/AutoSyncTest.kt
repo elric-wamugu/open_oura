@@ -228,4 +228,19 @@ class AutoSyncTest {
         assertTrue(AutoSync.FOLLOW_UP_CHARGING_SEC > floor)
         assertTrue(AutoSync.FOLLOW_UP_LOW_SEC > floor)
     }
+
+    @Test
+    fun `the widget's refresh button skips the floor and quiet hours, but not a double tap`() {
+        val night = SleepWindow(startMin = 23 * 60, endMin = 7 * 60)
+        // Ten minutes after the last sync, at three in the morning: someone asked.
+        assertEquals(
+            SyncDecision.SYNC,
+            AutoSync.decide(SyncTrigger.WIDGET, 1_000_000, 1_000_000 - 600, 3 * 60, night, AutoSync.minIntervalFor(SyncTrigger.WIDGET)),
+        )
+        assertEquals(
+            SyncDecision.TOO_SOON,
+            AutoSync.decide(SyncTrigger.WIDGET, 1_000_000, 1_000_000 - 20, 12 * 60, null, AutoSync.minIntervalFor(SyncTrigger.WIDGET)),
+        )
+        assertEquals(60L, AutoSync.minIntervalFor(SyncTrigger.WIDGET))
+    }
 }

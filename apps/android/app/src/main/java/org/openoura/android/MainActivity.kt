@@ -97,8 +97,6 @@ class MainActivity : ComponentActivity() {
                     onDynamicColor = { on ->
                         dynamic = on
                         ThemePrefs.setDynamicColor(applicationContext, on)
-                        // The widgets read the same setting; redraw them to match.
-                        lifecycleScope.launch { WidgetUpdates.refreshAll(applicationContext) }
                     },
                 )
             }

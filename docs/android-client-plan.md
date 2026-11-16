@@ -276,6 +276,58 @@ painful.
 5. **[you]** Add each widget to your home screen — placement cannot be driven over adb.
 6. **[you]** Check *Settings → Battery → App battery usage* after ~24 h.
 
+**Redesigned 2026-11-16: two widgets, both rings.** The three text widgets above were
+replaced:
+
+- **Last night and today** (`StageRingWidget`): last night's sleep stages as a ring —
+  deep, light, REM, awake, clockwise from twelve o'clock, each stage's share of the circle
+  its share of the night — with hours asleep in the middle (hours in bed for an unscored
+  night) and the night's sleep efficiency under it. Then, in this order: **Steps, Distance
+  (km), Ring charge**. HRV and resting heart rate are not shown, by choice.
+- **Ring battery** (`BatteryWidget`): the charge as an arc, coloured on the brain's band.
+
+What shaped them:
+
+- **Rings are bitmaps** for the same reason the stage bar was: RemoteViews cannot draw an
+  arc. The geometry is pure and tested (`RingGeometry.kt`); only the drawing is Android's.
+- **`SizeMode.Exact`, not `Responsive`.** With `Responsive`, `LocalSize` is the *declared*
+  size that was matched, not the space granted, and a ring sized from it came out a
+  fraction of its cell. The layout is chosen from the real size: figures beside the ring
+  when wide (≥ 230 dp), under it when tall (≥ 190 dp), ring alone otherwise.
+- **The receiver kept its old name.** The launcher ties a placed widget to its receiver's
+  class, so the stage ring is served by `ActivityWidgetReceiver` — the old "Today" widget
+  — and one already on a home screen changes in place. The Vitals and Last night
+  receivers are gone; a launcher removes widgets whose provider no longer exists.
+- **A fixed dark card, not the theme.** Near-black with light text in both modes, and
+  not following the "Wallpaper colours" setting. The first version took its container from
+  the app's scheme, and a tinted (green, or wallpaper-coloured) card fought with the stage
+  colours drawn on it. A translucent card was the alternative considered: it shows the
+  wallpaper through, but a widget cannot blur what is behind it, so text over a bright or
+  busy wallpaper would not be reliably readable. The ring-charge figure is the one thing
+  that changes colour — amber and red on the brain's bands.
+- **A refresh button in the corner** (`WidgetSync.kt`): syncs with the ring and redraws
+  without opening the app. The tap queues the same background sync the app-open trigger
+  uses, as `SyncTrigger.WIDGET` — no 3-hour floor and no quiet hours, because someone
+  asked, with a one-minute floor only to swallow a double tap. While it runs the icon
+  turns. A widget cannot run a Compose animation, so the turning icon is a plain layout
+  (`widget_sync_spinner.xml`) holding a `ProgressBar` whose indeterminate drawable is the
+  icon inside a `<rotate>`. "Syncing" is a timestamp that lapses after 90 s, not a flag,
+  so a worker the system never ran cannot leave it turning. Measured on the Pixel 9a: tap to fresh
+  figures took about 40 s, of which the recompute was 18 s — the same recompute that takes
+  3.2 s with the app on screen. A background process gets far less CPU; not addressed here.
+- **A widget on screen has to be told its data changed.** Glance keeps a composition alive
+  for a while after a draw or a tap, and `updateAll` only recomposes it — the code that
+  loaded the snapshot does not run again. The first version read the snapshot once, up
+  front, so a tap synced the ring and the widget went on showing what it had. The widgets
+  now read inside the composition, keyed on `WidgetBus.version`, which every snapshot
+  write and every start or end of a widget sync bumps.
+- **The tap handler needs a keep rule.** Glance creates an `ActionCallback` by class name;
+  R8 keeps the class and would strip its constructor. See `rules.keep`.
+- **Icons** beside each figure are the app's own, tinted for the dark card; the ruler for
+  Distance (`ic_sym_straighten`) is new.
+- **Distance** is the brain's `distance_m` (steps × 0.762 m, ecore's own factor), already
+  shown on the web's activity report. Nothing new is computed.
+
 **Data path:** widgets read `widget.json` (~600 bytes) written by `SummaryRepository` after
 each successful recompute, never the 207 KB summary and never the Rust core — a widget
 update can fire with the app closed and must be cheap. `WidgetUpdates.refreshAll` repaints

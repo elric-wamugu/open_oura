@@ -12,6 +12,6 @@
         android:layout_height="wrap_content"
         android:layout_gravity="center"
         android:text="@string/app_name"
-        android:textColor="@color/brand_on_secondary_container"
+        android:textColor="@color/widget_text_muted"
         android:textSize="11sp" />
 </FrameLayout>

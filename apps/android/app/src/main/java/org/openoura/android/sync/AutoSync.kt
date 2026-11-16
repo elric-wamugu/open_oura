@@ -12,6 +12,10 @@ import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import androidx.work.workDataOf
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
+import org.openoura.android.widget.WidgetSync
+import org.openoura.android.widget.WidgetUpdates
 import org.openoura.android.battery.BatteryAlerts
 import org.openoura.android.battery.BatteryLevel
 import org.openoura.android.battery.NightForecast
@@ -46,7 +50,14 @@ data class SleepWindow(val startMin: Int, val endMin: Int) {
  * battery state is worth watching closely — charging, or running low — and is held to a
  * much shorter floor than the others.
  */
-enum class SyncTrigger { PERIODIC, APP_OPEN, FOLLOW_UP }
+enum class SyncTrigger {
+    PERIODIC,
+    APP_OPEN,
+    FOLLOW_UP,
+
+    /** The refresh button on the home-screen widget: someone asked, by hand, right now. */
+    WIDGET,
+}
 
 enum class SyncDecision { SYNC, TOO_SOON, ASLEEP }
 
@@ -127,15 +138,26 @@ object AutoSync {
         val since = nowEpochSec - lastAttemptEpochSec
         return when {
             since in 0 until minIntervalSec -> SyncDecision.TOO_SOON
-            trigger == SyncTrigger.APP_OPEN -> SyncDecision.SYNC
+            // Someone is holding the phone and asked: quiet hours are not for them.
+            trigger == SyncTrigger.APP_OPEN || trigger == SyncTrigger.WIDGET -> SyncDecision.SYNC
             window?.contains(minuteOfDay) == true -> SyncDecision.ASLEEP
             else -> SyncDecision.SYNC
         }
     }
 
-    /** The floor a trigger is held to: [FOLLOW_UP_MIN_INTERVAL_SEC] for follow-ups. */
-    fun minIntervalFor(trigger: SyncTrigger): Long =
-        if (trigger == SyncTrigger.FOLLOW_UP) FOLLOW_UP_MIN_INTERVAL_SEC else MIN_INTERVAL_SEC
+    /**
+     * The widget's refresh button is a person asking, so the 3-hour floor does not apply.
+     * A minute is only there to swallow a double tap: a scan for a ring that is out of
+     * reach takes 25 s, and two of those back to back help nobody.
+     */
+    const val WIDGET_MIN_INTERVAL_SEC = 60L
+
+    /** The floor a trigger is held to. */
+    fun minIntervalFor(trigger: SyncTrigger): Long = when (trigger) {
+        SyncTrigger.FOLLOW_UP -> FOLLOW_UP_MIN_INTERVAL_SEC
+        SyncTrigger.WIDGET -> WIDGET_MIN_INTERVAL_SEC
+        else -> MIN_INTERVAL_SEC
+    }
 
     /**
      * How soon to look at the ring again, given what the last sync said about its battery;
@@ -311,7 +333,17 @@ object AutoSync {
  */
 class AutoSyncWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(ctx, params) {
 
-    override suspend fun doWork(): Result {
+    override suspend fun doWork(): Result = try {
+        sync()
+    } finally {
+        // Whatever happened — synced, too soon, no ring in reach, stopped — the widget's
+        // refresh icon has to stop turning, or it would go on until its own timeout.
+        withContext(NonCancellable) {
+            if (WidgetSync.finish(applicationContext)) WidgetUpdates.refreshAll(applicationContext)
+        }
+    }
+
+    private suspend fun sync(): Result {
         val ctx = applicationContext
         val trigger = runCatching {
             SyncTrigger.valueOf(inputData.getString(AutoSync.KEY_TRIGGER) ?: "")

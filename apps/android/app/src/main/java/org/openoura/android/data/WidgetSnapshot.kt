@@ -1,6 +1,10 @@
 package org.openoura.android.data
 
 import android.content.Context
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import java.io.File
@@ -27,6 +31,8 @@ data class WidgetSnapshot(
     // last night
     val nightLabel: String? = null,
     val sleepHours: Double? = null,
+    /** Time actually asleep, where the night was scored. [sleepHours] is time in bed. */
+    val asleepHours: Double? = null,
     val efficiency: Int? = null,
     val spo2: Int? = null,
     val deepPct: Int? = null,
@@ -35,11 +41,30 @@ data class WidgetSnapshot(
     val wakePct: Int? = null,
     // today
     val steps: Int? = null,
+    /** Walking distance, from the brain's `distance_m`. */
+    val distanceKm: Double? = null,
     val peakHr: Int? = null,
     val batteryPct: Int? = null,
     /** The brain's band, so the widget colours the level like the app does. */
     val batteryStatus: String? = null,
 )
+
+/**
+ * Tells widgets that are on screen right now that what they show has changed.
+ *
+ * Glance keeps a widget's composition alive for a while after it is drawn or tapped, and
+ * asking it to update only recomposes what is already there — it does not run the code
+ * that loaded the data again. A widget that read its snapshot once, up front, therefore
+ * went on showing it: tap refresh, the ring syncs, and the figures stay as they were. So
+ * the widgets watch this counter and re-read whenever it moves. It is in-process state,
+ * which is all that is needed: the sync and the widget's composition share the process.
+ */
+object WidgetBus {
+    private val _version = MutableStateFlow(0)
+    val version: StateFlow<Int> = _version.asStateFlow()
+
+    fun changed() = _version.update { it + 1 }
+}
 
 object WidgetStore {
     private val json = Json { ignoreUnknownKeys = true }
@@ -54,6 +79,7 @@ object WidgetStore {
         runCatching {
             file(ctx).writeText(json.encodeToString(WidgetSnapshot.serializer(), snap))
         }
+        WidgetBus.changed()
     }
 
     /** Project a full summary down to what the widgets need. */
@@ -73,6 +99,7 @@ object WidgetStore {
             rhrBaseline = s.vitals.rhr.baseline?.roundToInt(),
             nightLabel = nightDay,
             sleepHours = night?.inBedH,
+            asleepHours = night?.metrics?.asleepMin?.let { it / 60.0 },
             efficiency = night?.efficiency?.roundToInt(),
             spo2 = s.nights.firstOrNull { it.spo2Mean != null }?.spo2Mean?.roundToInt(),
             deepPct = night?.deepPct?.roundToInt(),
@@ -80,6 +107,7 @@ object WidgetStore {
             remPct = night?.remPct?.roundToInt(),
             wakePct = night?.wakePct?.roundToInt(),
             steps = daily?.steps?.roundToInt(),
+            distanceKm = daily?.distanceM?.let { it / 1000.0 },
             peakHr = daily?.peakHr?.roundToInt(),
             batteryPct = s.device?.batteryPct,
             batteryStatus = s.device?.batteryStatus,

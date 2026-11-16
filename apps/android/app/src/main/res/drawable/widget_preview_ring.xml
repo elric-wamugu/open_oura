@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The stage ring as the widget picker shows it: a fixed night (12 / 59 / 13 / 16), drawn
+     with the same start, order and gaps as RingGeometry.stageArcs. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="124dp" android:height="124dp"
+    android:viewportWidth="124" android:viewportHeight="124">
+    <path android:pathData="M63.61,16.03A46,46 0 0 1 93.54,28.51" android:strokeColor="#454FB0" android:strokeWidth="12" />
+    <path android:pathData="M95.80,30.79A46,46 0 1 1 18.71,77.55" android:strokeColor="#8693D6" android:strokeWidth="12" />
+    <path android:pathData="M17.73,74.49A46,46 0 0 1 21.75,39.73" android:strokeColor="#4FA6B0" android:strokeWidth="12" />
+    <path android:pathData="M23.40,36.97A46,46 0 0 1 60.39,16.03" android:strokeColor="#D2B06E" android:strokeWidth="12" />
+</vector>

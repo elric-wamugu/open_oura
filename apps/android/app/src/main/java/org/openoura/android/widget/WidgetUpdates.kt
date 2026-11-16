@@ -22,9 +22,8 @@ object WidgetUpdates {
 
     /** Repaint every placed widget from the current snapshot. Cheap: no core call. */
     suspend fun refreshAll(ctx: Context) {
-        runCatching { VitalsWidget().updateAll(ctx) }
-        runCatching { SleepWidget().updateAll(ctx) }
-        runCatching { ActivityWidget().updateAll(ctx) }
+        runCatching { StageRingWidget().updateAll(ctx) }
+        runCatching { BatteryWidget().updateAll(ctx) }
     }
 
     private const val PERIODIC = "widget-refresh"

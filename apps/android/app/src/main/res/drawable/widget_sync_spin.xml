@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The sync icon, turning. A ProgressBar drives an indeterminate drawable's level from 0
+     to 10000 and back to 0 on a loop, and a <rotate> maps its level onto these degrees —
+     which is the only way a home-screen widget can animate: RemoteViews cannot run a
+     Compose animation, but it can host a ProgressBar. -->
+<rotate xmlns:android="http://schemas.android.com/apk/res/android"
+    android:drawable="@drawable/ic_sym_sync"
+    android:fromDegrees="0"
+    android:toDegrees="360"
+    android:pivotX="50%"
+    android:pivotY="50%" />
