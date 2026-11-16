@@ -56,6 +56,9 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.core.content.edit
 import androidx.lifecycle.compose.LifecycleResumeEffect
+import org.openoura.android.alerts.AlertKind
+import org.openoura.android.alerts.AlertPrefs
+import org.openoura.android.alerts.Alerts
 import org.openoura.android.battery.BatteryAlerts
 import androidx.health.connect.client.HealthConnectClient
 import androidx.health.connect.client.PermissionController
@@ -125,12 +128,22 @@ fun OpenOuraApp(
     work: CoroutineScope,
     dynamicColor: Boolean,
     onDynamicColor: (Boolean) -> Unit,
+    /** The tab a tapped notification asked for, if one is waiting to be opened. */
+    openTab: Tab? = null,
+    onTabOpened: () -> Unit = {},
 ) {
     val context = LocalContext.current
     val app = context.applicationContext
     val prefs = remember { app.getSharedPreferences("ui", Context.MODE_PRIVATE) }
     val scope = rememberCoroutineScope()
     val navigator = rememberNavigator()
+    // An alert was tapped: go where it points, once.
+    LaunchedEffect(openTab) {
+        openTab?.let {
+            navigator.select(it)
+            onTabOpened()
+        }
+    }
     val snackbar = remember { SnackbarHostState() }
     val messages = remember(snackbar, scope) { AppMessages(snackbar, scope) }
     val dynamic by rememberUpdatedState(dynamicColor)
@@ -224,12 +237,19 @@ fun OpenOuraApp(
     // Whether battery alerts can reach the user. Re-read on every return to the app: they
     // can be switched off (or back on) in system settings at any time.
     var alertsOn by remember { mutableStateOf(BatteryAlerts.canAlert(app)) }
-    LifecycleResumeEffect(Unit) {
+    var notificationsAllowed by remember { mutableStateOf(Alerts.allowed(app)) }
+    // The You tab's per-alert switches.
+    var alertSwitches by remember { mutableStateOf(AlertPrefs.all(app)) }
+    fun refreshAlertState() {
         alertsOn = BatteryAlerts.canAlert(app)
+        notificationsAllowed = Alerts.allowed(app)
+    }
+    LifecycleResumeEffect(Unit) {
+        refreshAlertState()
         onPauseOrDispose { }
     }
     val askSyncPermissions = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
-        alertsOn = BatteryAlerts.canAlert(app)
+        refreshAlertState()
         // POST_NOTIFICATIONS may be refused without blocking the sync — only the progress
         // notification and the battery alerts are lost — so the Bluetooth ones decide.
         if (BlePermissions.granted(app)) RingSyncService.start(app)
@@ -255,8 +275,15 @@ fun OpenOuraApp(
     // The Ring tab's "battery alerts are off" card: ask once if Android still lets us,
     // otherwise go straight to the app's notification settings, where a refusal is undone.
     var askedForAlerts by rememberSaveable { mutableStateOf(false) }
+    fun openNotificationSettings() {
+        context.startActivity(
+            Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+                .putExtra(Settings.EXTRA_APP_PACKAGE, app.packageName)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+        )
+    }
     val askNotifications = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) {
-        alertsOn = BatteryAlerts.canAlert(app)
+        refreshAlertState()
     }
     fun enableAlerts() {
         val permission = notificationPermission().firstOrNull()
@@ -266,11 +293,7 @@ fun OpenOuraApp(
             askedForAlerts = true
             askNotifications.launch(permission!!)
         } else {
-            context.startActivity(
-                Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
-                    .putExtra(Settings.EXTRA_APP_PACKAGE, app.packageName)
-                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
-            )
+            openNotificationSettings()
         }
     }
 
@@ -338,8 +361,10 @@ fun OpenOuraApp(
                     prefs.edit { putBoolean("fold_device", deviceOpen) }
                 },
                 busyCapability = capabilityBusy,
-                // Only worth raising once there is a ring to warn about.
-                alertsOff = !alertsOn && ringKeyFp != null,
+                // Only worth raising once there is a ring to warn about, and only while a
+                // battery alert is still wanted: switching both off is not a fault to fix.
+                alertsOff = !alertsOn && ringKeyFp != null &&
+                    (alertSwitches[AlertKind.BATTERY_LOW] != false || alertSwitches[AlertKind.BATTERY_FULL] != false),
                 onEnableAlerts = ::enableAlerts,
                 onToggleCapability = { cap ->
                     // The ring holds one connection; a drain already has it.
@@ -384,6 +409,15 @@ fun OpenOuraApp(
                 onRingKey = { navigator.push(RingKeyRoute) },
                 onHealthConnect = { navigator.push(HealthConnectRoute) },
                 onImportDatabase = { pickDatabase.launch(arrayOf("*/*")) },
+                alerts = alertSwitches,
+                notificationsAllowed = notificationsAllowed,
+                onAlert = { kind, on ->
+                    AlertPrefs.set(app, kind, on)
+                    alertSwitches = AlertPrefs.all(app)
+                    // Switching one on while Android blocks them all would change nothing.
+                    if (on && !notificationsAllowed) enableAlerts()
+                },
+                onNotificationSettings = ::openNotificationSettings,
                 dynamicColor = dynamic,
                 onDynamicColor = { setDynamic(it) },
             )

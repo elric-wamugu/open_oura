@@ -390,7 +390,128 @@ Only once the above is solid:
   **4.5 s** and the Mac to **6.3 s**. JSON parsing — the other obvious suspect, 138 MB of
   it decoded in seven separate passes — turned out to cost under a second a pass. Revisit
   rollups only if a measurement says so; `cargo run --release -p oura-summary --example
-  profile_summary -- oura.db` is that measurement.
+  profile_summary -- oura.db` is that measurement. **It is being asked again:** the
+  Pixel 9a took 7.5–8.3 s by 2026-10-29 and 8.9–9.6 s by 2026-11-15 — see "Release build
+  and profiling" below.
+
+---
+
+## Release build and profiling — **DONE, measured on the Pixel 9a 2026-11-15**
+
+### The release build
+
+Until now the phone ran the debug build: no R8, and debuggable, so ART neither applies the
+baseline profiles Compose ships nor compiles ahead of time. `./gradlew :app:assembleRelease`
+now produces `app/build/outputs/apk/release/app-release.apk`: **5.2 MB against 23 MB**
+(4.0 MB of dex against 42 MB), with the libraries' baseline profile packaged in
+`assets/dexopt/`.
+
+- **R8 on, names kept.** `-dontobfuscate`: shrinking and inlining are where the speed is,
+  and renaming would cost readable stack traces and risk the saved navigation back stack,
+  which is stored by serialised class name. The app's own rules are in
+  `app/src/main/keepRules/rules.keep` — JNA and the generated `uniffi` package are kept
+  whole, because `liboura_core.so` and JNA's dispatch library reach them by name.
+- **Signed with the debug keystore, on purpose.** Android installs an update only over a
+  matching signature, and the installed copy is signed with that key. A separate release key
+  would force an uninstall, which deletes `oura.db`. With one key either build installs over
+  the other: `adb install -r app-release.apk`. Check the certificate first with
+  `apksigner verify --print-certs`, and never uninstall to get past a signature error.
+- **Not debuggable, so `run-as` stops working** while the release build is installed. That
+  takes away pulling `oura.db` off the phone and the adb push import. Install the debug build
+  over it to get them back; the data survives. The You tab's About row says "(debug)" on a
+  debug build, since both carry the same version.
+- **`profileable`**, so simpleperf and Perfetto attach over adb to the code that really runs.
+- **After a sideload** the baseline profile is compiled at the next idle maintenance window.
+  `adb shell cmd package compile -f -m speed-profile org.openoura.android` does it at once.
+- **Not done:** an app-specific baseline profile, which needs a macrobenchmark module.
+- **Two library rules had to be completed.** Room 2.5.0 and WorkManager 2.9.1 keep
+  `RoomDatabase` and `InputMerger` subclasses but not their no-argument constructors, which
+  both libraries call by reflection, and R8 strips a constructor nothing calls directly. The
+  first release build crashed at startup creating WorkManager's `WorkDatabase`; the second
+  ran, but every job failed with "Could not create Input Merger" — no background sync, no
+  widget refresh, and nothing on screen to say so. Both rules are in `rules.keep`. After
+  adding or bumping a dependency, look in `app/build/outputs/mapping/release/usage.txt` for
+  a removed `<init>()` on anything created by class name, and read logcat on the first run.
+
+Cold start to the first frame (`am start -W`, process killed between runs):
+
+| Build | Cold start | Cache parse on the main thread |
+| --- | --- | --- |
+| debug | 1.4–5.3 s over 16 launches | 0.54–2.8 s (timed on 5 of them) |
+| release, as installed (`verify`) | 271–294 ms over 7 | 104–113 ms |
+| release, profile compiled (`speed-profile`) | 200–224 ms over 7 | 76–80 ms |
+
+On the debug build the first frame arrives about 0.9 s plus the cache parse, and the parse
+swings five-fold for the same file. It runs in ART's switch interpreter inside `onCreate`,
+so it is at the mercy of where the scheduler puts a launching app. That last part is a
+guess: the launch was never slow while simpleperf was sampling it, which fits CPU placement
+but does not prove it. The release build makes it moot.
+
+### Where a recompute goes
+
+`build_summary` times its own stages and ships them as `timings_ms` (milliseconds):
+
+| Stage | What it covers |
+| --- | --- |
+| `read_events` | Opening the database and reading every decoded event into memory |
+| `clock` | Splitting into boot epochs and fitting each one's ring-time → wall-clock offsets |
+| `night_signals` | Finding the bedtime periods and collecting each night's HR, HRV, temp, SpO₂ and motion |
+| `models` | The model runner (nothing on the phone: `NoModelRunner`) |
+| `sleep` | Per-night metrics, series and sleep debt |
+| `activity` | The MET profile, steps and calories per day |
+| `heart` | Quality-gated beats, peak sustained HR and effort sessions |
+| `device` | Vitals trends, stream and event counts, battery, the device block |
+| `total` | All of the above |
+
+The Android app logs it after every recompute, slowest first, with what it cost on top:
+
+```
+OpenOura: summary_json: 838 KB in 8331 ms — read_events …, night_signals …; other …; parse … ms
+OpenOura: summary cache: 838 KB read and parsed in … ms on main
+```
+
+`other` is serialising the summary and carrying the string across the FFI; `parse` is
+kotlinx.serialization turning it back into objects. On the desktop,
+`cargo run --release -p oura-summary --example profile_summary -- oura.db 3` prints the
+same stages.
+
+Measured on the Pixel 9a over a 1.03 GB database (ms; the core is the same
+`liboura_core.so` in both builds, so only `parse` differs between them):
+
+| Run | `read_events` | `heart` | `night_signals` | `sleep` | `clock` | `device` | `activity` | other | total | parse |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| debug | 4386 | 1770 | 1549 | 823 | 358 | 226 | 106 | 334 | 9556 | 154 |
+| release, seconds after an install | **22367** | 1799 | 1515 | 832 | 352 | 229 | 104 | 326 | 27527 | 54 |
+| release | 4267 | 1753 | 1529 | 843 | 329 | 220 | 102 | 338 | 9384 | 37 |
+| release, after a sync | 3823 | 1771 | 1525 | 864 | 327 | 203 | 106 | 292 | 8916 | 35 |
+
+What that says:
+
+- **Reading the events is 43–46% of a recompute**, and the only stage that moves. It took
+  22 s once, straight after an install, with every other stage unchanged — so it is bound
+  by the disk, and by whether the 1 GB file is still in the page cache. Reading less is the
+  only fix; a faster parse would not touch it.
+- **The three passes that parse event JSON** (`heart`, `night_signals`, `sleep`) are another
+  4.1 s between them, steady to within 3%.
+- **It grows about half a second a week**: 7.5–8.3 s on 2026-10-29, 8.9–9.6 s on 2026-11-15.
+
+Found on the way, not fixed here:
+
+- **Cold start parses the cache on the main thread.** `MainActivity.onCreate` launches
+  `repo.load()` on the main dispatcher, so the read and parse run before the first frame:
+  about 38% of a release cold start, and most of a debug one.
+- **Every app open parses the cache twice.** The app-open sync worker reads it again to
+  work out quiet hours, before deciding the sync is too soon to run at all.
+- **A launch with a stale cache and a sync due recomputes twice.** The stale-cache
+  recompute (9.5 s) and the post-sync one (9.7 s) ran back to back; the first was thrown
+  away.
+- **The Sync button has no accessibility label.** `uiautomator` sees a clickable view with
+  no text or description.
+
+Still unmeasured: how much memory holding every event's JSON at once costs
+(`decoded_events_for_serial` returns one `Vec` of all of them), and how much of
+`night_signals` is matching each event against every night in turn and parsing events whose
+tag it then ignores.
 
 ---
 

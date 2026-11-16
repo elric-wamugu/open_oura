@@ -1,8 +1,10 @@
 package org.openoura.android
 
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import org.openoura.android.data.describeRecompute
 import org.openoura.android.data.summaryCacheIsStale
 
 private const val HOUR = 3_600_000L
@@ -46,5 +48,24 @@ class SummaryCacheTest {
         // A recompute lands in the same second as the sync that prompted it often enough
         // that treating equality as stale would recompute on every launch.
         assertFalse(summaryCacheIsStale(cacheWrittenAt = NOW, dbModifiedAt = NOW, appUpdatedAt = NOW))
+    }
+
+    @Test
+    fun `a recompute is logged slowest stage first, with the wait fully accounted for`() {
+        val stages = mapOf("clock" to 310.4, "read_events" to 5210.0, "heart" to 800.9, "total" to 6400.0)
+        assertEquals(
+            // "other" is what the core's own total leaves out: serialising and the FFI copy.
+            "summary_json: 838 KB in 6500 ms — read_events 5210, heart 800, clock 310; other 100; parse 140 ms",
+            describeRecompute(kb = 838, coreMs = 6500, parseMs = 140, stages = stages),
+        )
+    }
+
+    @Test
+    fun `a core without stage timings still logs the total`() {
+        // An older liboura_core.so, or an error payload: nothing to break down.
+        assertEquals(
+            "summary_json: 136 KB in 900 ms; parse 20 ms",
+            describeRecompute(kb = 136, coreMs = 900, parseMs = 20, stages = emptyMap()),
+        )
     }
 }

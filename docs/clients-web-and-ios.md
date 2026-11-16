@@ -33,6 +33,11 @@ metric there once and both clients receive it in the JSON.
   **and** an `oura_*` function in `TorchBridge.mm` + a Swift `*Model.swift` that builds the
   same input tensors and folds the result into the summary.
 
+One field is exempt from "render it in both": **`timings_ms`**, the wall-clock each stage of
+`build_summary` took. It is a diagnostic that no client renders, on purpose. The Android app
+logs it and `profile_summary` prints it — see "Release build and profiling" in
+`docs/android-client-plan.md`.
+
 ## Feature ↔ feature correspondence
 
 | Feature | Web (`app.js`) | iOS (`OuraApp.swift`) | Data (JSON key) | Model |
@@ -384,6 +389,43 @@ Two Android features have no web or iOS counterpart, and are not omissions to cl
     charging, to catch the full, and 90 min out at `low` / `very_low`, to catch the next
     band. Their floor is 20 min instead of 3 h. There is none at `critical`: each sync dips
     a nearly empty ring's voltage, and there is no warning left to give.
+
+- **"Won't last the night"** (`apps/android/.../battery/NightForecast.kt`): the 20% warning
+  fires whenever the level crosses the line, often mid-morning, and a ring at 30% in the
+  evening is above it and can still be empty by 5 am. So after a sync in the four hours
+  before the usual bedtime, the level is projected to the usual wake time, and a warning is
+  given once per night if the ring would be at 5% or less by then. Bedtime and wake time
+  are the medians `AutoSync` already derives for quiet hours; with fewer than 7 nights
+  there is no forecast.
+
+  The rate is the **fastest of the last three discharge runs** (`battery.cycles`, none
+  older than three weeks). Runs on this ring have ranged from 0.5 to 2.1 %/h, and planning
+  on the fastest costs an occasional unneeded top-up where planning on the average costs a
+  night's data. The rate and forecast are worked out on the client, unlike the bands,
+  because nothing else shows them. If a "time left" figure ever appears on a screen, the
+  rate moves into `oura-summary` so every client reads the same one.
+
+- **Sync overdue** (`apps/android/.../sync/SyncHealth.kt`): the ring keeps a rolling ~8.5
+  days, and nothing used to say anything while that ran out — a ring in a drawer, a revoked
+  Bluetooth permission and a rejected key all fail quietly every three hours. The app now
+  records each *complete* sync and warns on the time since the last one:
+  - **2 days**: "Ring not synced for 2 days". One day is enough when the last four tries
+    failed, and the warning then quotes the last error.
+  - **6 days**: "Ring data at risk", on a high-importance channel, repeated daily with a
+    countdown to the ring's limit.
+
+  It is checked whenever the periodic sync worker runs, whether or not it reached the ring,
+  because that worker is the only clock that keeps ticking while syncs fail; it stays quiet
+  during the sleep window. Only a complete sync clears it. A drain that was cut short still
+  saved the oldest of what was waiting, so the measure errs towards warning early.
+
+- **Per-alert switches** (`apps/android/.../alerts/Alerts.kt`, the You tab's Notifications
+  section): one for each of battery low, fully charged, "won't last the night" and sync
+  overdue, all on by default, plus a link to Android's own settings for sound and
+  importance. A switched-off alert is a decision and is honoured silently: its state still
+  advances, so switching it back on never replays what was missed. A notification Android
+  blocks is treated as an accident instead: it stays owed and is shown once allowed.
+  Tapping any of these alerts opens the Ring tab (`MainActivity.EXTRA_OPEN_TAB`).
 
 
 ## Ring clock resets → epoch-aware time mapping (all three code paths)

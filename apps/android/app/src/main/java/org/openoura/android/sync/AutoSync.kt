@@ -14,11 +14,13 @@ import androidx.work.workDataOf
 import kotlinx.coroutines.CancellationException
 import org.openoura.android.battery.BatteryAlerts
 import org.openoura.android.battery.BatteryLevel
+import org.openoura.android.battery.NightForecast
 import org.openoura.android.health.HealthExport
 import org.openoura.android.ble.RingSyncService
 import org.openoura.android.ble.SyncPhase
 import org.openoura.android.ble.runRingSync
 import org.openoura.android.data.RingKeyStore
+import org.openoura.android.data.Summary
 import org.openoura.android.data.SummaryRepository
 import java.time.LocalTime
 import java.util.concurrent.TimeUnit
@@ -214,6 +216,15 @@ object AutoSync {
         return SleepWindow(medianClock(starts), medianClock(ends))
     }
 
+    /** [deriveSleepWindow] over a summary's nights. */
+    fun sleepWindow(summary: Summary?): SleepWindow? = deriveSleepWindow(
+        summary?.nights.orEmpty().mapNotNull { night ->
+            val start = night.start ?: return@mapNotNull null
+            val end = night.end ?: return@mapNotNull null
+            start to end
+        },
+    )
+
     /** "23:45" → 1425. Null for anything that isn't a plain 24-hour HH:MM. */
     fun hmToMinutes(hm: String): Int? {
         val parts = hm.split(":")
@@ -317,13 +328,7 @@ class AutoSyncWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(c
         }
 
         val repo = SummaryRepository.get(ctx)
-        val window = AutoSync.deriveSleepWindow(
-            repo.cached()?.nights.orEmpty().mapNotNull { night ->
-                val start = night.start ?: return@mapNotNull null
-                val end = night.end ?: return@mapNotNull null
-                start to end
-            },
-        )
+        val window = AutoSync.sleepWindow(repo.cached())
         val now = System.currentTimeMillis() / 1000
         val nowMinute = LocalTime.now().let { it.hour * 60 + it.minute }
 
@@ -332,6 +337,9 @@ class AutoSyncWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(c
             SyncDecision.SYNC -> Unit
             else -> {
                 Log.i(TAG, "$trigger: skipped ($decision)")
+                // This worker is the one clock that keeps ticking while syncs fail, so it
+                // is where an overdue sync gets noticed — but not said in the small hours.
+                if (decision != SyncDecision.ASLEEP) SyncHealth.check(ctx, now)
                 return Result.success()
             }
         }
@@ -361,6 +369,8 @@ class AutoSyncWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(c
         }
 
         val outcome = if (phase is SyncPhase.Done) SyncOutcome.DONE else SyncOutcome.FAILED
+        SyncHealth.record(ctx, phase)
+        SyncHealth.check(ctx)
         val after = AutoSync.aftermath(outcome, drained)
         when (phase) {
             is SyncPhase.Done -> Log.i(TAG, "$trigger: ${phase.events} events, ${phase.inserted} new")
@@ -371,6 +381,7 @@ class AutoSyncWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(c
                 .onFailure { Log.e(TAG, "post-sync recompute failed", it) }
             repo.cached()?.let {
                 BatteryAlerts.check(ctx, it)
+                NightForecast.check(ctx, it)
                 it.device?.let { d ->
                     AutoSync.scheduleFollowUp(
                         ctx,

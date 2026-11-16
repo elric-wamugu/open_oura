@@ -36,6 +36,27 @@ private const val TAG = "OpenOura"
 internal fun summaryCacheIsStale(cacheWrittenAt: Long, dbModifiedAt: Long, appUpdatedAt: Long) =
     dbModifiedAt > cacheWrittenAt || appUpdatedAt > cacheWrittenAt
 
+/**
+ * One log line for a recompute: the core's own stages slowest-first, then what it cost on
+ * top of them.
+ *
+ * `total` is the core's wall clock inside `build_summary`; [coreMs] is the same call timed
+ * from here, so the gap between them — "other" — is serialising the summary to a string
+ * and carrying it across the FFI. [parseMs] is this side turning that string back into
+ * objects. Every part of the wait gets a number, because the split is what decides the
+ * fix: a slow `read_events` wants less read off disk, a slow stage wants fewer passes, and
+ * a slow parse wants a smaller payload.
+ */
+internal fun describeRecompute(kb: Int, coreMs: Long, parseMs: Long, stages: Map<String, Double>): String {
+    val total = stages["total"]
+    val parts = stages.filterKeys { it != "total" }.entries
+        .sortedByDescending { it.value }
+        .joinToString(", ") { "${it.key} ${it.value.toLong()}" }
+    val other = total?.let { "; other ${(coreMs - it.toLong()).coerceAtLeast(0)}" }.orEmpty()
+    val breakdown = if (parts.isEmpty()) "" else " — $parts$other"
+    return "summary_json: $kb KB in $coreMs ms$breakdown; parse $parseMs ms"
+}
+
 /** What the UI is currently looking at. */
 sealed interface SummaryState {
     data object Loading : SummaryState
@@ -112,8 +133,8 @@ class SummaryRepository private constructor(private val ctx: Context) {
             if (cached == null) {
                 _state.value = SummaryState.Empty(
                     "No ring database on this device yet.\n\n" +
-                        "Import an oura.db synced by the desktop client, or (for development) " +
-                        "push one straight into app storage:\n\n" +
+                        "Import an oura.db synced by the desktop client, or (for development, on " +
+                        "a debug build) push one straight into app storage:\n\n" +
                         "adb push oura.db /data/local/tmp/oura.db\n" +
                         "adb shell run-as org.openoura.android cp /data/local/tmp/oura.db files/oura.db"
                 )
@@ -146,9 +167,10 @@ class SummaryRepository private constructor(private val ctx: Context) {
             runCatching {
                 val started = System.nanoTime()
                 val raw = summaryJson(dbFile.absolutePath, tzOffsetHours())
-                val elapsedMs = (System.nanoTime() - started) / 1_000_000
-                Log.i(TAG, "summary_json: ${raw.length / 1024} KB in ${elapsedMs} ms")
+                val coreMs = (System.nanoTime() - started) / 1_000_000
                 val parsed = json.decodeFromString<Summary>(raw)
+                val parseMs = (System.nanoTime() - started) / 1_000_000 - coreMs
+                Log.i(TAG, describeRecompute(raw.length / 1024, coreMs, parseMs, parsed.timingsMs))
                 // Only cache what parsed cleanly, so a bad write can't poison cold start.
                 cacheFile.writeText(raw)
                 parsed
@@ -188,7 +210,13 @@ class SummaryRepository private constructor(private val ctx: Context) {
 
     private fun readCache(): Summary? = runCatching {
         if (!cacheFile.exists()) return null
-        json.decodeFromString<Summary>(cacheFile.readText())
+        val started = System.nanoTime()
+        val raw = cacheFile.readText()
+        val parsed = json.decodeFromString<Summary>(raw)
+        // Timed, with the thread, because cold start does this before its first frame.
+        val ms = (System.nanoTime() - started) / 1_000_000
+        Log.i(TAG, "summary cache: ${raw.length / 1024} KB read and parsed in $ms ms on ${Thread.currentThread().name}")
+        parsed
     }.onFailure { Log.w(TAG, "discarding unreadable summary cache", it) }.getOrNull()
 
     /**

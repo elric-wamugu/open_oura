@@ -34,9 +34,24 @@ android {
 
     buildTypes {
         release {
+            // R8 shrinks, inlines and strips what the debug build ships untouched, and a
+            // release build is not debuggable, so ART compiles it ahead of time from the
+            // baseline profiles Compose and the AndroidX libraries carry. The debug build
+            // gets neither: it is what the phone ran until 2026-11, and the slower of the two
+            // to start and to scroll.
+            // The app's own keep rules are in src/main/keepRules/, which AGP picks up itself.
             optimization {
-                enable = false
+                enable = true
             }
+            // The same key as the debug build, on purpose. Android only installs an update
+            // over an app whose signature matches, and the copy on the phone is signed with
+            // this one. A separate release key would mean uninstalling first — which deletes
+            // oura.db, months of history the ring no longer holds. With one key either build
+            // installs over the other with `adb install -r`.
+            signingConfig = signingConfigs.getByName("debug")
+            // Lets simpleperf and Perfetto attach over adb without the build being
+            // debuggable, so what gets profiled is the code that actually runs.
+            isProfileable = true
         }
     }
     compileOptions {
