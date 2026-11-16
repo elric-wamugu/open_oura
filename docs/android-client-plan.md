@@ -285,6 +285,14 @@ replaced:
   night) and the night's sleep efficiency under it. Then, in this order: **Steps, Distance
   (km), Ring charge**. HRV and resting heart rate are not shown, by choice.
 - **Ring battery** (`BatteryWidget`): the charge as an arc, coloured on the brain's band.
+- **Steps today** (`StepsWidget`, added the same day): the stage ring widget with its two
+  halves swapped. The ring is today's steps towards a **daily step target**, with the
+  distance under the count; the figures are **Asleep, Sleep efficiency, Ring charge**. It
+  shares the card, the layouts and the refresh button with the stage ring (`RingCard`).
+  The target is a setting — You → Goals → Daily step target, 7,000 by default, kept in
+  `Goals` — and it is a preference, not a metric: `oura-summary` knows nothing of it and
+  the web has no counterpart. The ring stops at full; a day past the target is a full ring
+  and the count says the rest.
 
 What shaped them:
 

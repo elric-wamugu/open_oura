@@ -386,6 +386,12 @@ nightly need" but "a 7.5 h need". `app.js` hardcodes "an".
   covers the web's database. Nothing computed changes — see "The database on disk" in
   `docs/android-client-plan.md`.
 
+- **Daily step target** (You → Goals on Android, `data/Goals.kt`): 7,000 steps by default,
+  and the only thing it does is say how far round the steps widget's ring to draw.
+  **Android-only**: it is a preference for a home-screen widget, not a computed figure, so
+  nothing in `oura-summary` changed. If the web ever shows progress towards a step target,
+  the target should move somewhere both clients read (the profile is the obvious place).
+
 Two Android features have no web or iOS counterpart, and are not omissions to close:
 
 - **Unattended sync** (`apps/android/.../sync/AutoSync.kt`): a 3-hour WorkManager floor plus

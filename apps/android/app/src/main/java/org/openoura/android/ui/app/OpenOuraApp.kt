@@ -92,8 +92,10 @@ import org.openoura.android.ui.DayReportScreen
 import org.openoura.android.data.BackupResult
 import org.openoura.android.data.Backups
 import org.openoura.android.data.DatabaseCare
+import org.openoura.android.data.Goals
 import org.openoura.android.sync.AutoBackup
 import org.openoura.android.ui.BackupScreen
+import org.openoura.android.widget.WidgetUpdates
 import org.openoura.android.ui.DaysBrowser
 import org.openoura.android.ui.describeBackup
 import org.openoura.android.ui.TrendsScreen
@@ -252,6 +254,7 @@ fun OpenOuraApp(
     var notificationsAllowed by remember { mutableStateOf(Alerts.allowed(app)) }
     // The You tab's per-alert switches.
     var alertSwitches by remember { mutableStateOf(AlertPrefs.all(app)) }
+    var stepTarget by remember { mutableIntStateOf(Goals.stepTarget(app)) }
     fun refreshAlertState() {
         alertsOn = BatteryAlerts.canAlert(app)
         notificationsAllowed = Alerts.allowed(app)
@@ -512,6 +515,13 @@ fun OpenOuraApp(
                 onHealthConnect = { navigator.push(HealthConnectRoute) },
                 onBackup = { navigator.push(BackupRoute) },
                 onImportDatabase = { pickDatabase.launch(arrayOf("*/*")) },
+                stepTarget = stepTarget,
+                onStepTarget = { steps ->
+                    Goals.setStepTarget(app, steps)
+                    stepTarget = steps
+                    // Redraw the steps widget against the new target now, not at the next sync.
+                    work.launch { WidgetUpdates.refreshAll(app) }
+                },
                 onCompactDatabase = {
                     work.launch {
                         messages.show("Compacting the database. Keep the app open…")

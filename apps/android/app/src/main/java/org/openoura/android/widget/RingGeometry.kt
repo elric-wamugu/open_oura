@@ -56,3 +56,10 @@ fun distanceLabel(km: Double?): String = when {
     km < 0.1 -> "0"
     else -> "%.1f".format(km)
 }
+
+/** How far round the ring today's steps are towards [target]: 0 to 1, full once reached. */
+fun stepProgress(steps: Int?, target: Int): Float =
+    if (steps == null || target <= 0) 0f else (steps.toFloat() / target).coerceIn(0f, 1f)
+
+/** Under the step count: the distance walked, with its unit. */
+fun distanceCaption(km: Double?): String? = km?.let { "${distanceLabel(it)} km" }

@@ -5,4 +5,6 @@
     <string name="widget_battery_label">Ring battery</string>
     <string name="widget_battery_desc">How much charge the ring has left</string>
     <string name="widget_syncing">Syncing with the ring</string>
+    <string name="widget_steps_label">Steps today</string>
+    <string name="widget_steps_desc">Steps towards your daily target as a ring, with last night\'s sleep and ring charge</string>
 </resources>

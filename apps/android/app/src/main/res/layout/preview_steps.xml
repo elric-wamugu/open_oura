@@ -1,0 +1,59 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Static mock shown in the widget picker. Not the live widget — the picker cannot run
+     Glance — so it just has to look like the real thing at a glance. Kept in step with
+     Widgets.kt: the steps ring with the distance under the count, then Asleep, Sleep
+     efficiency, Ring charge, on the fixed dark card, with the refresh button in the corner. -->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@drawable/widget_bg"
+    tools:ignore="HardcodedText,UseAppTint">
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:orientation="horizontal"
+        android:baselineAligned="false"
+        android:gravity="center_vertical"
+        android:padding="12dp">
+        <FrameLayout android:layout_width="104dp" android:layout_height="104dp">
+            <ImageView android:layout_width="match_parent" android:layout_height="match_parent"
+                android:src="@drawable/widget_preview_steps" android:importantForAccessibility="no" />
+            <LinearLayout android:layout_width="wrap_content" android:layout_height="wrap_content"
+                android:layout_gravity="center" android:orientation="vertical" android:gravity="center_horizontal">
+                <LinearLayout android:layout_width="wrap_content" android:layout_height="wrap_content"
+                    android:orientation="horizontal" android:gravity="center_vertical">
+                    <ImageView android:layout_width="16dp" android:layout_height="16dp" android:src="@drawable/ic_sym_directions_walk" android:tint="@color/widget_text_muted" android:importantForAccessibility="no" android:layout_marginEnd="3dp" />
+                    <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="4,920" android:textColor="@color/widget_text" android:textSize="20sp" android:textStyle="bold" />
+                </LinearLayout>
+                <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="3.7 km" android:textColor="@color/widget_text_muted" android:textSize="11sp" />
+            </LinearLayout>
+        </FrameLayout>
+        <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content"
+            android:layout_weight="1" android:layout_marginStart="16dp" android:layout_marginEnd="20dp"
+            android:orientation="vertical">
+            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginBottom="6dp">
+                <ImageView android:layout_width="16dp" android:layout_height="16dp" android:src="@drawable/ic_sym_bedtime" android:tint="@color/widget_text_muted" android:importantForAccessibility="no" />
+                <TextView android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1"
+                    android:layout_marginStart="6dp" android:text="Asleep" android:textColor="@color/widget_text_muted" android:textSize="13sp" />
+                <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="7.6 h" android:textColor="@color/widget_text" android:textSize="18sp" android:textStyle="bold" />
+            </LinearLayout>
+            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginBottom="6dp">
+                <ImageView android:layout_width="16dp" android:layout_height="16dp" android:src="@drawable/ic_sym_percent" android:tint="@color/widget_text_muted" android:importantForAccessibility="no" />
+                <TextView android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1"
+                    android:layout_marginStart="6dp" android:text="Efficiency" android:textColor="@color/widget_text_muted" android:textSize="13sp" />
+                <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="88%" android:textColor="@color/widget_text" android:textSize="18sp" android:textStyle="bold" />
+            </LinearLayout>
+            <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginBottom="6dp">
+                <ImageView android:layout_width="16dp" android:layout_height="16dp" android:src="@drawable/ic_sym_battery_full" android:tint="@color/widget_text_muted" android:importantForAccessibility="no" />
+                <TextView android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1"
+                    android:layout_marginStart="6dp" android:text="Ring charge" android:textColor="@color/widget_text_muted" android:textSize="13sp" />
+                <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="86%" android:textColor="@color/widget_text" android:textSize="18sp" android:textStyle="bold" />
+            </LinearLayout>
+        </LinearLayout>
+    </LinearLayout>
+    <ImageView android:layout_width="18dp" android:layout_height="18dp" android:src="@drawable/ic_sym_sync" android:tint="@color/widget_text_muted" android:importantForAccessibility="no" android:layout_gravity="top|end" android:layout_margin="12dp" />
+</FrameLayout>
