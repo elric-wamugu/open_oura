@@ -497,18 +497,23 @@ What that says:
   4.1 s between them, steady to within 3%.
 - **It grows about half a second a week**: 7.5–8.3 s on 2026-10-29, 8.9–9.6 s on 2026-11-15.
 
-Found on the way, not fixed here:
+Found on the way, and what became of each (2026-11-16):
 
-- **Cold start parses the cache on the main thread.** `MainActivity.onCreate` launches
-  `repo.load()` on the main dispatcher, so the read and parse run before the first frame:
-  about 38% of a release cold start, and most of a debug one.
-- **Every app open parses the cache twice.** The app-open sync worker reads it again to
-  work out quiet hours, before deciding the sync is too soon to run at all.
-- **A launch with a stale cache and a sync due recomputes twice.** The stale-cache
-  recompute (9.5 s) and the post-sync one (9.7 s) ran back to back; the first was thrown
-  away.
-- **The Sync button has no accessibility label.** `uiautomator` sees a clickable view with
-  no text or description.
+- **Cold start parsed the cache on the main thread** — about 38% of a release cold start.
+  **Fixed:** `SummaryRepository.load` reads and parses on `Dispatchers.Default`, so the
+  first frame no longer waits for it. The first frame is now the loading state, replaced
+  as soon as the parse lands.
+- **Every app open parsed the cache twice**, once to draw and once in the app-open sync
+  worker to work out quiet hours. **Fixed:** the repository keeps the parsed summary with
+  the cache file's modification time and parses again only when the file has changed; a
+  lock makes two callers arriving together share one parse.
+- **A launch with a stale cache and a sync due recomputes twice.** **Left as it is.** The
+  first recompute is only wasted when the sync that follows brings something in, which is
+  not known in advance: skipping it would leave a stale summary on screen for the length
+  of a scan (up to 25 s) whenever the ring is out of reach. At 3 s a recompute instead of
+  9.5, on the rare launch that is both stale and due, the waste is cheaper than the wait.
+- **The Sync button had no accessibility label** when collapsed to its icon. **Fixed:**
+  the icon carries "Sync" whenever the text beside it is not shown.
 
 Both things left unmeasured here — the memory held by every event's JSON at once, and how
 much of `night_signals` was spent on events whose tag it then ignored — are answered in

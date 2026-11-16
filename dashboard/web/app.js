@@ -338,6 +338,155 @@ function renderDay(d) {
     btn.addEventListener("click", () => openDaysBrowser(d, days));
     box.append(btn);
   }
+  const trends = el("button", "more-toggle");
+  trends.textContent = "Trends";
+  trends.addEventListener("click", () => openTrendsPage(d));
+  box.append(trends);
+}
+
+// ── Trends: each measure over the last 7 / 30 / 90 days ─────────────────────────────
+// Kept identical to the Android Trends view (apps/android/.../ui/Trends.kt): the same
+// seven measures, the same pairing of a night with the day it was woken from, and the
+// same three rules — a day keeps its place on the x axis whether or not it has a value,
+// the line breaks across a gap of more than a few days, and the comparison with the
+// period before is withheld when that period has fewer than three values.
+const TREND_METRICS = [
+  { key: "hrv", title: "HRV", unit: "ms", decimals: 0, of: (n) => n && n.hrv_ms },
+  { key: "rhr", title: "Resting heart rate", unit: "bpm", decimals: 0, of: (n) => n && n.rhr },
+  // Time actually asleep where the night was scored; time in bed where it was not.
+  { key: "asleep", title: "Time asleep", unit: "h", decimals: 1,
+    of: (n) => n && (n.metrics && n.metrics.asleep_min != null ? n.metrics.asleep_min / 60 : n.in_bed_h) },
+  { key: "eff", title: "Sleep efficiency", unit: "%", decimals: 0, of: (n) => n && n.efficiency },
+  { key: "spo2", title: "Blood oxygen", unit: "%", decimals: 0, of: (n) => n && n.spo2_mean },
+  { key: "temp", title: "Skin temperature", unit: "°C", decimals: 1, of: (n) => n && n.skin_temp },
+  // A day with a movement profile and no steps is a ring that was not worn: not a zero.
+  { key: "steps", title: "Steps", unit: "", decimals: 0, bars: true, of: (_n, ds) => ds && ds.steps },
+];
+const TREND_RANGES = [7, 30, 90];
+const TREND_MIN_PREVIOUS = 3;
+let TREND_RANGE = 30;
+try { TREND_RANGE = TREND_RANGES.includes(+localStorage.getItem("trend_range")) ? +localStorage.getItem("trend_range") : 30; } catch (_) { /* private mode */ }
+
+// days since the epoch for a local YYYY-MM-DD, so a gap is simple arithmetic
+const trendDay = (ymd) => {
+  const [y, m, dd] = ymd.split("-").map(Number);
+  return Math.round(Date.UTC(y, m - 1, dd) / 86400000);
+};
+const trendDate = (day) => new Date(day * 86400000).toLocaleDateString(undefined, { month: "short", day: "numeric", timeZone: "UTC" });
+
+// every day's value for a metric, oldest first; days without one are simply absent
+function trendPoints(d, metric) {
+  return dayKeys(d)
+    .map((ymd) => ({ day: trendDay(ymd), value: metric.of(nightForDay(d, ymd), (d.activity_daily || {})[ymd]) }))
+    .filter((p) => p.value != null && p.value > 0 && Number.isFinite(p.day))
+    .sort((a, b) => a.day - b.day);
+}
+
+function trendWindow(all, endDay, days) {
+  const start = endDay - days + 1;
+  const mean = (a) => a.reduce((t, p) => t + p.value, 0) / a.length;
+  const points = all.filter((p) => p.day >= start && p.day <= endDay);
+  const previous = all.filter((p) => p.day >= start - days && p.day < start);
+  return {
+    points, endDay, days, startDay: start,
+    mean: points.length ? mean(points) : null,
+    previousMean: previous.length >= TREND_MIN_PREVIOUS ? mean(previous) : null,
+  };
+}
+
+const trendFmt = (m, v) => (m.decimals === 0 ? Math.round(v).toLocaleString("en-US") : v.toFixed(m.decimals));
+
+// "2 ms higher than the 30 days before", or null when there is nothing to compare
+function trendChange(m, w) {
+  if (w.mean == null || w.previousMean == null) return null;
+  const change = w.mean - w.previousMean;
+  const before = `the ${w.days} days before`;
+  // Smaller than the precision it is shown in: calling that a change would be noise.
+  if (Math.round(Math.abs(change) * 10 ** m.decimals) === 0) return `Level with ${before}`;
+  const shown = trendFmt(m, Math.abs(change));
+  const amount = m.unit === "" ? shown : m.unit === "%" ? `${shown}%` : `${shown} ${m.unit}`;
+  return `${amount} ${change > 0 ? "higher" : "lower"} than ${before}`;
+}
+
+function trendSvg(m, w) {
+  const W = 600, H = 110, pts = w.points;
+  const lo = Math.min(...pts.map((p) => p.value)), hi = Math.max(...pts.map((p) => p.value));
+  // Bars measure from zero. A line fills the height with its own range, padded so the
+  // extremes do not sit on the edges, and a flat series sits in the middle.
+  let yMin = 0, yMax = Math.max(hi, 1);
+  if (!m.bars) {
+    const pad = Math.max((hi - lo) * 0.15, Math.abs(hi) * 0.01, 0.5);
+    yMin = lo - pad; yMax = hi + pad;
+  }
+  const slot = W / w.days;
+  const x = (day) => (day - w.startDay + 0.5) * slot;
+  const y = (v) => H - ((v - yMin) / (yMax - yMin)) * H;
+  const f = (n) => n.toFixed(1);
+  let out = `<line class="tr-mean" x1="0" x2="${W}" y1="${f(y(w.mean))}" y2="${f(y(w.mean))}"/>`;
+  if (m.bars) {
+    const bw = Math.min(Math.max(slot * 0.7, 1.5), 14);
+    out += pts.map((p) => `<rect class="tr-bar" x="${f(x(p.day) - bw / 2)}" y="${f(y(p.value))}" width="${f(bw)}" height="${f(H - y(p.value))}" rx="${f(bw / 3)}"/>`).join("");
+  } else {
+    const maxGap = Math.max(Math.floor(w.days / 10), 3);
+    let path = "", prev = null;
+    pts.forEach((p) => {
+      path += `${prev == null || p.day - prev.day > maxGap ? "M" : "L"}${f(x(p.day))} ${f(y(p.value))} `;
+      prev = p;
+    });
+    out += `<path class="tr-line" d="${path.trim()}"/>`;
+    // Dots while there is room for them; beyond a month they would merge into the line.
+    const r = w.days <= 31 ? 3 : 1.5;
+    out += pts.map((p) => `<circle class="tr-dot" cx="${f(x(p.day))}" cy="${f(y(p.value))}" r="${r}"/>`).join("");
+  }
+  const spoken = `${m.title}: average ${trendFmt(m, w.mean)} ${m.unit} over ${pts.length} days, from ${trendFmt(m, lo)} to ${trendFmt(m, hi)}.`;
+  return `<svg class="tr-svg" viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(spoken)}">${out}</svg>`;
+}
+
+function trendCard(m, w) {
+  const card = el("div", "tr-card");
+  card.append(el("div", "tr-title", esc(m.title)));
+  if (w.mean == null) {
+    card.append(el("div", "tr-note", `Nothing recorded in these ${w.days} days.`));
+    return card;
+  }
+  const unit = [m.unit, "average"].filter(Boolean).join(" ");
+  card.append(el("div", "tr-mean-row", `<span class="tr-value">${trendFmt(m, w.mean)}</span><span class="tr-unit">${esc(unit)}</span>`));
+  const change = trendChange(m, w);
+  if (change) card.append(el("div", "tr-note", esc(change)));
+  card.append(el("div", "tr-chart", trendSvg(m, w)));
+  const lo = Math.min(...w.points.map((p) => p.value)), hi = Math.max(...w.points.map((p) => p.value));
+  card.append(el("div", "tr-axis",
+    `<span>${esc(trendDate(w.startDay))}</span><span>low ${trendFmt(m, lo)} · high ${trendFmt(m, hi)}</span><span>${esc(trendDate(w.endDay))}</span>`));
+  return card;
+}
+
+function openTrendsPage(d, range = TREND_RANGE) {
+  TREND_RANGE = range;
+  try { localStorage.setItem("trend_range", String(range)); } catch (_) { /* private mode */ }
+  const wrap = el("div", "rpt");
+  const head = el("div", "rpt-head");
+  const back = el("button", "rpt-back", "‹ Back");
+  back.type = "button";
+  back.addEventListener("click", closePage);
+  const tabs = el("div", "rpt-tabs");
+  TREND_RANGES.forEach((r) => {
+    const b = el("button", "rpt-tab" + (r === range ? " on" : ""), `${r} days`);
+    b.type = "button";
+    b.setAttribute("aria-pressed", String(r === range));
+    b.addEventListener("click", () => openTrendsPage(d, r));
+    tabs.append(b);
+  });
+  head.append(back, el("div", "rpt-title", "Trends"), tabs);
+  const body = el("div", "rpt-body tr-grid");
+  // Trends end at the last day anything was recorded, not at today's empty column.
+  const days = dayKeys(d).map(trendDay).filter(Number.isFinite);
+  if (!days.length) body.append(el("div", "error", "No days to chart yet."));
+  else {
+    const end = Math.max(...days);
+    TREND_METRICS.forEach((m) => body.append(trendCard(m, trendWindow(trendPoints(d, m), end, range))));
+  }
+  wrap.append(head, body);
+  showPage(wrap);
 }
 
 // Resting HR leads this panel because it is the only fitness signal here the ring

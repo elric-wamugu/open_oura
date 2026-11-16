@@ -52,7 +52,7 @@ logs it and `profile_summary` prints it — see "Release build and profiling" in
 | **Autonomic recovery by stage** (mean HR/HRV in deep/light/REM) | `sleepReport` autonomic grid | `SleepReport` `autonomicGrid` | `nights[].autonomic` | SleepNet (needs hypnogram) |
 | **Cardiovascular age** | `renderVascular` — a fold *inside* the Cardiovascular panel | Cardio section | `cardio` | CVA (web: Python · iOS: `CvaModel`) |
 | **Fitness = resting-HR trend** (headline) | `renderCardio` | `CardioPanel` on Today, with VO₂max and vascular age in the same panel (Android) / Fitness section (iOS) | `vitals.rhr` | — |
-| **Trends over 7 / 30 / 90 days** (HRV, resting HR, time asleep, efficiency, SpO₂, skin temp, steps) | — (not on the web yet) | `TrendsScreen` behind History's Days / Trends switch (Android) / — (iOS) | `nights[]`, `activity_daily` | — |
+| **Trends over 7 / 30 / 90 days** (HRV, resting HR, time asleep, efficiency, SpO₂, skin temp, steps) | `openTrendsPage` — the Trends button under Your day | `TrendsScreen` behind History's Days / Trends switch (Android) / — (iOS) | `nights[]`, `activity_daily` | — |
 | **VO₂max estimate** (demoted baseline) | `renderCardio` kv | Fitness section | `fitness.vo2max` | — (Jackson, model-free) |
 | **Peak sustained HR** (daily) | `activityReport` metric + note | `ActivityReport` readout + note | `activity_daily[].peak_hr`, `fitness.hr_max_predicted` | — |
 | Movement ridge | `ridgeSvg` | `MovementRidge` | `activity_profile` | — (MET, model-free) |
@@ -354,14 +354,18 @@ nightly need" but "a 7.5 h need". `app.js` hardcodes "an".
   summary field: it describes the local file, not the ring's data, and each client can
   read its own. The web or iOS could show theirs the same way if it ever earns the space.
 
-- **Trends** (`apps/android/.../ui/Trends.kt`): the History tab switches between the list
-  of days and a Trends view — each measure's average over the last 7, 30 or 90 days, how
-  that compares with the same number of days before, and a chart. **Android-only so far,
-  and unlike the rest of this list it is a gap to close**: the web has the same data and
-  no such view. Two rules worth carrying over when it gets one: a day keeps its place on
-  the x axis whether or not it has a value, so time off the finger shows as a gap, and the
-  comparison is withheld when the earlier period has fewer than three values. Nothing new
-  is computed — a night counts on the day it was woken from, as the day cards pair them.
+- **Trends** (`apps/android/.../ui/Trends.kt`, and `openTrendsPage` in `app.js`): each
+  measure's average over the last 7, 30 or 90 days, how that compares with the same number
+  of days before, and a chart. On Android it is History's Days / Trends switch; on the web,
+  the Trends button under Your day. **Web and Android; not on iOS.** It was Android-only
+  until 2026-11-16. The two are kept identical, and the rules are: a day keeps its place
+  on the x axis whether or not it has a value, so time off the finger shows as a gap; the
+  line breaks across a gap of more than a few days; the comparison is withheld when the
+  earlier period has fewer than three values; and trends end at the last day anything was
+  recorded. Nothing new is computed — a night counts on the day it was woken from, as the
+  day cards pair them. Checked on 2026-11-16 by running both implementations over one
+  real summary: all seven measures at all three ranges gave the same average, change, low,
+  high and point count.
 
 - **Encrypted backup** (`crates/oura-backup`; `oura backup` / `oura restore` on the desktop,
   You → Ring & data → Backup on Android): one passphrase-encrypted `.ourabak` file holding
