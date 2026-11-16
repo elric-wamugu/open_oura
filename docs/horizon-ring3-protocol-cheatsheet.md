@@ -164,6 +164,15 @@ On-finger realtime/listener follow-up:
   path but not a raw stream.
 - After a polling disconnect, realtime off was explicitly restored on a fresh
   connection: `060400000000` -> `070100`.
+- **Live heart rate does stream, given both halves (2026-11-16).** Daytime HR mode
+  `CONNECTED_LIVE` (`2f03220203` -> `2f03230200`) *plus* subscription `LATEST`
+  (`2f03260202` -> `2f03270200`) makes the ring push `2f 0f 28 02 ..` indications about
+  once a second, e.g. `2f0f280201020000da1200000000d40d7f`: bytes 8-9 are the IBI word,
+  `da 12` -> 12-bit interval `0x2da` = 730 ms, validity nibble `1`. The first one after
+  switching is usually invalid (`..0804..`, validity `0`). Feature status during this
+  reads `2f06210203110200` — mode 3, state measuring, and still **subscription 0**, so
+  the status is not evidence that the subscription failed; the table above drew that
+  conclusion from it. Either half alone produces no stream.
 
 ## Horizon Deltas And Issues
 

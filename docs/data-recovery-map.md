@@ -70,9 +70,12 @@ So **sleep staging and activity MET-binning happen on the ring**, not the cloud.
 
 ### B. Live / realtime (UI-driven only)
 
-- **Live HR**: `SetFeatureMode(CAP_DAYTIME_HR, CONNECTED_LIVE)` -> ring pushes IBI
-  notifications (tag `0x2f`, sub-tag `40`) -> app computes `BPM = 60000 / IBI_ms`,
-  shown only when IBI validity == VALID. Stop with mode `AUTOMATIC`.
+- **Live HR**: `SetFeatureMode(CAP_DAYTIME_HR, CONNECTED_LIVE)` **and**
+  `SetFeatureSubscription(CAP_DAYTIME_HR, LATEST)` -> ring pushes IBI notifications (tag
+  `0x2f`, sub-tag `40`), about one a second -> app computes `BPM = 60000 / IBI_ms`, shown
+  only when IBI validity == VALID. Stop with subscription `OFF` and mode `AUTOMATIC`.
+  The subscription is not optional on a Ring 3: the mode change alone is acknowledged and
+  then nothing is sent (measured 2026-11-16: 0 notifications in 30 s without it, 27 with).
 - **Feature latest values** (poll): `GetFeatureLatestValues` (tag `0x2f` ext `0x24`)
   for `CAP_DAYTIME_HR` (last IBI), `CAP_EXERCISE_HR` (direct bpm), `CAP_SPO2`
   (SpO2% + bpm), `CAP_CHARGING_CONTROL`.

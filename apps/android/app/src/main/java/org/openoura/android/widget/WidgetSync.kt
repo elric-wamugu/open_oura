@@ -7,6 +7,7 @@ import androidx.glance.action.ActionParameters
 import androidx.glance.appwidget.action.ActionCallback
 import android.util.Log
 import org.openoura.android.ble.BlePermissions
+import org.openoura.android.ble.LiveHeartRate
 import org.openoura.android.ble.RingSyncService
 import org.openoura.android.data.RingKeyStore
 import org.openoura.android.data.WidgetBus
@@ -89,13 +90,16 @@ class SyncFromWidget : ActionCallback {
         // Repaint first, so the tap is answered at once rather than when the ring replies.
         WidgetUpdates.refreshAll(context)
         val path = widgetSyncPath(
-            serviceRunning = RingSyncService.isRunning,
+            serviceRunning = RingSyncService.isRunning || LiveHeartRate.isRunning,
             bluetoothGranted = BlePermissions.granted(context),
             hasKey = RingKeyStore(context).hasKey,
         )
         when (path) {
-            // The sync already under way will stop the icon turning when it ends.
-            WidgetSyncPath.ALREADY_RUNNING -> Unit
+            // The sync already under way will stop the icon turning when it ends. A
+            // heart-rate measurement will not, so there the tap is simply let go.
+            WidgetSyncPath.ALREADY_RUNNING -> if (LiveHeartRate.isRunning && WidgetSync.finish(context)) {
+                WidgetUpdates.refreshAll(context)
+            }
             WidgetSyncPath.FOREGROUND -> runCatching { RingSyncService.start(context) }.onFailure {
                 // Android refused the start (it is its call to make): slower beats not at all.
                 Log.w(TAG, "widget sync: foreground start refused, using the background worker", it)

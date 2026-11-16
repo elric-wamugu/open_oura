@@ -236,6 +236,33 @@ pub trait SyncProgressListener: Send + Sync {
     );
 }
 
+/// How a live heart-rate measurement went, beyond the beats themselves — enough to tell
+/// "the ring refused" from "the ring was listening and found no pulse".
+#[derive(uniffi::Record)]
+pub struct HeartRateReport {
+    pub beats: u32,
+    /// Every notification the ring sent while measuring.
+    pub frames: u32,
+    /// Those that were live heart-rate notifications, valid beat or not.
+    pub live_frames: u32,
+    /// The ring's result byte for the switch to live mode; 0 is accepted.
+    pub mode_result: Option<u8>,
+    /// The first few notifications as hex, for the log.
+    pub first_frames: Vec<String>,
+}
+
+fn hex_of(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// The client implements this to receive each beat of a live heart-rate measurement, as
+/// it happens. `bpm` is that one beat's rate (from its interval, `ibi_ms`), so it jitters
+/// from beat to beat; smoothing it for display is the client's business.
+#[uniffi::export(callback_interface)]
+pub trait HeartRateListener: Send + Sync {
+    fn on_beat(&self, bpm: u16, ibi_ms: u16);
+}
+
 #[derive(uniffi::Record)]
 pub struct SyncReport {
     pub serial: String,
@@ -256,6 +283,8 @@ pub enum SyncError {
 pub struct RingSession {
     tx: broadcast::Sender<Vec<u8>>,
     writer: Arc<dyn BleWriter>,
+    /// Set by [`RingSession::stop_heart_rate`] to end a live measurement early.
+    stop_live: std::sync::atomic::AtomicBool,
 }
 
 /// Bridges oura-link's `Transport` onto the Swift writer + the inbound frame channel.
@@ -283,6 +312,7 @@ impl RingSession {
         Arc::new(Self {
             tx,
             writer: Arc::from(writer),
+            stop_live: std::sync::atomic::AtomicBool::new(false),
         })
     }
 
@@ -394,6 +424,74 @@ impl RingSession {
             inserted: inserted.into_inner(),
             next_cursor: outcome.next_cursor,
         })
+    }
+
+    /// Measure heart rate now: authenticate, put the ring in its live mode for up to
+    /// `seconds`, and hand each valid beat to `listener`. Returns how many beats arrived —
+    /// zero means the ring was not on a finger, or could not get a reading.
+    ///
+    /// Ends early when [`RingSession::stop_heart_rate`] is called; either way the ring is
+    /// put back in the daytime-HR mode `feature_modes.json` last recorded for it, so a
+    /// measurement never switches on a feature its owner had switched off. **Stop it that
+    /// way rather than cancelling the call**: a dropped future never sends the restore.
+    ///
+    /// Nothing is written to the database. A spot reading is not part of the ring's
+    /// history, and `build_summary` does not read it.
+    pub async fn live_heart_rate(
+        &self,
+        db_path: String,
+        key_hex: String,
+        seconds: u32,
+        listener: Box<dyn HeartRateListener>,
+    ) -> Result<HeartRateReport, SyncError> {
+        use oura_protocol::protocol::feature_mode;
+
+        let fail = |e: String| SyncError::Failed(e);
+        let key =
+            parse_key(&key_hex).ok_or_else(|| fail("auth key must be 32 hex chars".into()))?;
+        let transport = FfiTransport {
+            tx: self.tx.clone(),
+            writer: self.writer.clone(),
+        };
+        let client = OuraClient::new(transport);
+        client
+            .authenticate(&key)
+            .await
+            .map_err(|e| fail(e.to_string()))?;
+
+        // 0 in the file is "off"; anything else, or no record at all, is the ring's
+        // ordinary automatic mode.
+        let modes = oura_summary::read_feature_modes(std::path::Path::new(&db_path));
+        let restore = match modes.get("daytime_hr").and_then(|m| m.as_i64()) {
+            Some(0) => feature_mode::OFF,
+            _ => feature_mode::AUTOMATIC,
+        };
+
+        let stats = client
+            .live_heart_rate_until(
+                std::time::Duration::from_secs(seconds as u64),
+                restore,
+                false,
+                || self.stop_live.load(Ordering::Relaxed),
+                |s| listener.on_beat(s.bpm, s.ibi_ms),
+            )
+            .await
+            .map_err(|e| fail(e.to_string()))?;
+        Ok(HeartRateReport {
+            beats: stats.beats,
+            frames: stats.frames,
+            live_frames: stats.live_frames,
+            mode_result: stats.mode_result,
+            first_frames: stats.first_frames.iter().map(|f| hex_of(f)).collect(),
+        })
+    }
+
+    /// End a [`RingSession::live_heart_rate`] in progress. It returns within a quarter of
+    /// a second, after restoring the ring's mode. Called before the measurement has begun,
+    /// it makes it end as soon as it does — a session is used for one measurement, so the
+    /// flag is never cleared.
+    pub fn stop_heart_rate(&self) {
+        self.stop_live.store(true, Ordering::Relaxed);
     }
 
     /// Turn one on-ring capability on or off, and record the new mode next to the DB.

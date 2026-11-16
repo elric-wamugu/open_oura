@@ -10,6 +10,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import org.openoura.android.data.RingKeyStore
 import uniffi.oura_core.BleWriter
+import uniffi.oura_core.HeartRateListener
 import uniffi.oura_core.RingSession
 import uniffi.oura_core.SyncProgressListener
 import java.io.File
@@ -134,6 +135,43 @@ suspend fun runRingFeature(
     val message = session.setFeatureMode(dbPath, keyHex, feature, on)
     Log.i(TAG, "feature: $message")
     SyncPhase.Done(serial = "", events = 0, inserted = 0)
+}
+
+/**
+ * Measure heart rate now, for up to [seconds].
+ *
+ * [onSession] is handed the live session once the link is up, so the caller can stop the
+ * measurement early with `stopHeartRate()` — which is how it must be stopped. Cancelling
+ * this coroutine mid-measurement would drop the Rust call before it puts the ring back in
+ * its ordinary mode. [onBeat] is called from the core's own thread, once per valid beat.
+ *
+ * Returns [SyncPhase.Done] with the number of beats in `events`.
+ */
+suspend fun runLiveHeartRate(
+    ctx: Context,
+    seconds: Int,
+    onStage: (String) -> Unit,
+    onSession: (RingSession) -> Unit,
+    onBeat: (bpm: Int) -> Unit,
+): SyncPhase = withRingSession(ctx, filteredScan = false, onPhase = { p ->
+    if (p is SyncPhase.Running) onStage(p.stage)
+}) { session, dbPath, keyHex ->
+    onSession(session)
+    onStage("measuring")
+    val report = session.liveHeartRate(
+        dbPath,
+        keyHex,
+        seconds.toUInt(),
+        object : HeartRateListener {
+            override fun onBeat(bpm: UShort, ibiMs: UShort) = onBeat(bpm.toInt())
+        },
+    )
+    Log.i(
+        TAG,
+        "live heart rate: ${report.beats} beats, ${report.liveFrames} live frames of ${report.frames}, " +
+            "mode result ${report.modeResult}, first ${report.firstFrames}",
+    )
+    SyncPhase.Done(serial = "", events = report.beats.toLong(), inserted = 0)
 }
 
 /**

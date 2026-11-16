@@ -392,6 +392,19 @@ nightly need" but "a 7.5 h need". `app.js` hardcodes "an".
   nothing in `oura-summary` changed. If the web ever shows progress towards a step target,
   the target should move somewhere both clients read (the profile is the obvious place).
 
+- **Measure heart rate now** (`apps/android/.../ble/LiveHeartRate.kt`, `ui/HeartRateScreen.kt`;
+  `RingSession::live_heart_rate` in `oura-core`): a card on Today, between Vitals and
+  Cardiovascular, puts the ring in its live mode for 30 seconds and shows the reading as
+  it comes, then the average, low and high against last night's resting rate. **Android
+  only so far, and a gap to close on the web**: the desktop has the same thing as a
+  command (`oura live-hr`), but the dashboard has no button for it. Rules worth carrying
+  over: the ring needs live mode *and* a latest-value subscription before it sends anything
+  (`live_heart_rate_until` does both); each reading is one beat's interval, so what is
+  shown is the median of the last five; a result needs at least eight beats; the ring is put back in the daytime-HR mode
+  `feature_modes.json` recorded, never left in live mode and never switched on if it was
+  off; and nothing is written to the database — a spot reading is not history. Only the
+  most recent result is kept, in the app's preferences.
+
 Two Android features have no web or iOS counterpart, and are not omissions to close:
 
 - **Unattended sync** (`apps/android/.../sync/AutoSync.kt`): a 3-hour WorkManager floor plus

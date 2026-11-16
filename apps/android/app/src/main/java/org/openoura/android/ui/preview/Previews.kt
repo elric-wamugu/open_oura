@@ -89,5 +89,7 @@ private fun TodayScreenPreview() = OpenOuraTheme {
         onOpenRing = {},
         cardioExpanded = true,
         onToggleCardio = {},
+        lastHeartRate = null,
+        onMeasureHeartRate = {},
     )
 }
