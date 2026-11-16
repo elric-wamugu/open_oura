@@ -62,6 +62,8 @@ fun TodayScreen(
     onOpenDay: (String, Boolean) -> Unit,
     onBrowseDays: () -> Unit,
     onOpenRing: () -> Unit,
+    cardioExpanded: Boolean,
+    onToggleCardio: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val ready = state as? SummaryState.Ready
@@ -122,7 +124,7 @@ fun TodayScreen(
                         }
                     }
 
-                    is SummaryState.Ready -> readyItems(state, onOpenDay, onBrowseDays)
+                    is SummaryState.Ready -> readyItems(state, onOpenDay, onBrowseDays, cardioExpanded, onToggleCardio)
                 }
             }
         }
@@ -133,6 +135,8 @@ private fun androidx.compose.foundation.lazy.LazyListScope.readyItems(
     state: SummaryState.Ready,
     onOpenDay: (String, Boolean) -> Unit,
     onBrowseDays: () -> Unit,
+    cardioExpanded: Boolean,
+    onToggleCardio: () -> Unit,
 ) {
     val s = state.summary
     s.digest?.takeIf { it.isNotBlank() }?.let { digest ->
@@ -178,6 +182,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.readyItems(
             VitalsGrid(s)
         }
     }
+    item(key = "cardio") { CardioPanel(s, cardioExpanded, onToggleCardio) }
     item(key = "footer") { Footer(s, state.stale) }
 }
 

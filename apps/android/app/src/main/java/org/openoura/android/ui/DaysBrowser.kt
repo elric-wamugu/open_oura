@@ -41,6 +41,7 @@ fun DaysBrowser(
     summary: Summary,
     onOpenDay: (String, Boolean) -> Unit,
     modifier: Modifier = Modifier,
+    header: @Composable () -> Unit = {},
 ) {
     val cs = MaterialTheme.colorScheme
     val months = remember(summary.days) {
@@ -55,6 +56,7 @@ fun DaysBrowser(
         contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 0.dp, bottom = 24.dp),
         verticalArrangement = Arrangement.spacedBy(ListItemDefaults.SegmentedGap),
     ) {
+        item(key = "header") { header() }
         months.forEach { (month, days) ->
             stickyHeader(key = "h-$month") {
                 SectionHeader(

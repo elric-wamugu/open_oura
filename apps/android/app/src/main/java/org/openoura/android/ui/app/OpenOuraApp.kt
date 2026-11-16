@@ -38,6 +38,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -52,6 +53,7 @@ import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.IntOffset
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.core.content.edit
@@ -88,6 +90,9 @@ import org.openoura.android.health.ExportResult
 import org.openoura.android.health.HealthExport
 import org.openoura.android.ui.DayReportScreen
 import org.openoura.android.ui.DaysBrowser
+import org.openoura.android.ui.TrendsScreen
+import org.openoura.android.ui.components.ChoiceOption
+import org.openoura.android.ui.components.ConnectedChoice
 import org.openoura.android.ui.HealthConnectScreen
 import org.openoura.android.ui.HealthConnectState
 import org.openoura.android.ui.Notice
@@ -301,6 +306,10 @@ fun OpenOuraApp(
     // a first run, but a choice to open it survives restarting the app.
     var batteryOpen by remember { mutableStateOf(prefs.getBoolean("fold_battery", false)) }
     var deviceOpen by remember { mutableStateOf(prefs.getBoolean("fold_device", false)) }
+    var cardioOpen by remember { mutableStateOf(prefs.getBoolean("fold_cardio", false)) }
+    // History shows the days or the trends across them; both choices outlive a restart.
+    var historyTrends by remember { mutableStateOf(prefs.getBoolean("history_trends", false)) }
+    var trendRange by remember { mutableIntStateOf(prefs.getInt("trend_range", 30)) }
     // Which capability is being written to the ring. Held here rather than in the panel
     // because the work outlives the panel; its outcome is reported in a snackbar.
     var capabilityBusy by remember { mutableStateOf<String?>(null) }
@@ -318,6 +327,11 @@ fun OpenOuraApp(
                 onOpenDay = { day, sleep -> navigator.push(DayReportRoute(day, sleep, Tab.TODAY)) },
                 onBrowseDays = { navigator.select(Tab.HISTORY) },
                 onOpenRing = { navigator.select(Tab.RING) },
+                cardioExpanded = cardioOpen,
+                onToggleCardio = {
+                    cardioOpen = !cardioOpen
+                    prefs.edit { putBoolean("fold_cardio", cardioOpen) }
+                },
             )
         }
         entry<HistoryRoute>(metadata = TabRootMotion) {
@@ -328,11 +342,37 @@ fun OpenOuraApp(
                 large = true,
             ) { padding ->
                 if (summary != null) {
-                    DaysBrowser(
-                        summary = summary,
-                        onOpenDay = { day, sleep -> navigator.push(DayReportRoute(day, sleep, Tab.HISTORY)) },
-                        modifier = Modifier.padding(padding),
-                    )
+                    // The switch scrolls away with the list it heads, in either view.
+                    val views: @Composable () -> Unit = {
+                        ConnectedChoice(
+                            options = listOf(ChoiceOption("Days"), ChoiceOption("Trends")),
+                            selected = if (historyTrends) 1 else 0,
+                            onSelect = {
+                                historyTrends = it == 1
+                                prefs.edit { putBoolean("history_trends", historyTrends) }
+                            },
+                            modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
+                        )
+                    }
+                    if (historyTrends) {
+                        TrendsScreen(
+                            summary = summary,
+                            range = trendRange,
+                            onRange = {
+                                trendRange = it
+                                prefs.edit { putInt("trend_range", it) }
+                            },
+                            modifier = Modifier.padding(padding),
+                            header = views,
+                        )
+                    } else {
+                        DaysBrowser(
+                            summary = summary,
+                            onOpenDay = { day, sleep -> navigator.push(DayReportRoute(day, sleep, Tab.HISTORY)) },
+                            modifier = Modifier.padding(padding),
+                            header = views,
+                        )
+                    }
                 } else {
                     androidx.compose.foundation.layout.Box(Modifier.padding(padding).padding(16.dp)) {
                         Notice("No days to show yet. Sync with the ring, or import a database.")

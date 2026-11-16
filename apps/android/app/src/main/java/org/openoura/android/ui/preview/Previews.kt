@@ -87,5 +87,7 @@ private fun TodayScreenPreview() = OpenOuraTheme {
         onOpenDay = { _, _ -> },
         onBrowseDays = {},
         onOpenRing = {},
+        cardioExpanded = true,
+        onToggleCardio = {},
     )
 }
