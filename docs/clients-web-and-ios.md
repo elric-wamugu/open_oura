@@ -371,6 +371,11 @@ nightly need" but "a 7.5 h need". `app.js` hardcodes "an".
   ring's auth key is never in a backup, and the Android app still has no `INTERNET`
   permission: the file goes wherever the system file picker can reach.
 
+  Android can also do it **automatically**, daily, to one file picked once
+  (`apps/android/.../sync/AutoBackup.kt`), which is the one case where the passphrase is
+  stored on the device. Android-only by nature — it leans on WorkManager and a persisted
+  file grant; on the desktop, cron and `oura backup` do the same.
+
 Two Android features have no web or iOS counterpart, and are not omissions to close:
 
 - **Unattended sync** (`apps/android/.../sync/AutoSync.kt`): a 3-hour WorkManager floor plus
@@ -438,8 +443,9 @@ Two Android features have no web or iOS counterpart, and are not omissions to cl
   saved the oldest of what was waiting, so the measure errs towards warning early.
 
 - **Per-alert switches** (`apps/android/.../alerts/Alerts.kt`, the You tab's Notifications
-  section): one for each of battery low, fully charged, "won't last the night" and sync
-  overdue, all on by default, plus a link to Android's own settings for sound and
+  section): one for each of battery low, fully charged, "won't last the night", sync
+  overdue and a failing automatic backup, all on by default, plus a link to Android's
+  own settings for sound and
   importance. A switched-off alert is a decision and is honoured silently: its state still
   advances, so switching it back on never replays what was missed. A notification Android
   blocks is treated as an accident instead: it stays owed and is shown once allowed.

@@ -17,6 +17,7 @@ import kotlinx.coroutines.launch
 import org.openoura.android.data.ProfileStore
 import org.openoura.android.data.RingKeyStore
 import org.openoura.android.data.SummaryRepository
+import org.openoura.android.sync.AutoBackup
 import org.openoura.android.sync.AutoSync
 import org.openoura.android.sync.SyncTrigger
 import org.openoura.android.ui.app.OpenOuraApp
@@ -80,6 +81,7 @@ class MainActivity : ComponentActivity() {
         lifecycleScope.launch { repo.load(refresh = false) }
         WidgetUpdates.schedulePeriodic(applicationContext)
         AutoSync.schedulePeriodic(applicationContext)
+        AutoBackup.schedule(applicationContext)
 
         setContent {
             var dynamic by remember { mutableStateOf(ThemePrefs.dynamicColor(applicationContext)) }

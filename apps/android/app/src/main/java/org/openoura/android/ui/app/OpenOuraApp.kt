@@ -91,6 +91,7 @@ import org.openoura.android.health.HealthExport
 import org.openoura.android.ui.DayReportScreen
 import org.openoura.android.data.BackupResult
 import org.openoura.android.data.Backups
+import org.openoura.android.sync.AutoBackup
 import org.openoura.android.ui.BackupScreen
 import org.openoura.android.ui.DaysBrowser
 import org.openoura.android.ui.describeBackup
@@ -338,6 +339,32 @@ fun OpenOuraApp(
             }
         }
     }
+    val autoBackup = AutoBackup.states(app).collectAsState().value ?: AutoBackup.state(app)
+    var autoPassphrase by remember { mutableStateOf<String?>(null) }
+    val runAutoBackup: () -> Unit = {
+        work.launch {
+            backupBusy = true
+            backupProgress = null
+            backupMessage = AutoBackup.run(app, force = true) { backupProgress = it }?.let(::describeBackup)
+            backupBusy = false
+        }
+    }
+    val createAutoBackup = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument("application/octet-stream"),
+    ) { uri ->
+        val passphrase = autoPassphrase
+        autoPassphrase = null
+        when {
+            uri == null -> Unit
+            passphrase == null -> backupMessage = "Please enter the passphrase again."
+            else -> {
+                val problem = AutoBackup.enable(app, uri, passphrase)
+                    backupMessage = problem
+                // The first one now, while the user is here to see whether it works.
+                if (problem == null) runAutoBackup()
+            }
+        }
+    }
     val pickBackup = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri != null) restoreFrom = uri
     }
@@ -540,7 +567,7 @@ fun OpenOuraApp(
             ScreenScaffold(title = "Backup", onBack = navigator::back) { padding ->
                 BackupScreen(
                     hasDatabase = repo.hasDatabase,
-                    busy = backupBusy,
+                    busy = backupBusy || autoBackup.running,
                     progress = backupProgress,
                     message = backupMessage,
                     restorePicked = restoreFrom != null,
@@ -576,6 +603,22 @@ fun OpenOuraApp(
                         }
                     },
                     onCancelRestore = { restoreFrom = null },
+                    auto = autoBackup,
+                    onAutoSetup = { passphrase ->
+                        autoPassphrase = passphrase
+                        backupMessage = null
+                        // A fixed name: this file is replaced daily, so a date would lie.
+                        createAutoBackup.launch(Backups.AUTO_FILE_NAME)
+                    },
+                    onAutoNow = {
+                        backupMessage = null
+                        runAutoBackup()
+                    },
+                    onAutoOff = {
+                        AutoBackup.disable(app)
+                                    backupMessage = "Automatic backup is off and the passphrase has been removed " +
+                            "from this phone. The backup file is still where you put it."
+                    },
                     modifier = Modifier.padding(padding),
                 )
             }
