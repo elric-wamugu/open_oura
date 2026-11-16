@@ -417,6 +417,7 @@ fun OpenOuraApp(
                     LiveHeartRate.start(app)
                     navigator.push(HeartRateRoute)
                 },
+                onOpenHeartRate = { navigator.push(HeartRateRoute) },
             )
         }
         entry<HistoryRoute>(metadata = TabRootMotion) {

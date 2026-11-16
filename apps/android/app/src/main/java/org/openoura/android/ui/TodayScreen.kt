@@ -68,6 +68,8 @@ fun TodayScreen(
     /** The last heart-rate measurement, for the card that starts a new one. */
     lastHeartRate: HeartReading?,
     onMeasureHeartRate: () -> Unit,
+    /** Open the heart-rate page without starting a measurement. */
+    onOpenHeartRate: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val ready = state as? SummaryState.Ready
@@ -128,7 +130,7 @@ fun TodayScreen(
                         }
                     }
 
-                    is SummaryState.Ready -> readyItems(state, onOpenDay, onBrowseDays, cardioExpanded, onToggleCardio, lastHeartRate, onMeasureHeartRate)
+                    is SummaryState.Ready -> readyItems(state, onOpenDay, onBrowseDays, cardioExpanded, onToggleCardio, lastHeartRate, onMeasureHeartRate, onOpenHeartRate)
                 }
             }
         }
@@ -143,6 +145,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.readyItems(
     onToggleCardio: () -> Unit,
     lastHeartRate: HeartReading?,
     onMeasureHeartRate: () -> Unit,
+    onOpenHeartRate: () -> Unit,
 ) {
     val s = state.summary
     s.digest?.takeIf { it.isNotBlank() }?.let { digest ->
@@ -185,7 +188,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.readyItems(
     item(key = "vitals") {
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             SectionHeader("Vitals")
-            VitalsGrid(s)
+            VitalsGrid(s, onOpenHeartRate = onOpenHeartRate, onOpenSleep = { day -> onOpenDay(day, true) })
         }
     }
     item(key = "heart-rate") {
@@ -200,11 +203,16 @@ private fun androidx.compose.foundation.lazy.LazyListScope.readyItems(
  * dashboard's `renderTiles`: HRV, resting HR, sleep efficiency, blood oxygen.
  */
 @Composable
-private fun VitalsGrid(s: Summary) {
+private fun VitalsGrid(s: Summary, onOpenHeartRate: () -> Unit, onOpenSleep: (day: String) -> Unit) {
     val hrv = s.vitals.hrv
     val rhr = s.vitals.rhr
-    val night = s.nights.firstOrNull()
-    val spo2 = s.nights.firstOrNull { it.spo2Mean != null }?.spo2Mean
+    // The newest main sleep: the same nights `vitals` is built from.
+    val night = s.nights.firstOrNull { it.main }
+    // The day whose sleep report this night belongs on: the one it was woken from. Asked of
+    // the night itself, not by finding the day that lists it — a nap is the newest night
+    // without being its day's main sleep, and looking it up that way found no day at all.
+    val nightDay = night?.let(s::wakeYmd)
+    val spo2 = s.nights.firstOrNull { it.main && it.spo2Mean != null }?.spo2Mean
     val eff = night?.efficiency
 
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -220,6 +228,11 @@ private fun VitalsGrid(s: Summary) {
                 label = "Resting HR", value = rhr.latest, unit = "bpm", icon = R.drawable.ic_sym_favorite,
                 reference = rhr.baseline, status = statusFor(rhr.deltaPct, goodIsUp = false),
                 modifier = Modifier.weight(1f).fillMaxHeight(),
+                // Last night's resting rate leads to measuring it now. It opens the page
+                // rather than starting: this tile reports a figure, and a tap on a figure
+                // that set the ring measuring would be a surprise.
+                onClick = onOpenHeartRate,
+                onClickLabel = "Measure heart rate",
             )
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.height(IntrinsicSize.Min)) {
@@ -235,6 +248,9 @@ private fun VitalsGrid(s: Summary) {
                 },
                 subtitle = if (eff == null) "needs a scored night" else null,
                 modifier = Modifier.weight(1f).fillMaxHeight(),
+                // To the sleep report of the night the figure is from; nowhere without one.
+                onClick = nightDay?.let { day -> { onOpenSleep(day) } },
+                onClickLabel = "Open the sleep report",
             )
             VitalTile(
                 label = "Blood oxygen", value = spo2, unit = "%", icon = R.drawable.ic_sym_spo2,

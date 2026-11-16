@@ -255,7 +255,8 @@ struct RootView: View {
     }
 
     @ViewBuilder private func content(_ s: Summary) -> some View {
-        let latest = s.nights.first
+        // The newest main sleep, as `vitals` uses — not a nap that happens to be newer.
+        let latest = s.nights.first { $0.main != false }
         ScrollView {
                 VStack(alignment: .leading, spacing: 26) {
                     HStack {

@@ -112,6 +112,31 @@ both clients, so the night count always reconciles with the ring's own period co
 than being quietly short. This lives in the **shared brain**, so both clients inherit it —
 don't re-filter per client.
 
+### A day's main sleep: the vitals ignore naps
+
+The 90-minute cut lets long naps through, and they are nights in the list — but not what
+"last night" means. On 2026-11-16 an afternoon rest of over 90 minutes became `nights[0]`:
+the resting-HR tile went from 58 to 79 bpm, the efficiency tile showed 15% beside a sleep
+page saying 84%, and the digest announced that recovery was dipping. The nap had also
+joined the baseline every later night is judged against.
+
+So `build_summary` now marks each night with **`main`**: true for the longest in bed of
+the nights woken from on that date (equal lengths go to the later), which is the rule the
+clients' `nightForDay` has always used to pick a day's sleep. And:
+
+- **`vitals`** — the HRV and resting-HR series, `latest`, the baseline and so the digest —
+  are built from main sleeps only.
+- **Each client's tiles** that read "the latest night" directly (sleep efficiency, blood
+  oxygen, and skin temperature on iOS) take the newest night with `main !== false`.
+  Android: `VitalsGrid`. Web: `renderTiles`. iOS: `content(_:)`.
+- A nap is still in `nights[]`, still has its own report, and still counts towards sleep
+  debt. Only "which night do the vitals describe" changed.
+- `main` is absent on a summary cached before this; clients treat absent as true.
+
+Checked on the Pixel 9a against the day that exposed it: resting HR back to 58 (baseline
+63.1), efficiency 84%. The web and iOS changes are the same one-line filter but were not
+run: there is no database on the development machine, and iOS cannot be built here.
+
 ## Per-bucket steps are estimated, not counted
 
 `activity_steps` gives 96 × 15-min step counts per day, on the same bucket grid as
@@ -404,6 +429,20 @@ nightly need" but "a 7.5 h need". `app.js` hardcodes "an".
   `feature_modes.json` recorded, never left in live mode and never switched on if it was
   off; and nothing is written to the database — a spot reading is not history. Only the
   most recent result is kept, in the app's preferences.
+
+- **Two Vitals tiles are tappable on Android** (`VitalTile`'s `onClick`): Resting HR opens
+  the heart-rate page (without starting a measurement), and Sleep efficiency opens the
+  sleep report for the day that night was woken from. **Android only**; the web's tiles do
+  not link anywhere. The sleep report is found from the night itself (`wakeYmd`), not by
+  looking for the day that lists it: the newest night can be a nap that is not its day's
+  main sleep, and then no day lists it.
+
+- **Today's sleep card shows the stage split, not the hypnogram, on Android**
+  (`StageSplit` in `ui/DayCard.kt`): one proportional bar with Deep / Light / REM / Awake
+  and their percentages, the same component the sleep page uses under "Sleep
+  architecture". **The web's day card still draws the hypnogram strip** with a small
+  legend under it. A deliberate divergence, by request on Android (2026-11-16); bring the
+  web in line or leave it, but do not assume the two cards match.
 
 Two Android features have no web or iOS counterpart, and are not omissions to close:
 

@@ -5,21 +5,16 @@ import androidx.compose.animation.SizeTransform
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.ListItemDefaults
 import androidx.compose.material3.MaterialTheme
@@ -28,7 +23,6 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.unit.dp
@@ -39,7 +33,6 @@ import org.openoura.android.ui.components.ChoiceOption
 import org.openoura.android.ui.components.ConnectedChoice
 import org.openoura.android.ui.components.SectionHeader
 import org.openoura.android.ui.components.ShapedIcon
-import org.openoura.android.ui.theme.dataColors
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -186,52 +179,11 @@ private fun ColumnScope.SleepReport(s: Summary, ymd: String) {
     }
 }
 
-/**
- * The night's stage split as one rounded bar, each stage's share drawn to scale, with the
- * percentages underneath — the proportions read at a glance, the figures on a second look.
- */
+/** The night's stage split, on its own card. */
 @Composable
 private fun StageBar(n: NightRow) {
-    val d = MaterialTheme.dataColors
-    val parts = listOf(
-        Triple("Deep", n.deepPct, d.deep),
-        Triple("Light", n.lightPct, d.light),
-        Triple("REM", n.remPct, d.rem),
-        Triple("Awake", n.wakePct, d.wake),
-    )
     Surface(shape = MaterialTheme.shapes.large, color = MaterialTheme.colorScheme.surfaceContainer) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-            val total = parts.sumOf { it.second ?: 0.0 }
-            if (total > 0) {
-                Row(
-                    Modifier
-                        .fillMaxWidth()
-                        .height(20.dp)
-                        .clip(CircleShape),
-                    horizontalArrangement = Arrangement.spacedBy(3.dp),
-                ) {
-                    parts.forEach { (_, pct, colour) ->
-                        val w = (pct ?: 0.0).toFloat()
-                        if (w > 0f) Box(Modifier.weight(w).fillMaxHeight().background(colour))
-                    }
-                }
-            }
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-                parts.forEach { (label, pct, colour) ->
-                    Column {
-                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                            Box(Modifier.size(10.dp).clip(CircleShape).background(colour))
-                            Text(
-                                label,
-                                style = MaterialTheme.typography.labelMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                        Text("${(pct ?: 0.0).roundToInt()}%", style = MaterialTheme.typography.titleLargeEmphasized)
-                    }
-                }
-            }
-        }
+        StageSplit(n, Modifier.padding(16.dp))
     }
 }
 

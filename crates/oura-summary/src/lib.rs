@@ -503,6 +503,34 @@ fn ema_baseline(per_night: &[Option<f64>]) -> Option<f64> {
     Some(b.mean())
 }
 
+/// Which nights are their day's main sleep, given each night's `(wake_day, in_bed_h)`
+/// oldest-first.
+///
+/// A day can hold more than one bedtime period that clears the 90-minute cut: the night,
+/// and a long rest or a nap after it. Both are nights as far as the list goes, but only
+/// one of them is what "last night" means. The clients have always shown a day's sleep
+/// that way — the longest in bed of those woken from on that date — and this is the same
+/// rule, down to the tie: equal lengths go to the later one, as `nightForDay` picks the
+/// first maximum of a newest-first list. `in_bed_h` is the rounded figure the clients
+/// compare, not the raw duration, so the brain and the clients cannot disagree by a
+/// rounding.
+fn main_sleeps(nights: &[(i64, f64)]) -> Vec<bool> {
+    let mut main = vec![false; nights.len()];
+    let mut best: std::collections::HashMap<i64, usize> = Default::default();
+    for (i, (day, hours)) in nights.iter().enumerate().rev() {
+        match best.get(day) {
+            Some(&b) if nights[b].1 >= *hours => {}
+            _ => {
+                best.insert(*day, i);
+            }
+        }
+    }
+    for i in best.into_values() {
+        main[i] = true;
+    }
+    main
+}
+
 /// `(sparkline series, latest, baseline)` for a per-night vital.
 type VitalStat = (Vec<f64>, Option<f64>, Option<f64>);
 fn vital_stat(per_night: &[Option<f64>]) -> VitalStat {
@@ -1435,9 +1463,23 @@ pub fn build_summary(db: &Path, tz: i64, runner: &dyn ModelRunner) -> Result<Val
         .filter(|(_, (_, tag, _, _))| name_of(*tag) == "sleep_phase_data")
         .map(|(i, (ds, _, jstr, _))| (event_epochs[i], *ds, jstr.as_str()))
         .collect();
+    // Each night's wake date (the local date it ended on) and time in bed, to say which
+    // one is its day's main sleep. Worked out before the loop because the answer for one
+    // night depends on the others.
+    let is_main = main_sleeps(
+        &nights
+            .iter()
+            .map(|nt| {
+                let end_local = unix_in_epoch(nt.end_ds, nt.epoch_idx) + tz as f64 * 3600.0;
+                let in_bed_h =
+                    ((nt.end_ds - nt.start_ds) as f64 / 10.0 / 3600.0 * 10.0).round() / 10.0;
+                ((end_local / 86400.0).floor() as i64, in_bed_h)
+            })
+            .collect::<Vec<_>>(),
+    );
     let mut nights_json = Vec::new();
     let mut asleep_by_night: Vec<i32> = Vec::new(); // oldest-first, for sleep debt
-    for nt in &nights {
+    for (night_idx, nt) in nights.iter().enumerate() {
         let sleep_key = format!("{}:{}", nt.epoch_idx, nt.start_ds);
         let hyp = hyps
             .get(&sleep_key)
@@ -1505,6 +1547,11 @@ pub fn build_summary(db: &Path, tz: i64, runner: &dyn ModelRunner) -> Result<Val
             "start_unix": start_unix.round() as i64,
             "end_unix": end_unix.round() as i64,
             "in_bed_h": ((nt.end_ds - nt.start_ds) as f64 / 10.0 / 3600.0 * 10.0).round() / 10.0,
+            // Whether this is the main sleep of the day it was woken from — false for a
+            // nap or a long rest on a day that also has a night. The vitals below are
+            // built from main sleeps only; a client choosing "the latest night" for a
+            // tile must skip the others the same way.
+            "main": is_main[night_idx],
             "hrv_ms": mean(&nt.rmssd).map(|x| x.round()),
             "rhr": nt.hr.iter().cloned().fold(f64::INFINITY, f64::min).is_finite().then(|| nt.hr.iter().cloned().fold(f64::INFINITY, f64::min).round()),
             "skin_temp": nightly_skin_temp(&nt.temp).map(|x| (x * 10.0).round() / 10.0),
@@ -1775,9 +1822,19 @@ pub fn build_summary(db: &Path, tz: i64, runner: &dyn ModelRunner) -> Result<Val
         .collect::<serde_json::Map<_, _>>()
         .into();
 
-    let hrv_by_night: Vec<Option<f64>> = nights.iter().map(|n| mean(&n.rmssd)).collect();
-    let rhr_by_night: Vec<Option<f64>> = nights
-        .iter()
+    // Main sleeps only. A daytime rest long enough to count as a night used to become
+    // "latest" here: measured 2026-11-16, an afternoon period turned a resting HR of 58
+    // into 79 and put a 15% sleep efficiency on the vitals tile, beside a sleep page that
+    // said 84%. It also fed the baseline every later night is judged against.
+    let main_nights = || {
+        nights
+            .iter()
+            .zip(&is_main)
+            .filter(|(_, m)| **m)
+            .map(|(n, _)| n)
+    };
+    let hrv_by_night: Vec<Option<f64>> = main_nights().map(|n| mean(&n.rmssd)).collect();
+    let rhr_by_night: Vec<Option<f64>> = main_nights()
         .map(|n| n.hr.iter().cloned().reduce(f64::min))
         .collect();
     let hrv_stat = vital_stat(&hrv_by_night);
@@ -2390,5 +2447,30 @@ mod tests {
             assert!(u >= prev, "ds {ds}: {u} < {prev}");
             prev = u;
         }
+    }
+    #[test]
+    fn a_days_main_sleep_is_the_longest_woken_from_that_day() {
+        // (wake day, hours in bed), oldest first: a night, then a nap the same day, then
+        // the next night.
+        assert_eq!(
+            crate::main_sleeps(&[(10, 7.6), (10, 2.1), (11, 8.0)]),
+            vec![true, false, true]
+        );
+        // The longer one wins whichever came first.
+        assert_eq!(
+            crate::main_sleeps(&[(10, 1.8), (10, 6.9)]),
+            vec![false, true]
+        );
+        // Equal lengths go to the later, as the clients' nightForDay does.
+        assert_eq!(
+            crate::main_sleeps(&[(10, 3.0), (10, 3.0)]),
+            vec![false, true]
+        );
+        // One night a day: every night is main.
+        assert_eq!(
+            crate::main_sleeps(&[(1, 7.0), (2, 6.5), (4, 8.2)]),
+            vec![true; 3]
+        );
+        assert!(crate::main_sleeps(&[]).is_empty());
     }
 }
