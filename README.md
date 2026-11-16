@@ -150,7 +150,7 @@ cargo build --release
 
 See [`crates/README.md`](crates/README.md) for all commands (`scan`, `pair`,
 `info`, `sync`, `latest`, `live-hr`, `accel`, `viz`, `game`, `features`, `rdata`,
-`events`, `redecode`, `backup`, `restore`, `sleep-analyze`, `sessions`, `dashboard`) and the auth-key
+`events`, `redecode`, `compact`, `backup`, `restore`, `sleep-analyze`, `sessions`, `dashboard`) and the auth-key
 details. `oura dashboard` serves a local web health dashboard (sleep, cardio,
 SpO2, activity, device) at `http://127.0.0.1:8090` (see [`dashboard/`](dashboard/));
 `oura viz` opens a real-time 3D motion visualizer; `oura game` is a tilt-controlled

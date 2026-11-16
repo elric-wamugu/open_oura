@@ -91,6 +91,7 @@ import org.openoura.android.health.HealthExport
 import org.openoura.android.ui.DayReportScreen
 import org.openoura.android.data.BackupResult
 import org.openoura.android.data.Backups
+import org.openoura.android.data.DatabaseCare
 import org.openoura.android.sync.AutoBackup
 import org.openoura.android.ui.BackupScreen
 import org.openoura.android.ui.DaysBrowser
@@ -511,6 +512,12 @@ fun OpenOuraApp(
                 onHealthConnect = { navigator.push(HealthConnectRoute) },
                 onBackup = { navigator.push(BackupRoute) },
                 onImportDatabase = { pickDatabase.launch(arrayOf("*/*")) },
+                onCompactDatabase = {
+                    work.launch {
+                        messages.show("Compacting the database. Keep the app open…")
+                        messages.show(DatabaseCare.compact(app, RingSyncService.isRunning))
+                    }
+                },
                 alerts = alertSwitches,
                 notificationsAllowed = notificationsAllowed,
                 onAlert = { kind, on ->

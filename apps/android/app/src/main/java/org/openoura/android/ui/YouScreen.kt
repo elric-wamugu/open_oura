@@ -42,6 +42,7 @@ fun YouScreen(
     onHealthConnect: () -> Unit,
     onBackup: () -> Unit,
     onImportDatabase: () -> Unit,
+    onCompactDatabase: () -> Unit,
     /** Each alert's switch, and whether Android lets the app notify at all. */
     alerts: Map<AlertKind, Boolean>,
     notificationsAllowed: Boolean,
@@ -91,6 +92,13 @@ fun YouScreen(
                         title = "Import database",
                         detail = "Load history from an oura.db file",
                         onClick = onImportDatabase,
+                        chevron = false,
+                    ),
+                    LinkRow(
+                        icon = R.drawable.ic_sym_database,
+                        title = "Compact database",
+                        detail = "Give unused space back to the phone. Your history is not changed",
+                        onClick = onCompactDatabase,
                         chevron = false,
                     ),
                 ),

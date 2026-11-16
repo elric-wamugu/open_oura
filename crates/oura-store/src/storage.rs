@@ -40,7 +40,6 @@ CREATE TABLE IF NOT EXISTS events (
     captured_unix  INTEGER NOT NULL,
     UNIQUE(serial, tag, ring_timestamp, body)
 );
-CREATE INDEX IF NOT EXISTS idx_events_serial_tag ON events(serial, tag);
 
 CREATE TABLE IF NOT EXISTS readings (
     id            INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -58,6 +57,39 @@ fn now_unix() -> i64 {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)
         .unwrap_or(0)
+}
+
+/// A decoded event as readers take it: `(ring_timestamp, tag, decoded_json, captured_unix)`.
+type DecodedRow = (i64, u8, String, i64);
+
+/// How many connections share the big read, and below how many rows it is not worth it.
+/// Four is the Pixel 9a's count of fast cores; more only adds its slow ones.
+const PARALLEL_READERS: usize = 4;
+const PARALLEL_MIN_ROWS: i64 = 200_000;
+
+/// One slice of the decoded-events read: ids in `(after, upto]`, in id order.
+fn read_decoded(
+    conn: &Connection,
+    sql: &str,
+    after: i64,
+    upto: i64,
+    serial: Option<&str>,
+) -> Result<Vec<DecodedRow>> {
+    let mut stmt = conn.prepare(sql)?;
+    let map_row = |r: &rusqlite::Row<'_>| {
+        Ok((
+            r.get::<_, i64>(0)?,
+            r.get::<_, i64>(1)? as u8,
+            r.get::<_, String>(2)?,
+            r.get::<_, i64>(3)?,
+        ))
+    };
+    let rows = match serial {
+        Some(serial) => stmt.query_map(params![after, upto, serial], map_row)?,
+        None => stmt.query_map(params![after, upto], map_row)?,
+    }
+    .collect::<std::result::Result<Vec<_>, _>>()?;
+    Ok(rows)
 }
 
 /// One event as the ring delivered it, with when it was captured. Everything else a row
@@ -97,7 +129,37 @@ impl Store {
         // while a sync is writing, without blocking.
         conn.execute_batch("PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL;")?;
         conn.execute_batch(SCHEMA)?;
+        // `idx_events_serial_tag` was 137 MB of a 1,033 MB database and did nothing the
+        // UNIQUE constraint's own index does not: that one starts with (serial, tag) too,
+        // so every lookup the narrower index could serve, it serves. The summary's big
+        // read had to go out of its way to avoid it (see `decoded_events_query`).
+        //
+        // Best effort: it needs the write lock, and if a sync holds that right now the
+        // next open drops it instead. The freed pages are reused as the history grows;
+        // `compact` hands them back to the filesystem.
+        let _ = conn.execute_batch("DROP INDEX IF EXISTS idx_events_serial_tag");
         Ok(Self { conn })
+    }
+
+    /// Rewrite the database file without its free pages (SQLite's `VACUUM`), returning
+    /// its size in bytes before and after.
+    ///
+    /// Nothing in the database changes; only how the file is packed. It needs free space
+    /// of about twice the database's size while it runs, takes the write lock for the
+    /// duration, and is rolled back as a whole if it is interrupted.
+    pub fn compact(&self) -> Result<(u64, u64)> {
+        let size = |conn: &Connection| -> Result<u64> {
+            let pages: i64 = conn.query_row("PRAGMA page_count", [], |r| r.get(0))?;
+            let page: i64 = conn.query_row("PRAGMA page_size", [], |r| r.get(0))?;
+            Ok((pages * page) as u64)
+        };
+        let before = size(&self.conn)?;
+        self.conn.execute_batch("VACUUM")?;
+        // In WAL mode the rewritten pages sit in the log until a checkpoint; truncating
+        // it is what actually gives the space back.
+        self.conn
+            .query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |_| Ok(()))?;
+        Ok((before, size(&self.conn)?))
     }
 
     /// Open an in-memory database (useful for tests).
@@ -286,17 +348,41 @@ impl Store {
         self.decoded_events_for_serial_opt(Some(serial))
     }
 
+    /// Decoded events like [`Store::decoded_events_for_serial`], but with the JSON of
+    /// every tag outside `json_tags` left as an empty string.
+    ///
+    /// Every row still comes back — callers count events and fit the clock from all of
+    /// them — but only the tags named have their JSON copied out of the database. On a
+    /// year-scale history most of the JSON by weight belongs to streams a given reader
+    /// never parses (raw beat intervals, step features), and holding it all in memory at
+    /// once is what a phone can least afford.
+    pub fn decoded_events_with_json_for(
+        &self,
+        serial: Option<&str>,
+        json_tags: &[u8],
+    ) -> Result<Vec<(i64, u8, String, i64)>> {
+        self.decoded_events_query(serial, Some(json_tags))
+    }
+
     fn decoded_events_for_serial_opt(
         &self,
         serial: Option<&str>,
     ) -> Result<Vec<(i64, u8, String, i64)>> {
-        // `+serial` suppresses `idx_events_serial_tag`, and that one character is worth
-        // roughly 9x on a real database.
+        self.decoded_events_query(serial, None)
+    }
+
+    fn decoded_events_query(
+        &self,
+        serial: Option<&str>,
+        json_tags: Option<&[u8]>,
+    ) -> Result<Vec<(i64, u8, String, i64)>> {
+        // `+serial` keeps SQLite off the indexes for this filter, and that one character
+        // is worth roughly 9x on a real database.
         //
-        // The index is selective for *tag*; for *serial* it is not — there is one ring, so
-        // `serial = ?` matches every row. SQLite still picks it for the equality, which
-        // hands rows back in (serial, tag, rowid) order and then needs a TEMP B-TREE to put
-        // 1.87M of them back in `id` order, spilling to disk on the way. Measured on a
+        // Every index on `events` starts with `serial`, and there is one ring, so
+        // `serial = ?` matches every row. SQLite still takes an index for the equality,
+        // which hands rows back in index order and then needs a TEMP B-TREE to put
+        // millions of them back in `id` order, spilling to disk on the way. Measured on a
         // 523 MB database, 1,866,568 rows, identical results both ways:
         //
         //     AND serial = ?    SEARCH … USE TEMP B-TREE FOR ORDER BY    51.8 s
@@ -304,29 +390,79 @@ impl Store {
         //
         // The scan is already in `id` order, so the sort disappears entirely.
         let serial_filter = if serial.is_some() {
-            " AND +serial = ?1"
+            " AND +serial = ?3"
         } else {
             ""
         };
-        let mut stmt = self.conn.prepare(&format!(
-            "SELECT ring_timestamp, tag, decoded_json, captured_unix FROM events \
-                 WHERE decoded_json IS NOT NULL{} ORDER BY id",
-            serial_filter
-        ))?;
-        let map_row = |r: &rusqlite::Row<'_>| {
-            Ok((
-                r.get::<_, i64>(0)?,
-                r.get::<_, i64>(1)? as u8,
-                r.get::<_, String>(2)?,
-                r.get::<_, i64>(3)?,
-            ))
+        // Tags are numbers from this program, not user input, so they go in as literals.
+        let json_column = match json_tags {
+            None => "decoded_json".to_string(),
+            Some([]) => "''".to_string(),
+            Some(tags) => format!(
+                "CASE WHEN tag IN ({}) THEN decoded_json ELSE '' END",
+                tags.iter().map(u8::to_string).collect::<Vec<_>>().join(",")
+            ),
         };
-        let rows = match serial {
-            Some(serial) => stmt.query_map(params![serial], map_row)?,
-            None => stmt.query_map([], map_row)?,
+        let sql = format!(
+            "SELECT ring_timestamp, tag, {json_column}, captured_unix FROM events \
+                 WHERE decoded_json IS NOT NULL AND id > ?1 AND id <= ?2{serial_filter} \
+                 ORDER BY id"
+        );
+        let last_id: i64 =
+            self.conn
+                .query_row("SELECT COALESCE(MAX(id), 0) FROM events", [], |r| r.get(0))?;
+
+        // On a phone this read is two thirds of a recompute, and it is the CPU walking
+        // rows, not the disk: 4 s for 5.66M rows on a Pixel 9a against 1.2 s on a laptop.
+        // The ids are dense and the table is their B-tree, so the range splits cleanly
+        // into slices that separate read-only connections walk at the same time (WAL lets
+        // any number of readers in). Each slice comes back in id order and they are joined
+        // in slice order, so the result is the single scan's, row for row.
+        //
+        // Rows are only ever appended, and every slice stops at `last_id`, so a sync that
+        // commits while this runs changes nothing here. `redecode` rewriting JSON under a
+        // running read is the one thing that could show two versions; it is a manual
+        // desktop command.
+        let workers = std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(1)
+            .min(PARALLEL_READERS);
+        let path = self.conn.path().filter(|p| !p.is_empty());
+        if let (Some(path), true) = (path, workers > 1 && last_id >= PARALLEL_MIN_ROWS) {
+            let step = last_id / workers as i64 + 1;
+            let slices: Vec<(i64, i64)> = (0..workers as i64)
+                .map(|w| (w * step, ((w + 1) * step).min(last_id)))
+                .collect();
+            let parts: Vec<Result<Vec<DecodedRow>>> = std::thread::scope(|scope| {
+                let handles: Vec<_> = slices
+                    .iter()
+                    .map(|&(after, upto)| {
+                        let sql = &sql;
+                        scope.spawn(move || -> Result<Vec<DecodedRow>> {
+                            let conn = Connection::open_with_flags(
+                                path,
+                                rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+                            )?;
+                            read_decoded(&conn, sql, after, upto, serial)
+                        })
+                    })
+                    .collect();
+                handles
+                    .into_iter()
+                    .map(|h| h.join().expect("event reader panicked"))
+                    .collect()
+            });
+            // Any slice failing (a second connection refused, say) falls through to the
+            // plain scan below rather than returning part of the history.
+            if parts.iter().all(|p| p.is_ok()) {
+                let mut rows = Vec::with_capacity(parts.iter().flatten().map(Vec::len).sum());
+                for part in parts {
+                    rows.append(&mut part?);
+                }
+                return Ok(rows);
+            }
         }
-        .collect::<std::result::Result<Vec<_>, _>>()?;
-        Ok(rows)
+        read_decoded(&self.conn, &sql, 0, last_id, serial)
     }
 
     /// Run `f` inside one read transaction, so everything it reads is a single consistent
@@ -409,14 +545,29 @@ impl Store {
     #[allow(clippy::type_complexity)]
     pub fn device_rows(
         &self,
-    ) -> Result<Vec<(String, Option<String>, Option<String>, Option<String>, Option<String>, i64)>>
-    {
+    ) -> Result<
+        Vec<(
+            String,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            i64,
+        )>,
+    > {
         let mut stmt = self.conn.prepare(
             "SELECT serial, hardware_id, firmware, api_version, mac, updated_unix FROM device",
         )?;
         let rows = stmt
             .query_map([], |r| {
-                Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?))
+                Ok((
+                    r.get(0)?,
+                    r.get(1)?,
+                    r.get(2)?,
+                    r.get(3)?,
+                    r.get(4)?,
+                    r.get(5)?,
+                ))
             })?
             .collect::<std::result::Result<Vec<_>, _>>()?;
         Ok(rows)
@@ -442,7 +593,14 @@ impl Store {
                mac=COALESCE(excluded.mac, device.mac),
                updated_unix=excluded.updated_unix
              WHERE excluded.updated_unix > device.updated_unix",
-            params![serial, hardware_id, firmware, api_version, mac, updated_unix],
+            params![
+                serial,
+                hardware_id,
+                firmware,
+                api_version,
+                mac,
+                updated_unix
+            ],
         )?;
         Ok(())
     }
@@ -463,7 +621,12 @@ impl Store {
     /// The later sync is the one that knows where the ring currently is. This is only safe
     /// alongside that copy's events — the cursor says "everything before here is stored",
     /// which is true of the merged database once those events are in it.
-    pub fn merge_sync_row(&self, serial: &str, next_cursor: i64, last_sync_unix: i64) -> Result<()> {
+    pub fn merge_sync_row(
+        &self,
+        serial: &str,
+        next_cursor: i64,
+        last_sync_unix: i64,
+    ) -> Result<()> {
         self.conn.execute(
             "INSERT INTO sync_state (serial, next_cursor, last_sync_unix)
              VALUES (?1, ?2, ?3)
@@ -540,6 +703,116 @@ mod tests {
     use super::*;
 
     #[test]
+    fn the_sliced_read_returns_what_one_scan_does() {
+        let dir = std::env::temp_dir().join(format!("oura-store-slices-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let store = Store::open(&dir.join("oura.db")).unwrap();
+        // Enough rows to cross the threshold, across two tags and two serials, with gaps
+        // in the ids where duplicates were refused.
+        store
+            .transaction(|s| {
+                for i in 0..(PARALLEL_MIN_ROWS + 5_000) {
+                    s.insert_raw_event(&RawEvent {
+                        serial: if i % 97 == 0 {
+                            "S2".into()
+                        } else {
+                            "S1".into()
+                        },
+                        tag: if i % 3 == 0 { 0x46 } else { 0x47 },
+                        ring_timestamp: i / 2,
+                        body: vec![(i % 200) as u8, 1, (i % 7) as u8, 0, 0, 0, 0, 0],
+                        captured_unix: 1_700_000_000 + i,
+                    })?;
+                }
+                Ok(())
+            })
+            .unwrap();
+        let sql = "SELECT ring_timestamp, tag, decoded_json, captured_unix FROM events \
+                   WHERE decoded_json IS NOT NULL AND id > ?1 AND id <= ?2 ORDER BY id";
+        let one_scan = read_decoded(&store.conn, sql, 0, i64::MAX, None).unwrap();
+        assert!(one_scan.len() as i64 >= PARALLEL_MIN_ROWS);
+        assert_eq!(store.decoded_events().unwrap(), one_scan);
+
+        let s1: Vec<DecodedRow> = {
+            let sql = "SELECT ring_timestamp, tag, decoded_json, captured_unix FROM events \
+                       WHERE decoded_json IS NOT NULL AND id > ?1 AND id <= ?2 AND +serial = ?3 \
+                       ORDER BY id";
+            read_decoded(&store.conn, sql, 0, i64::MAX, Some("S1")).unwrap()
+        };
+        assert_eq!(store.decoded_events_for_serial("S1").unwrap(), s1);
+
+        // Only the asked-for tags keep their JSON; every row is still there.
+        let some = store.decoded_events_with_json_for(None, &[0x46]).unwrap();
+        assert_eq!(some.len(), one_scan.len());
+        for (got, full) in some.iter().zip(&one_scan) {
+            assert_eq!((got.0, got.1, got.3), (full.0, full.1, full.3));
+            assert_eq!(
+                got.2,
+                if full.1 == 0x46 {
+                    full.2.clone()
+                } else {
+                    String::new()
+                }
+            );
+        }
+        drop(store);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn opening_drops_the_redundant_index_and_compacting_keeps_every_row() {
+        let dir = std::env::temp_dir().join(format!("oura-store-compact-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("oura.db");
+        {
+            // A database as older versions left it.
+            let store = Store::open(&path).unwrap();
+            store
+                .conn
+                .execute_batch("CREATE INDEX idx_events_serial_tag ON events(serial, tag)")
+                .unwrap();
+            for i in 0..2000i64 {
+                store
+                    .insert_raw_event(&RawEvent {
+                        serial: "S1".into(),
+                        tag: 0x46,
+                        ring_timestamp: i,
+                        body: vec![(i % 251) as u8; 12],
+                        captured_unix: 1_700_000_000 + i,
+                    })
+                    .unwrap();
+            }
+        }
+        let store = Store::open(&path).unwrap();
+        let index_left: i64 = store
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE name = 'idx_events_serial_tag'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(index_left, 0);
+        let (before, after) = store.compact().unwrap();
+        assert!(after < before, "{after} should be smaller than {before}");
+        assert_eq!(store.total_events().unwrap(), 2000);
+        // Duplicates are still refused without the index that was dropped.
+        let again = RawEvent {
+            serial: "S1".into(),
+            tag: 0x46,
+            ring_timestamp: 7,
+            body: vec![7u8; 12],
+            captured_unix: 1,
+        };
+        store.insert_raw_event(&again).unwrap();
+        assert_eq!(store.total_events().unwrap(), 2000);
+        drop(store);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn events_dedup_and_cursor_roundtrip() {
         let store = Store::open_in_memory().unwrap();
         let ev = RingEvent {
@@ -562,14 +835,27 @@ mod tests {
     #[test]
     fn latest_reading_returns_newest() {
         let store = Store::open_in_memory().unwrap();
-        assert!(store.latest_reading("S1", "battery_percent").unwrap().is_none());
-        store.insert_reading("S1", "battery_percent", 80.0, "%").unwrap();
-        store.insert_reading("S1", "battery_percent", 9.0, "%").unwrap();
+        assert!(store
+            .latest_reading("S1", "battery_percent")
+            .unwrap()
+            .is_none());
+        store
+            .insert_reading("S1", "battery_percent", 80.0, "%")
+            .unwrap();
+        store
+            .insert_reading("S1", "battery_percent", 9.0, "%")
+            .unwrap();
         // Even inserted within the same second, the last write (higher id) wins.
-        let (v, _t) = store.latest_reading("S1", "battery_percent").unwrap().unwrap();
+        let (v, _t) = store
+            .latest_reading("S1", "battery_percent")
+            .unwrap()
+            .unwrap();
         assert_eq!(v, 9.0);
         // Scoped by device and kind.
-        assert!(store.latest_reading("S2", "battery_percent").unwrap().is_none());
+        assert!(store
+            .latest_reading("S2", "battery_percent")
+            .unwrap()
+            .is_none());
         assert!(store.latest_reading("S1", "spo2").unwrap().is_none());
     }
 }

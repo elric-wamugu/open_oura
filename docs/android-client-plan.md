@@ -392,7 +392,9 @@ Only once the above is solid:
   rollups only if a measurement says so; `cargo run --release -p oura-summary --example
   profile_summary -- oura.db` is that measurement. **It is being asked again:** the
   Pixel 9a took 7.5–8.3 s by 2026-10-29 and 8.9–9.6 s by 2026-11-15 — see "Release build
-  and profiling" below.
+  and profiling" below. **And answered the same way on 2026-11-16:** three of
+  the stages were doing repeated work, not necessary work — see "Recompute, second pass"
+  below. Still no rollups.
 
 ---
 
@@ -508,10 +510,110 @@ Found on the way, not fixed here:
 - **The Sync button has no accessibility label.** `uiautomator` sees a clickable view with
   no text or description.
 
-Still unmeasured: how much memory holding every event's JSON at once costs
-(`decoded_events_for_serial` returns one `Vec` of all of them), and how much of
-`night_signals` is matching each event against every night in turn and parsing events whose
-tag it then ignores.
+Both things left unmeasured here — the memory held by every event's JSON at once, and how
+much of `night_signals` was spent on events whose tag it then ignored — are answered in
+"Recompute, second pass" below.
+
+### Recompute, second pass (2026-11-16)
+
+The stage timings said where to look, and what they pointed at was not the size of the
+history but work done over and over inside three stages. Fixed, with the summary proven
+unchanged (below), on the same 1,033 MB / 5,655,007-event database, desktop, ms:
+
+| | `read_events` | `heart` | `night_signals` | `sleep` | `clock` | `device` | `activity` | total |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| before | 1209 | 1582 | 1166 | 1031 | 313 | 225 | 80 | 5606 |
+| after | 670 | 590 | 290 | 40 | 330 | 220 | 80 | 2250 |
+
+And on the Pixel 9a, same database, where it matters (three runs each):
+
+| | `read_events` | `heart` | `night_signals` | `sleep` | `clock` | `device` | `activity` | other | total |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| before (2026-11-15) | 3823–4386 | 1753–1771 | 1525–1549 | 823–864 | 327–358 | 203–226 | 102–106 | 292–338 | 8916–9556 |
+| after | 1039–1132 | 716–734 | 380–407 | 45–53 | 313–359 | 212–269 | 106–116 | 228–272 | 3093–3273 |
+
+The summary the phone wrote afterwards is identical to the one the old code produced on
+the desktop from a copy of the same database.
+
+- **`sleep`, 1031 → 40.** Each night without a model hypnogram looked for its
+  `sleep_phase_data` by walking every event on record: nights × events, so it grew with the
+  *square* of the days recorded. The few thousand phase events are now collected once.
+- **`night_signals`, 1166 → 290.** It found the night for, and parsed the JSON of, every
+  event that fell inside any night, then ignored all but six tags. It checks the tag first.
+- **`heart`, 1582 → 560.** The 30-second sustained-peak window allocated and fully sorted
+  itself once per beat; it now selects the median in a reused buffer. And each effort
+  session filtered every beat on record to find its own; the beats are sorted, so it
+  bisects.
+- **`read_events`, 4 s → 1.1 s on the phone.** There it was two thirds of what remained,
+  and it was the CPU walking rows rather than the disk. The ids are dense and the table is
+  their B-tree, so the store now splits the id range into four slices and reads them on
+  four read-only connections at once (WAL admits any number of readers), joining them in
+  slice order — the single scan's result, row for row, which a test asserts. Four is the
+  phone's count of fast cores. Rows are only appended and every slice stops at the id that
+  was newest when the read began, so a sync committing meanwhile changes nothing; only
+  `redecode` run during a read could show two versions of a row.
+- **Less held in memory.** `build_summary` asks the store for the JSON of only the twelve
+  event types it parses (`JSON_EVENTS`). The rest still come back as rows, for the clock
+  fit and the counts, with the JSON left empty: about 140 MB of 250 MB not copied out of
+  the database. On its own it did not make the read faster — walking the rows is the cost,
+  not copying the strings.
+
+**How "unchanged" was established**, and how to do it again: `profile_summary` takes a
+third argument and writes the summary there without the three fields that differ between
+any two runs (`timings_ms`, `generated_at`, `device.fresh_hours`). Two runs of the old code
+gave byte-identical files, and the new code's file is identical to those.
+
+```bash
+cargo run --release -p oura-summary --example profile_summary -- oura.db 3 before.json
+# …change something…
+cargo run --release -p oura-summary --example profile_summary -- oura.db 3 after.json
+cmp before.json after.json
+```
+
+**What is left** is spread thin: on the phone the read is a third, the heart stage a
+quarter, and nothing else is over 400 ms. The read still walks all 5.66 M rows to return
+the 3.19 M decoded ones.
+
+**Why still not incremental.** A summary that reuses old days and recomputes recent ones
+is the only thing that makes a recompute stop growing, and it remains undone on purpose:
+
+- Old results are not provably frozen. The ring-time → wall-clock fit is a running minimum
+  taken backwards from the newest sync, so a later sync can in principle move an earlier
+  night. In practice the counter's drift (minutes a day) dwarfs the bounds' slack and it
+  does not, but "in practice" is what produced nights that shifted between two views of
+  the same data before.
+- Every section of the summary would need its own merge rule (baselines, sleep debt,
+  battery cycles, effort sessions, trends), in the one function both clients trust.
+- At 3.2 s on the phone, growing linearly, the measurement does not ask for it yet.
+
+### The database on disk
+
+Where 1,033 MB (5,655,007 events) went, from SQLite's `dbstat`:
+
+| | MB |
+| --- | --- |
+| `events` table | 641 |
+| — of which `decoded_json` | 250 |
+| — `name` (the event's name, repeated on every row) | 104 |
+| — `body` (what the ring actually sent) | 67 |
+| — `serial` (one ring, repeated on every row) | 62 |
+| the UNIQUE constraint's index (serial, tag, ring_timestamp, body) | 254 |
+| `idx_events_serial_tag` | 137 |
+
+- **`idx_events_serial_tag` is gone.** The UNIQUE index starts with the same two columns,
+  so it serves every lookup the narrower one could. `Store::open` drops it from existing
+  databases (0.3 s here). That alone only frees pages inside the file, which SQLite keeps
+  and reuses as the history grows.
+- **Compacting gives the space back**: `oura compact` on the desktop, You → Ring & data →
+  Compact database on Android. It is SQLite's `VACUUM`: 1,033 → 868 MB, in 3.6 s here and
+  18 s on the Pixel 9a, same summary before and after. It needs about twice the database's size free while it runs,
+  so the Android app checks first and refuses during a sync. Manual on purpose.
+- **Not done: a slimmer schema.** `name` and `serial` could become small integers and
+  save roughly another 230 MB (table and index), and `decoded_json` another 250 MB if it
+  were decoded on read. But `events` is read directly, by column name, by the Python model
+  runners (`tools/run_*_model.py`, `tools/build_daily.py`) and the iOS app
+  (`EventStore.swift`, `CvaModel.swift`), so that is a migration of every reader plus a
+  rewrite of each user's only database — its own piece of work.
 
 ---
 

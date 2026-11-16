@@ -92,7 +92,9 @@ pub fn backup_to_fd(
         out,
         &mut |done, total| listener.on_progress(done, total),
     ) {
-        Ok(s) => json!({ "events": s.events, "readings": s.readings, "devices": s.devices }).to_string(),
+        Ok(s) => {
+            json!({ "events": s.events, "readings": s.readings, "devices": s.devices }).to_string()
+        }
         Err(e) => backup_error(e),
     }
 }
@@ -127,6 +129,22 @@ pub fn restore_from_fd(
         })
         .to_string(),
         Err(e) => backup_error(e),
+    }
+}
+
+/// Rewrite the database without its free pages. Nothing in it changes; the file gets
+/// smaller. Needs about twice the database's size free while it runs — the caller checks,
+/// because only the platform knows what is free. Returns `{ before, after }` in bytes, or
+/// `{ error }`.
+#[uniffi::export]
+pub fn compact_db(db_path: String) -> String {
+    let run = || -> Result<(u64, u64), String> {
+        let store = Store::open(std::path::Path::new(&db_path)).map_err(|e| e.to_string())?;
+        store.compact().map_err(|e| e.to_string())
+    };
+    match run() {
+        Ok((before, after)) => json!({ "before": before, "after": after }).to_string(),
+        Err(e) => json!({ "error": e }).to_string(),
     }
 }
 
@@ -350,7 +368,12 @@ impl RingSession {
                     }
                 },
                 |p| {
-                    progress.on_progress("sync".into(), p.bytes_left as u64, p.events_synced, p.progress);
+                    progress.on_progress(
+                        "sync".into(),
+                        p.bytes_left as u64,
+                        p.events_synced,
+                        p.progress,
+                    );
                     if db_err.lock().unwrap().is_some() {
                         return;
                     }

@@ -376,6 +376,12 @@ nightly need" but "a 7.5 h need". `app.js` hardcodes "an".
   stored on the device. Android-only by nature — it leans on WorkManager and a persisted
   file grant; on the desktop, cron and `oura backup` do the same.
 
+- **Compact database** (`oura compact` on the desktop, You → Ring & data → Compact
+  database on Android): rewrites `oura.db` without its unused pages. **Desktop CLI and
+  Android only**; the web dashboard and iOS have no control for it, and the desktop command
+  covers the web's database. Nothing computed changes — see "The database on disk" in
+  `docs/android-client-plan.md`.
+
 Two Android features have no web or iOS counterpart, and are not omissions to close:
 
 - **Unattended sync** (`apps/android/.../sync/AutoSync.kt`): a 3-hour WorkManager floor plus

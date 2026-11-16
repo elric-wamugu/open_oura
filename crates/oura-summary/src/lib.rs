@@ -230,6 +230,7 @@ fn peak_sustained_hr(samples: &[(f64, f64)]) -> Option<f64> {
     const WINDOW_S: f64 = 30.0;
     const MIN_BEATS: usize = 10;
     let mut best: Option<f64> = None;
+    let mut win: Vec<f64> = Vec::new();
     let mut j = 0usize;
     for i in 0..samples.len() {
         if j < i {
@@ -241,12 +242,24 @@ fn peak_sustained_hr(samples: &[(f64, f64)]) -> Option<f64> {
         if j - i < MIN_BEATS {
             continue;
         }
-        let mut win: Vec<f64> = samples[i..j].iter().map(|s| s.1).collect();
-        win.sort_by(f64::total_cmp);
-        let m = if win.len().is_multiple_of(2) {
-            (win[win.len() / 2 - 1] + win[win.len() / 2]) / 2.0
+        // The median by selection, in a buffer reused across windows: this runs once per
+        // beat, and allocating and fully sorting each window was most of the heart stage.
+        // Selecting puts the upper middle in place with everything smaller to its left,
+        // so the lower middle is that side's maximum — the same two values a sort gives.
+        win.clear();
+        win.extend(samples[i..j].iter().map(|s| s.1));
+        let mid = win.len() / 2;
+        let (below, upper, _) = win.select_nth_unstable_by(mid, f64::total_cmp);
+        let upper = *upper;
+        let m = if (j - i).is_multiple_of(2) {
+            let lower = below
+                .iter()
+                .copied()
+                .max_by(f64::total_cmp)
+                .unwrap_or(upper);
+            (lower + upper) / 2.0
         } else {
-            win[win.len() / 2]
+            upper
         };
         if best.is_none_or(|b| m > b) {
             best = Some(m);
@@ -616,23 +629,17 @@ fn make_digest(hrv: &VitalStat, rhr: &VitalStat) -> String {
 /// 1=deep 2=light 3=rem 4=wake (matching the model). They tile the sleep window
 /// uniformly, exactly like the model's `stages`.
 fn stages_from_phase_data(
-    events: &[(i64, u8, String, i64)],
-    event_epochs: &[usize],
+    phases: &[(usize, i64, &str)],
     epoch_idx: usize,
     end_ds: i64,
 ) -> Vec<i64> {
     // 5 h after wake clears the ~2 h logging delay but stays short of the next night.
     const POST_WAKE_DS: i64 = 5 * 3600 * 10;
-    let mut burst: Vec<(i64, &str)> = Vec::new();
-    for (i, (ds, tag, jstr, _)) in events.iter().enumerate() {
-        if event_epochs[i] == epoch_idx
-            && *ds > end_ds
-            && *ds <= end_ds + POST_WAKE_DS
-            && oura_protocol::events::event_name(*tag) == "sleep_phase_data"
-        {
-            burst.push((*ds, jstr.as_str()));
-        }
-    }
+    let mut burst: Vec<(i64, &str)> = phases
+        .iter()
+        .filter(|&&(epoch, ds, _)| epoch == epoch_idx && ds > end_ds && ds <= end_ds + POST_WAKE_DS)
+        .map(|&(_, ds, jstr)| (ds, jstr))
+        .collect();
     burst.sort_by_key(|&(ds, _)| ds);
     let mut stages = Vec::new();
     for (_, jstr) in burst {
@@ -975,11 +982,7 @@ fn battery_points(mut points: Vec<(f64, i64, i64)>) -> Vec<(f64, i64, i64)> {
 /// torch models, which aren't bundled — leaving the sessions list permanently empty.
 ///
 /// `traces` and `intensity` are `(unix, value)`; `hr` is the quality-gated beat series.
-fn effort_sessions(
-    traces: &mut [f64],
-    hr: &[(f64, f64)],
-    intensity: &[(f64, f64)],
-) -> Vec<Value> {
+fn effort_sessions(traces: &mut [f64], hr: &[(f64, f64)], intensity: &[(f64, f64)]) -> Vec<Value> {
     // A gap longer than this ends a session. Ten minutes keeps a walk with a pause at the
     // lights in one piece without welding the morning and the evening together.
     const SESSION_GAP_S: f64 = 600.0;
@@ -999,18 +1002,15 @@ fn effort_sessions(
         if b - a < MIN_SESSION_S {
             continue;
         }
-        let win = |v: &[(f64, f64)]| -> Vec<f64> {
-            v.iter()
-                .filter(|(t, _)| *t >= a && *t <= b)
-                .map(|(_, x)| *x)
-                .collect()
+        // Both series arrive sorted by time, so a session's samples are one contiguous
+        // run found by bisection. Filtering every beat on record for each session made
+        // this cost sessions × beats.
+        let span = |v: &'_ [(f64, f64)]| -> std::ops::Range<usize> {
+            v.partition_point(|(t, _)| *t < a)..v.partition_point(|(t, _)| *t <= b)
         };
-        let hrs = win(hr);
-        let ints = win(intensity);
-        // Peak HR reuses the sustained-window rule the daily figure uses, so one artefact
-        // beat can't inflate a session.
-        let hr_pts: Vec<(f64, f64)> =
-            hr.iter().filter(|(t, _)| *t >= a && *t <= b).copied().collect();
+        let hr_pts = &hr[span(hr)];
+        let hrs: Vec<f64> = hr_pts.iter().map(|(_, x)| *x).collect();
+        let ints: Vec<f64> = intensity[span(intensity)].iter().map(|(_, x)| *x).collect();
         let int_peak = ints.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
         let hr_mean = mean(&hrs);
         // The two figures come from different sample bases: the mean uses every gated beat
@@ -1018,8 +1018,7 @@ fn effort_sessions(
         // ten of them. During movement the fastest stretches are exactly where beats are
         // sparsest, so the peak can land *below* the mean — true, but it reads as a bug.
         // Report it only when it actually exceeds the average.
-        let hr_peak = peak_sustained_hr(&hr_pts)
-            .filter(|p| hr_mean.is_none_or(|m| *p > m));
+        let hr_peak = peak_sustained_hr(hr_pts).filter(|p| hr_mean.is_none_or(|m| *p > m));
         out.push(json!({
             "start": a.round(),
             "end": b.round(),
@@ -1082,6 +1081,29 @@ fn tenths_ms(d: std::time::Duration) -> f64 {
     (d.as_secs_f64() * 10_000.0).round() / 10.0
 }
 
+/// The events whose decoded JSON [`build_summary`] parses. Every other event is still
+/// read — for the clock fit, the stream counts and "is this feature present" — but with
+/// its JSON left empty, which is about half of it by weight (the raw beat intervals and
+/// the step features alone are 105 MB of a 250 MB history).
+///
+/// **Parsing a new event type in `build_summary` means adding it here.** One that is
+/// missing does not fail: it parses as nothing and its numbers quietly go missing. The
+/// check is `profile_summary`'s dump, compared before and after.
+const JSON_EVENTS: &[&str] = &[
+    "activity_information",
+    "bedtime_period",
+    "debug_data",
+    "ehr_acm_intensity_event",
+    "green_ibi_quality_event",
+    "hrv_event",
+    "motion_event",
+    "sleep_phase_data",
+    "sleep_temp_event",
+    "spo2_event",
+    "spo2_r_pi_event",
+    "temp_event",
+];
+
 pub fn build_summary(db: &Path, tz: i64, runner: &dyn ModelRunner) -> Result<Value> {
     let mut stages = Stages::new();
     let db_abs = std::fs::canonicalize(db).unwrap_or_else(|_| {
@@ -1093,12 +1115,12 @@ pub fn build_summary(db: &Path, tz: i64, runner: &dyn ModelRunner) -> Result<Val
     let demo = read_profile(db);
     let store = Store::open(db).context("opening DB")?;
     let dev = store.device_info().ok().flatten();
-    let events = match dev.as_ref().map(|d| d.0.as_str()) {
-        Some(serial) => store
-            .decoded_events_for_serial(serial)
-            .with_context(|| format!("reading events for serial {serial}"))?,
-        None => store.decoded_events().context("reading events")?,
-    };
+    let json_tags: Vec<u8> = (0..=u8::MAX)
+        .filter(|&tag| JSON_EVENTS.contains(&oura_protocol::events::event_name(tag)))
+        .collect();
+    let events = store
+        .decoded_events_with_json_for(dev.as_ref().map(|d| d.0.as_str()), &json_tags)
+        .context("reading events")?;
     if events.is_empty() {
         return Err(anyhow!(
             "no decoded events in {} — run `oura sync` first",
@@ -1257,11 +1279,25 @@ pub fn build_summary(db: &Path, tz: i64, runner: &dyn ModelRunner) -> Result<Val
         })
     };
     for (event_idx, (ds, tag, jstr, _)) in events.iter().enumerate() {
+        // Tag first: only these six are read below, and they are a small share of the
+        // stream. Finding the night and parsing the JSON for the rest was most of this
+        // stage's time, for events that then fell through to `_ => {}`.
+        let n = name_of(*tag);
+        if !matches!(
+            n,
+            "hrv_event"
+                | "temp_event"
+                | "sleep_temp_event"
+                | "spo2_r_pi_event"
+                | "spo2_event"
+                | "motion_event"
+        ) {
+            continue;
+        }
         let epoch_idx = event_epochs[event_idx];
         let Some(idx) = find_night(*ds, epoch_idx, &nights) else {
             continue;
         };
-        let n = name_of(*tag);
         let v: Value = match serde_json::from_str(jstr) {
             Ok(v) => v,
             Err(_) => continue,
@@ -1389,6 +1425,16 @@ pub fn build_summary(db: &Path, tz: i64, runner: &dyn ModelRunner) -> Result<Val
             .collect()
     };
 
+    // Every `sleep_phase_data` event as `(epoch, ds, json)`, in stream order, collected
+    // once. There are a few thousand of them among millions of events, and each night
+    // used to walk the whole history to find its own — a quarter of a billion comparisons
+    // a recompute, growing with the square of the days recorded.
+    let phase_events: Vec<(usize, i64, &str)> = events
+        .iter()
+        .enumerate()
+        .filter(|(_, (_, tag, _, _))| name_of(*tag) == "sleep_phase_data")
+        .map(|(i, (ds, _, jstr, _))| (event_epochs[i], *ds, jstr.as_str()))
+        .collect();
     let mut nights_json = Vec::new();
     let mut asleep_by_night: Vec<i32> = Vec::new(); // oldest-first, for sleep debt
     for nt in &nights {
@@ -1401,9 +1447,7 @@ pub fn build_summary(db: &Path, tz: i64, runner: &dyn ModelRunner) -> Result<Val
             .map(|s| s.iter().filter_map(|x| x.as_i64()).collect::<Vec<i64>>())
             .filter(|v| !v.is_empty())
             // No SleepNet output → fall back to the ring's own on-device hypnogram.
-            .unwrap_or_else(|| {
-                stages_from_phase_data(&events, &event_epochs, nt.epoch_idx, nt.end_ds)
-            });
+            .unwrap_or_else(|| stages_from_phase_data(&phase_events, nt.epoch_idx, nt.end_ds));
         // smooth once (≈2.5 min window) — used for the displayed hypnogram AND the
         // derived metrics, so the two always agree.
         let full_stages = smooth_stages(&raw_stages, 5);
@@ -1438,7 +1482,10 @@ pub fn build_summary(db: &Path, tz: i64, runner: &dyn ModelRunner) -> Result<Val
                 let eff = if n == 0 {
                     Value::Null
                 } else {
-                    let asleep = full_stages.iter().filter(|&&c| (1..=3).contains(&c)).count();
+                    let asleep = full_stages
+                        .iter()
+                        .filter(|&&c| (1..=3).contains(&c))
+                        .count();
                     json!((asleep as f64 / n as f64 * 100.0).round())
                 };
                 (pct(1), pct(2), pct(3), pct(4), eff)
@@ -1594,7 +1641,9 @@ pub fn build_summary(db: &Path, tz: i64, runner: &dyn ModelRunner) -> Result<Val
     // Peak sustained HR per day, from the quality-gated beat stream (`green_ibi_quality_event`
     // carries a per-beat quality flag; the ungated `ibi_and_amplitude_event` is full of
     // 30-bpm/2000-ms artefacts). Beat times step forward by each beat's own IBI.
-    let mut hr_by_day: std::collections::BTreeMap<String, Vec<(f64, f64)>> = Default::default();
+    // Keyed by day number while collecting and named afterwards: formatting a date for
+    // each of several million beats cost more than everything else in this stage.
+    let mut hr_by_daynum: std::collections::BTreeMap<i64, Vec<(f64, f64)>> = Default::default();
     for (event_idx, (ds, tag, jstr, _)) in events.iter().enumerate() {
         if name_of(*tag) != "green_ibi_quality_event" {
             continue;
@@ -1617,9 +1666,8 @@ pub fn build_summary(db: &Path, tz: i64, runner: &dyn ModelRunner) -> Result<Val
                 == 1;
             if good && (25.0..=220.0).contains(&bpm) {
                 let local = t + tz as f64 * 3600.0;
-                let (y, mo, dd) = civil((local / 86400.0).floor() as i64);
-                hr_by_day
-                    .entry(format!("{y:04}-{mo:02}-{dd:02}"))
+                hr_by_daynum
+                    .entry((local / 86400.0).floor() as i64)
                     .or_default()
                     .push((t, bpm));
             }
@@ -1630,6 +1678,14 @@ pub fn build_summary(db: &Path, tz: i64, runner: &dyn ModelRunner) -> Result<Val
                 / 1000.0;
         }
     }
+    // Day numbers and their ISO dates sort the same way, so the order is unchanged.
+    let mut hr_by_day: std::collections::BTreeMap<String, Vec<(f64, f64)>> = hr_by_daynum
+        .into_iter()
+        .map(|(day, beats)| {
+            let (y, mo, dd) = civil(day);
+            (format!("{y:04}-{mo:02}-{dd:02}"), beats)
+        })
+        .collect();
     // Effort sessions from the exercise-HR trace. The same quality-gated beats that feed
     // peak_hr are reused, flattened onto one timeline.
     let effort = {
@@ -1754,7 +1810,11 @@ pub fn build_summary(db: &Path, tz: i64, runner: &dyn ModelRunner) -> Result<Val
             ),
             "daytime_hr"
         ),
-        feat("SpO2", cap_on("spo2", has("spo2_r_pi_event") || has("spo2_event")), "spo2"),
+        feat(
+            "SpO2",
+            cap_on("spo2", has("spo2_r_pi_event") || has("spo2_event")),
+            "spo2"
+        ),
         feat(
             "Exercise HR",
             cap_on("exercise_hr", has("ehr_trace_event")),
@@ -1821,7 +1881,11 @@ pub fn build_summary(db: &Path, tz: i64, runner: &dyn ModelRunner) -> Result<Val
             has("cva_raw_ppg_data"),
             "enable cva_ppg"
         ),
-        insight("SpO2", has("spo2_r_pi_event") || has("spo2_event"), "enable spo2"),
+        insight(
+            "SpO2",
+            has("spo2_r_pi_event") || has("spo2_event"),
+            "enable spo2"
+        ),
         insight("Activity sessions", true, ""),
         insight("HRV / resting HR", true, ""),
         insight(
@@ -2003,13 +2067,19 @@ mod tests {
 
     #[test]
     fn battery_bands_sit_where_the_constants_say() {
-        assert_eq!((BATTERY_LOW_PCT, BATTERY_VERY_LOW_PCT, BATTERY_CRITICAL_PCT), (20, 10, 5));
+        assert_eq!(
+            (BATTERY_LOW_PCT, BATTERY_VERY_LOW_PCT, BATTERY_CRITICAL_PCT),
+            (20, 10, 5)
+        );
         assert_eq!(battery_band(Some(100)), Some("ok"));
         assert_eq!(battery_band(Some(BATTERY_LOW_PCT + 1)), Some("ok"));
         assert_eq!(battery_band(Some(BATTERY_LOW_PCT)), Some("low"));
         assert_eq!(battery_band(Some(BATTERY_VERY_LOW_PCT + 1)), Some("low"));
         assert_eq!(battery_band(Some(BATTERY_VERY_LOW_PCT)), Some("very_low"));
-        assert_eq!(battery_band(Some(BATTERY_CRITICAL_PCT + 1)), Some("very_low"));
+        assert_eq!(
+            battery_band(Some(BATTERY_CRITICAL_PCT + 1)),
+            Some("very_low")
+        );
         assert_eq!(battery_band(Some(BATTERY_CRITICAL_PCT)), Some("critical"));
         assert_eq!(battery_band(Some(0)), Some("critical"));
     }
@@ -2042,7 +2112,10 @@ mod tests {
             json!({ "t": now - 60.0, "pct": 2, "mv": 3400 }),
         ];
         assert_eq!(battery_rested_pct(&series, now), Some(4));
-        assert_eq!(battery_band(battery_rested_pct(&series, now)), Some("critical"));
+        assert_eq!(
+            battery_band(battery_rested_pct(&series, now)),
+            Some("critical")
+        );
     }
 
     #[test]
@@ -2069,13 +2142,19 @@ mod tests {
 
     /// Log points as `(minutes before NOW, pct)`, oldest first.
     fn log(pts: &[(f64, i64)]) -> Vec<(f64, i64, i64)> {
-        battery_points(pts.iter().map(|&(ago, p)| (NOW - ago * 60.0, p, 3700)).collect())
+        battery_points(
+            pts.iter()
+                .map(|&(ago, p)| (NOW - ago * 60.0, p, 3700))
+                .collect(),
+        )
     }
 
     /// A charge climbing a point a minute from `from` to `to`, ending `end_ago` minutes ago.
     fn charge(from: i64, to: i64, end_ago: f64) -> Vec<(f64, i64)> {
         let n = (to - from) as f64;
-        (from..=to).map(|p| (end_ago + n - (p - from) as f64, p)).collect()
+        (from..=to)
+            .map(|p| (end_ago + n - (p - from) as f64, p))
+            .collect()
     }
 
     fn at(ago: f64) -> Option<f64> {
@@ -2095,7 +2174,15 @@ mod tests {
     #[test]
     fn charging_from_a_critical_dip_is_detected() {
         // Resting at 8, a sync drags it to 3, then it goes on the charger.
-        let pts = [(40.0, 8), (20.0, 8), (12.0, 3), (10.0, 5), (8.0, 8), (5.0, 11), (1.0, 13)];
+        let pts = [
+            (40.0, 8),
+            (20.0, 8),
+            (12.0, 3),
+            (10.0, 5),
+            (8.0, 8),
+            (5.0, 11),
+            (1.0, 13),
+        ];
         let s = battery_charge_state(&log(&pts), NOW);
         assert!(s.charging);
         assert_eq!(s.started_unix, at(12.0));
@@ -2104,8 +2191,18 @@ mod tests {
     #[test]
     fn a_dip_recovering_is_not_a_charge() {
         // Measured on this ring: 24% at rest, 6% mid-sync, back to 24% once the radio stops.
-        let pts = [(30.0, 24), (25.0, 24), (4.0, 12), (3.0, 6), (2.0, 15), (1.0, 24)];
-        assert_eq!(battery_charge_state(&log(&pts), NOW), ChargeState::default());
+        let pts = [
+            (30.0, 24),
+            (25.0, 24),
+            (4.0, 12),
+            (3.0, 6),
+            (2.0, 15),
+            (1.0, 24),
+        ];
+        assert_eq!(
+            battery_charge_state(&log(&pts), NOW),
+            ChargeState::default()
+        );
     }
 
     #[test]
@@ -2178,21 +2275,37 @@ mod tests {
 
     #[test]
     fn jitter_is_not_a_charge() {
-        let pts = [(50.0, 50), (40.0, 51), (30.0, 50), (20.0, 51), (10.0, 50), (1.0, 51)];
-        assert_eq!(battery_charge_state(&log(&pts), NOW), ChargeState::default());
+        let pts = [
+            (50.0, 50),
+            (40.0, 51),
+            (30.0, 50),
+            (20.0, 51),
+            (10.0, 50),
+            (1.0, 51),
+        ];
+        assert_eq!(
+            battery_charge_state(&log(&pts), NOW),
+            ChargeState::default()
+        );
     }
 
     #[test]
     fn empty_or_single_point_says_nothing() {
         assert_eq!(battery_charge_state(&[], NOW), ChargeState::default());
-        assert_eq!(battery_charge_state(&log(&[(5.0, 40)]), NOW), ChargeState::default());
+        assert_eq!(
+            battery_charge_state(&log(&[(5.0, 40)]), NOW),
+            ChargeState::default()
+        );
     }
 
     #[test]
     fn the_tail_is_never_thinned() {
         // Three weeks at a point a minute: far over the cap, so the old part is thinned —
         // but the last day, which the rested level and the newest point read, ships whole.
-        let pts: Vec<(f64, i64)> = (0..30_000).map(|m| (m as f64, 50 + (m % 7) as i64)).rev().collect();
+        let pts: Vec<(f64, i64)> = (0..30_000)
+            .map(|m| (m as f64, 50 + (m % 7) as i64))
+            .rev()
+            .collect();
         let (series, _) = battery_history(&log(&pts));
         let last_day = series
             .iter()
@@ -2202,7 +2315,6 @@ mod tests {
         assert_eq!(series.last().unwrap()["t"].as_f64(), Some(NOW));
         assert!(series.len() < 24 * 60 + 700);
     }
-
 
     /// Build one sync session: `n` events ending at counter `end_ds`, drained starting at
     /// host time `t0` at one event per second (so capture times track transfer, not
@@ -2233,7 +2345,10 @@ mod tests {
         // supplies the tighter bound, which must win for the earlier data too.
         let partial = session(28_800, 252_000, 1); // offset would be 28800-25200 = 3600
         let stale = fit_ds_offsets(&mut partial.clone());
-        assert!((stale[0].1 - 3600.0).abs() < 1e-6, "partial bound {stale:?}");
+        assert!(
+            (stale[0].1 - 3600.0).abs() < 1e-6,
+            "partial bound {stale:?}"
+        );
 
         let mut rows = partial;
         rows.extend(session(32_400, 324_000, 1)); // caught up: offset 32400-32400 = 0
