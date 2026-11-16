@@ -150,7 +150,7 @@ cargo build --release
 
 See [`crates/README.md`](crates/README.md) for all commands (`scan`, `pair`,
 `info`, `sync`, `latest`, `live-hr`, `accel`, `viz`, `game`, `features`, `rdata`,
-`events`, `redecode`, `sleep-analyze`, `sessions`, `dashboard`) and the auth-key
+`events`, `redecode`, `backup`, `restore`, `sleep-analyze`, `sessions`, `dashboard`) and the auth-key
 details. `oura dashboard` serves a local web health dashboard (sleep, cardio,
 SpO2, activity, device) at `http://127.0.0.1:8090` (see [`dashboard/`](dashboard/));
 `oura viz` opens a real-time 3D motion visualizer; `oura game` is a tilt-controlled
@@ -193,6 +193,8 @@ State-changing and destructive commands are hidden behind `--include-state` and
 - [`docs/security-observations.md`](docs/security-observations.md): findings-only
   notes on the model/firmware encryption (the "what", not the "how" — no keys,
   endpoints, or procedures).
+- [`docs/backup.md`](docs/backup.md): the encrypted backup file both the desktop and
+  the Android app write and restore.
 - [`docs/architecture.md`](docs/architecture.md): the fetch/interpret/apply crate
   layering and where to add things.
 - [`docs/algorithms/README.md`](docs/algorithms/README.md): the on-device ecore

@@ -40,6 +40,7 @@ fun YouScreen(
     onSaveProfile: (RingProfile) -> Unit,
     onRingKey: () -> Unit,
     onHealthConnect: () -> Unit,
+    onBackup: () -> Unit,
     onImportDatabase: () -> Unit,
     /** Each alert's switch, and whether Android lets the app notify at all. */
     alerts: Map<AlertKind, Boolean>,
@@ -78,6 +79,12 @@ fun YouScreen(
                         title = "Health Connect",
                         detail = "Share nights, vitals and activity with other apps",
                         onClick = onHealthConnect,
+                    ),
+                    LinkRow(
+                        icon = R.drawable.ic_sym_database,
+                        title = "Backup",
+                        detail = "Save an encrypted copy, or restore one",
+                        onClick = onBackup,
                     ),
                     LinkRow(
                         icon = R.drawable.ic_sym_file_open,

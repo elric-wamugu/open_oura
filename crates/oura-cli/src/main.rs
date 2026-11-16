@@ -108,6 +108,20 @@ enum Command {
     Events,
     /// Re-run decoders over already-stored raw event bodies (offline).
     Redecode,
+    /// Write an encrypted backup of the database (`--db`) to a file. The same format the
+    /// Android app writes, so either can restore the other's. The passphrase is asked for
+    /// on the terminal, or read from `OURA_BACKUP_PASSPHRASE`.
+    Backup {
+        /// Where to write the backup (conventionally `*.ourabak`).
+        out: PathBuf,
+    },
+    /// Merge an encrypted backup into the database (`--db`), creating it if needed. Only
+    /// what is missing is added, so it is safe to restore into a database that has synced
+    /// on its own, or to restore the same file twice.
+    Restore {
+        /// The backup file to read.
+        file: PathBuf,
+    },
     /// RData bulk raw-sampler control: `state` (read), `stop`/`clear` (teardown),
     /// `probe` (arm ACM-50 ~30 s, measure data rate + battery, auto-teardown).
     /// `probe` writes a persistent flash session but always tears itself down
@@ -404,6 +418,8 @@ async fn main() -> Result<()> {
             println!("Re-decoded {decoded}/{total} stored events.");
             Ok(())
         }
+        Command::Backup { out } => cmd_backup(&cli, out),
+        Command::Restore { file } => cmd_restore(&cli, file),
         Command::Features {
             enable_hr,
             enable_spo2,
@@ -1610,5 +1626,59 @@ async fn cmd_events(cli: &Cli) -> Result<()> {
             println!("  {count:>6}  {name}");
         }
     }
+    Ok(())
+}
+
+/// The backup passphrase: from `OURA_BACKUP_PASSPHRASE` for scripts, otherwise typed at
+/// the terminal without echo. `confirm` asks twice, for a passphrase that is being set.
+fn backup_passphrase(confirm: bool) -> Result<String> {
+    if let Ok(p) = std::env::var("OURA_BACKUP_PASSPHRASE") {
+        return Ok(p);
+    }
+    let first = rpassword::prompt_password("Backup passphrase: ")?;
+    if confirm && first != rpassword::prompt_password("Again, to confirm: ")? {
+        anyhow::bail!("the two passphrases did not match");
+    }
+    Ok(first)
+}
+
+fn backup_progress(verb: &'static str) -> impl FnMut(u64, u64) {
+    move |done, total| eprint!("\r{verb} {done} / {total} events")
+}
+
+fn cmd_backup(cli: &Cli, out: &std::path::Path) -> Result<()> {
+    if !cli.db.exists() {
+        anyhow::bail!("no database at {} — nothing to back up", cli.db.display());
+    }
+    let pass = backup_passphrase(true)?;
+    if pass.chars().count() < 8 {
+        anyhow::bail!("the passphrase must be at least 8 characters");
+    }
+    let file = std::io::BufWriter::new(std::fs::File::create(out)?);
+    let stats = oura_backup::write_backup(&cli.db, &pass, file, &mut backup_progress("Backed up"))?;
+    eprintln!();
+    println!(
+        "Wrote {} ({} MB): {} events, {} readings.",
+        out.display(),
+        std::fs::metadata(out).map(|m| m.len()).unwrap_or(0) / 1024 / 1024,
+        stats.events,
+        stats.readings,
+    );
+    println!("Without the passphrase this file cannot be opened by anyone, including you.");
+    Ok(())
+}
+
+fn cmd_restore(cli: &Cli, file: &std::path::Path) -> Result<()> {
+    let input = std::io::BufReader::new(std::fs::File::open(file)?);
+    let pass = backup_passphrase(false)?;
+    let stats = oura_backup::restore_backup(input, &pass, &cli.db, &mut backup_progress("Restored"))?;
+    eprintln!();
+    println!(
+        "Merged into {}: {} of the backup's {} events were new, plus {} readings.",
+        cli.db.display(),
+        stats.events_added,
+        stats.events,
+        stats.readings_added,
+    );
     Ok(())
 }

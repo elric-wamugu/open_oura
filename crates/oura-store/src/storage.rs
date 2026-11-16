@@ -60,6 +60,17 @@ fn now_unix() -> i64 {
         .unwrap_or(0)
 }
 
+/// One event as the ring delivered it, with when it was captured. Everything else a row
+/// holds is derived from these.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RawEvent {
+    pub serial: String,
+    pub tag: u8,
+    pub ring_timestamp: i64,
+    pub body: Vec<u8>,
+    pub captured_unix: i64,
+}
+
 /// A SQLite-backed store for ring data.
 pub struct Store {
     conn: Connection,
@@ -316,6 +327,189 @@ impl Store {
         }
         .collect::<std::result::Result<Vec<_>, _>>()?;
         Ok(rows)
+    }
+
+    /// Run `f` inside one read transaction, so everything it reads is a single consistent
+    /// snapshot even while a sync is writing (WAL gives readers their own view).
+    pub fn snapshot<T>(&self, f: impl FnOnce(&Store) -> Result<T>) -> Result<T> {
+        self.conn.execute_batch("BEGIN")?;
+        let out = f(self);
+        let _ = self.conn.execute_batch("COMMIT");
+        out
+    }
+
+    /// Run `f` inside one write transaction: all of it lands, or none of it does.
+    pub fn transaction<T>(&self, f: impl FnOnce(&Store) -> Result<T>) -> Result<T> {
+        self.conn.execute_batch("BEGIN IMMEDIATE")?;
+        match f(self) {
+            Ok(v) => {
+                self.conn.execute_batch("COMMIT")?;
+                Ok(v)
+            }
+            Err(e) => {
+                let _ = self.conn.execute_batch("ROLLBACK");
+                Err(e)
+            }
+        }
+    }
+
+    /// How many events are stored, across every device.
+    pub fn total_events(&self) -> Result<u64> {
+        let n: i64 = self
+            .conn
+            .query_row("SELECT COUNT(*) FROM events", [], |r| r.get(0))?;
+        Ok(n as u64)
+    }
+
+    /// Every stored event exactly as the ring delivered it, in sync order. The decoded
+    /// JSON and the name are left out on purpose: both are derived from `tag` and `body`
+    /// (see [`Store::redecode`]), so a copy that carries only these is complete.
+    pub fn for_each_raw_event(&self, f: &mut dyn FnMut(RawEvent) -> Result<()>) -> Result<()> {
+        let mut stmt = self.conn.prepare(
+            "SELECT serial, tag, ring_timestamp, body, captured_unix FROM events ORDER BY id",
+        )?;
+        let mut rows = stmt.query([])?;
+        while let Some(r) = rows.next()? {
+            f(RawEvent {
+                serial: r.get(0)?,
+                tag: r.get::<_, i64>(1)? as u8,
+                ring_timestamp: r.get(2)?,
+                body: r.get(3)?,
+                captured_unix: r.get(4)?,
+            })?;
+        }
+        Ok(())
+    }
+
+    /// Insert an event from its raw form, decoding it with the current decoders and
+    /// keeping its original capture time. Exact duplicates are ignored, so importing the
+    /// same events twice — or into a database that already synced them — adds nothing.
+    /// Returns true if a row was added.
+    pub fn insert_raw_event(&self, ev: &RawEvent) -> Result<bool> {
+        let decoded = oura_protocol::events::decode_event_body(ev.tag, &ev.body)
+            .map(|v| serde_json::to_string(&v).unwrap_or_default());
+        let mut stmt = self.conn.prepare_cached(
+            "INSERT OR IGNORE INTO events
+               (serial, tag, name, ring_timestamp, body, decoded_json, captured_unix)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        )?;
+        let changed = stmt.execute(params![
+            ev.serial,
+            ev.tag as i64,
+            oura_protocol::events::event_name(ev.tag),
+            ev.ring_timestamp,
+            ev.body,
+            decoded,
+            ev.captured_unix,
+        ])?;
+        Ok(changed > 0)
+    }
+
+    /// Every device row, as `(serial, hardware_id, firmware, api_version, mac, updated_unix)`.
+    #[allow(clippy::type_complexity)]
+    pub fn device_rows(
+        &self,
+    ) -> Result<Vec<(String, Option<String>, Option<String>, Option<String>, Option<String>, i64)>>
+    {
+        let mut stmt = self.conn.prepare(
+            "SELECT serial, hardware_id, firmware, api_version, mac, updated_unix FROM device",
+        )?;
+        let rows = stmt
+            .query_map([], |r| {
+                Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?, r.get(5)?))
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
+    /// Take a device row from elsewhere, keeping whichever copy was updated more recently.
+    pub fn merge_device_row(
+        &self,
+        serial: &str,
+        hardware_id: Option<&str>,
+        firmware: Option<&str>,
+        api_version: Option<&str>,
+        mac: Option<&str>,
+        updated_unix: i64,
+    ) -> Result<()> {
+        self.conn.execute(
+            "INSERT INTO device (serial, hardware_id, firmware, api_version, mac, updated_unix)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+             ON CONFLICT(serial) DO UPDATE SET
+               hardware_id=COALESCE(excluded.hardware_id, device.hardware_id),
+               firmware=COALESCE(excluded.firmware, device.firmware),
+               api_version=COALESCE(excluded.api_version, device.api_version),
+               mac=COALESCE(excluded.mac, device.mac),
+               updated_unix=excluded.updated_unix
+             WHERE excluded.updated_unix > device.updated_unix",
+            params![serial, hardware_id, firmware, api_version, mac, updated_unix],
+        )?;
+        Ok(())
+    }
+
+    /// Every sync cursor, as `(serial, next_cursor, last_sync_unix)`.
+    pub fn sync_rows(&self) -> Result<Vec<(String, i64, i64)>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT serial, next_cursor, last_sync_unix FROM sync_state")?;
+        let rows = stmt
+            .query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
+    /// Take a sync cursor from elsewhere if it is from a later sync than the one held.
+    ///
+    /// The later sync is the one that knows where the ring currently is. This is only safe
+    /// alongside that copy's events — the cursor says "everything before here is stored",
+    /// which is true of the merged database once those events are in it.
+    pub fn merge_sync_row(&self, serial: &str, next_cursor: i64, last_sync_unix: i64) -> Result<()> {
+        self.conn.execute(
+            "INSERT INTO sync_state (serial, next_cursor, last_sync_unix)
+             VALUES (?1, ?2, ?3)
+             ON CONFLICT(serial) DO UPDATE SET
+               next_cursor=excluded.next_cursor,
+               last_sync_unix=excluded.last_sync_unix
+             WHERE excluded.last_sync_unix > sync_state.last_sync_unix",
+            params![serial, next_cursor, last_sync_unix],
+        )?;
+        Ok(())
+    }
+
+    /// Every scalar reading, as `(serial, kind, value, unit, captured_unix)`, oldest first.
+    #[allow(clippy::type_complexity)]
+    pub fn reading_rows(&self) -> Result<Vec<(String, String, f64, Option<String>, i64)>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT serial, kind, value, unit, captured_unix FROM readings ORDER BY id")?;
+        let rows = stmt
+            .query_map([], |r| {
+                Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?))
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
+    /// Insert a reading with its original capture time, unless that exact reading is
+    /// already there. `readings` has no uniqueness rule of its own, so the check is here.
+    /// Returns true if a row was added.
+    pub fn merge_reading(
+        &self,
+        serial: &str,
+        kind: &str,
+        value: f64,
+        unit: Option<&str>,
+        captured_unix: i64,
+    ) -> Result<bool> {
+        let changed = self.conn.execute(
+            "INSERT INTO readings (serial, kind, value, unit, captured_unix)
+             SELECT ?1, ?2, ?3, ?4, ?5
+             WHERE NOT EXISTS (
+               SELECT 1 FROM readings
+               WHERE serial = ?1 AND kind = ?2 AND value = ?3 AND captured_unix = ?5)",
+            params![serial, kind, value, unit, captured_unix],
+        )?;
+        Ok(changed > 0)
     }
 
     /// Distinct device serials that have stored events.
