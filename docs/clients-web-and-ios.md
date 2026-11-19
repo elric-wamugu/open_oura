@@ -444,6 +444,16 @@ nightly need" but "a 7.5 h need". `app.js` hardcodes "an".
   legend under it. A deliberate divergence, by request on Android (2026-11-16); bring the
   web in line or leave it, but do not assume the two cards match.
 
+- **Sleep debt follows the app's 7.27 rule** (shared brain, 2026-11-20): a 14-day window
+  of main sleeps, newest first, with missing days left unset; 10-minute rounding; no figure
+  below 5 nights in the window. `sleep_debt.valid` still means "enough history to show a
+  figure", which is what every client gates on; the app's own stricter flag (at least 4 h
+  of debt, 7 nights, 70% of them over 45 min short) is new as `sleep_debt.significant` and
+  is not shown anywhere. The need stays a flat 8 h, where the app uses a personal need of
+  about 7.3 h, so this runs higher than the app. The nightly skin temperature also changed
+  in the shared brain (second-highest window maximum). Both reach the web and iOS through
+  the summary without any change to their code; only Android was checked.
+
 Two Android features have no web or iOS counterpart, and are not omissions to close:
 
 - **Unattended sync** (`apps/android/.../sync/AutoSync.kt`): a 3-hour WorkManager floor plus

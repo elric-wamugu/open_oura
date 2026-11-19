@@ -1,9 +1,14 @@
 //! Nightly skin temperature + deviation. Ported from
 //! `nightly_temperature_calculate @ 0x203520`: a 7-sample sliding median, then
 //! 30-sample windows; each window contributes its max when its range < 2.50 °C,
-//! and the nightly value is the **minimum of those window maxima** (needs >= 4
-//! valid windows). Units: ring temperature is i16 centi-°C (value/100 = °C).
-//! See `docs/algorithms/temperature.md`.
+//! and the nightly value is the **second-highest of those window maxima, counting
+//! ties** (needs >= 4 valid windows). Units: ring temperature is i16 centi-°C
+//! (value/100 = °C). See `docs/algorithms/temperature.md`.
+//!
+//! The selection was the *minimum* of the window maxima until 2026-11-20, which put the
+//! nightly figure at the coolest stretch of the night rather than near its peak. The
+//! second-highest rule, and the fixture and tests in `tests/temperature_order_statistic.rs`,
+//! come from upstream Th0rgal/open_oura#29 (by Ghussy), carried in #32.
 
 const WINDOW: usize = 30; // samples (0x1e)
 const RANGE_THRESHOLD: u16 = 250; // 2.50 °C in centi-°C (0xfa)
@@ -42,7 +47,9 @@ pub fn nightly_temperature(samples: &[u16]) -> Option<i16> {
     if maxima.len() < MIN_WINDOWS {
         return None;
     }
-    maxima.into_iter().min().map(|v| v as i16)
+    // Second-highest, ties counted: two windows sharing the top value give that value.
+    maxima.sort_unstable_by(|a, b| b.cmp(a));
+    Some(maxima[1].min(i16::MAX as u16) as i16)
 }
 
 /// Temperature deviation (centi-°C) = nightly temperature − personal baseline mean.

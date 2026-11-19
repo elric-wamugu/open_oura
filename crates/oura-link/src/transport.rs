@@ -85,6 +85,7 @@ pub(crate) mod mock {
     pub struct MockTransport {
         tx: broadcast::Sender<Vec<u8>>,
         responses: Mutex<HashMap<String, Vec<Vec<u8>>>>,
+        written: std::sync::Arc<Mutex<Vec<String>>>,
     }
 
     impl MockTransport {
@@ -93,7 +94,14 @@ pub(crate) mod mock {
             Self {
                 tx,
                 responses: Mutex::new(HashMap::new()),
+                written: Default::default(),
             }
+        }
+
+        /// Every request written so far, as hex, in order. Taken before the mock is moved
+        /// into a client, it keeps reading what the client goes on to send.
+        pub fn written(&self) -> std::sync::Arc<Mutex<Vec<String>>> {
+            self.written.clone()
         }
 
         /// Register canned responses keyed by the request's full hex.
@@ -109,6 +117,7 @@ pub(crate) mod mock {
     impl Transport for MockTransport {
         async fn write(&self, data: &[u8]) -> Result<()> {
             let key = hex::encode(data);
+            self.written.lock().unwrap().push(key.clone());
             if let Some(frames) = self.responses.lock().unwrap().get(&key) {
                 for f in frames {
                     let _ = self.tx.send(f.clone());
