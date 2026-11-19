@@ -43,6 +43,10 @@ pub struct HeartRateSample {
     pub ibi_ms: u16,
 }
 
+/// How often a live heart-rate measurement asks again. A Ring 4 reverts after about 20 s
+/// (upstream Th0rgal/open_oura#21); 15 s leaves margin.
+pub const LIVE_HR_RESEND_EVERY: Duration = Duration::from_secs(15);
+
 /// What a live heart-rate measurement saw, for saying *why* when there were no beats.
 #[derive(Clone, Debug, Default)]
 pub struct LiveHrStats {
@@ -524,10 +528,22 @@ impl<T: Transport> OuraClient<T> {
         let batch_terminal = |p: &Packet| {
             p.tag == 0x11 || (p.tag == 0x2f && matches!(p.payload.first(), Some(0x42) | Some(0x00)))
         };
+        // DataFlush moves the ring's RAM-buffered (newest) events into the readable
+        // history. One flush before the first read covers everything buffered by then, and
+        // reads of older history need none, so mid-backlog batches skip it — about 45 ms a
+        // batch (upstream Th0rgal/open_oura#31, carried in #32). When the ring then reports
+        // nothing left, one more flushed pass picks up whatever was buffered meanwhile, so
+        // the drain still always ends on a flushed read, as it did when every batch was.
+        let mut flush_next = true;
         // Safety bound against a misbehaving ring that never reports drained.
         for _ in 0..100_000 {
+            let flushed = flush_next;
             let t_flush = std::time::Instant::now();
-            let mut packets = self.request_tag(&protocol::req_data_flush(), 0x29).await?;
+            let mut packets = if flushed {
+                self.request_tag(&protocol::req_data_flush(), 0x29).await?
+            } else {
+                Vec::new()
+            };
             let flush_ms = t_flush.elapsed().as_millis();
             let t_fetch = std::time::Instant::now();
             if use_extended {
@@ -629,8 +645,14 @@ impl<T: Transport> OuraClient<T> {
                 progress,
             });
             if bytes_left == 0 {
-                break; // drained
+                if flushed {
+                    break; // drained
+                }
+                // Drained as far as the last flush reached: one more flushed pass.
+                flush_next = true;
+                continue;
             }
+            flush_next = false;
             if !progressed {
                 return Err(Error::Protocol(format!(
                     "ring reports {bytes_left} bytes of events left but the batch \
@@ -990,32 +1012,35 @@ impl<T: Transport> OuraClient<T> {
         // Drain backlog.
         while rx.try_recv().is_ok() {}
 
-        self.transport
-            .write(&protocol::req_set_feature_mode(
-                feature::DAYTIME_HR,
-                feature_mode::CONNECTED_LIVE,
-            ))
-            .await?;
+        // The app's sequence before asking for live heart rate: register the event stream
+        // and turn on the ring's push notifications. Neither was needed on our Ring 3, but
+        // both are part of the burst a Ring 4 is reported to need (upstream
+        // Th0rgal/open_oura#21 and #32, "open_ring §6.7"), and both are what the official
+        // app sends anyway. Best effort: a ring that declines them can still stream.
+        let _ = self
+            .transport
+            .write(&protocol::req_stream_subscribe(0x02))
+            .await;
+        let _ = self
+            .transport
+            .write(&protocol::req_set_notification(0xbf))
+            .await;
+        self.send_live_hr_request().await?;
+        let mut next_request = tokio::time::Instant::now() + LIVE_HR_RESEND_EVERY;
 
         let mut stats = LiveHrStats::default();
-        // Live mode alone is accepted and then produces nothing: on a Ring 3 (Gen3) the
-        // per-beat notifications (`2f .. 28`) are *indications of the latest value*, and
-        // the ring only sends those to a subscriber. Measured 2026-11-16 on fw Gen3: mode
-        // `CONNECTED_LIVE` by itself, 0 notifications in 30 s; with this subscription, 27,
-        // about one a second. The ring acknowledges the subscription (`2f 03 27 02 00`)
-        // yet goes on reporting `subscription = 0` in its feature status, which is why an
-        // earlier probe that checked the status concluded it had not taken.
-        self.transport
-            .write(&protocol::req_set_feature_subscription(
-                feature::DAYTIME_HR,
-                protocol::subscription_mode::LATEST,
-            ))
-            .await?;
         let deadline = tokio::time::Instant::now() + duration;
         loop {
-            let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+            let now = tokio::time::Instant::now();
+            let remaining = deadline.saturating_duration_since(now);
             if remaining.is_zero() || should_stop() {
                 break;
+            }
+            // A Ring 4 drops back out of live mode after about 20 s; asking again every
+            // 15 s keeps a 30-second measurement streaming to the end.
+            if now >= next_request {
+                self.send_live_hr_request().await?;
+                next_request = now + LIVE_HR_RESEND_EVERY;
             }
             match tokio::time::timeout(remaining.min(POLL), rx.recv()).await {
                 Ok(Ok(frame)) => {
@@ -1066,6 +1091,31 @@ impl<T: Transport> OuraClient<T> {
             ))
             .await;
         Ok(stats)
+    }
+
+    /// One request for live heart rate: daytime HR to `CONNECTED_LIVE`, then the
+    /// latest-value subscription.
+    ///
+    /// Live mode alone is accepted and then produces nothing: on a Ring 3 (Gen3) the
+    /// per-beat notifications (`2f .. 28`) are *indications of the latest value*, and
+    /// the ring only sends those to a subscriber. Measured 2026-11-16 on fw Gen3: mode
+    /// `CONNECTED_LIVE` by itself, 0 notifications in 30 s; with this subscription, 27,
+    /// about one a second. The ring acknowledges the subscription (`2f 03 27 02 00`)
+    /// yet goes on reporting `subscription = 0` in its feature status, which is why an
+    /// earlier probe that checked the status concluded it had not taken.
+    async fn send_live_hr_request(&self) -> Result<()> {
+        self.transport
+            .write(&protocol::req_set_feature_mode(
+                feature::DAYTIME_HR,
+                feature_mode::CONNECTED_LIVE,
+            ))
+            .await?;
+        self.transport
+            .write(&protocol::req_set_feature_subscription(
+                feature::DAYTIME_HR,
+                protocol::subscription_mode::LATEST,
+            ))
+            .await
     }
 
     /// Stream live accelerometer samples (the "wave to test motion" path): enable
@@ -1229,6 +1279,65 @@ mod tests {
             client.authenticate(&key).await.unwrap(),
             AuthResult::Success
         );
+    }
+
+    /// A history event packet: tag, length, u32 LE timestamp, then a body.
+    fn event(tag: u8, ts: u32) -> String {
+        let mut p = vec![tag, 6];
+        p.extend_from_slice(&ts.to_le_bytes());
+        p.extend_from_slice(&[0xaa, 0xbb]);
+        hex::encode(p)
+    }
+
+    /// A legacy batch summary (`0x11`) reporting `bytes_left`.
+    fn summary(bytes_left: u32) -> String {
+        let mut p = vec![0x11, 6, 0, 0];
+        p.extend_from_slice(&bytes_left.to_le_bytes());
+        hex::encode(p)
+    }
+
+    #[tokio::test]
+    async fn a_long_drain_flushes_first_and_last_but_not_in_between() {
+        let mock = MockTransport::new();
+        let flush = hex::encode(protocol::req_data_flush());
+        mock.on(&flush, &["290100"]);
+        // The extended path is unsupported: fall back to legacy GetEvent.
+        mock.on(
+            &hex::encode(protocol::req_ext_get_event(0, EXT_BATCH_MAX_EVENTS, 0)),
+            &["2f0100"],
+        );
+        let get = |cursor: u32| hex::encode(protocol::req_get_event(cursor, 255, -1));
+        // Three batches of backlog, then the ring reports nothing left...
+        mock.on(
+            &get(0),
+            &[&event(0x43, 10), &event(0x43, 20), &summary(500)],
+        );
+        mock.on(&get(21), &[&event(0x43, 30), &summary(250)]);
+        mock.on(&get(31), &[&event(0x43, 40), &summary(0)]);
+        // ...and the closing flushed pass finds one event buffered meanwhile.
+        mock.on(&get(41), &[&event(0x43, 50), &summary(0)]);
+        let written = mock.written();
+        let client = OuraClient::new(mock).with_quiet(Duration::from_millis(20));
+
+        let mut seen = Vec::new();
+        let out = client
+            .drain_events(0, |e| seen.push(e.timestamp), |_| {})
+            .await
+            .unwrap();
+
+        assert_eq!(seen, vec![10, 20, 30, 40, 50]);
+        assert_eq!(out.next_cursor, 51);
+        let log = written.lock().unwrap();
+        let flushes: Vec<usize> = log
+            .iter()
+            .enumerate()
+            .filter(|(_, w)| **w == flush)
+            .map(|(i, _)| i)
+            .collect();
+        // One flush before the first read, one before the closing pass, none mid-backlog.
+        assert_eq!(flushes.len(), 2, "{log:?}");
+        let closing = log.iter().position(|w| *w == get(41)).unwrap();
+        assert_eq!(flushes[1], closing - 1);
     }
 
     #[test]

@@ -208,7 +208,7 @@ fn mean(v: &[f64]) -> Option<f64> {
 }
 
 /// Nightly skin temperature (°C) via ecore's `nightly_temperature` (7-sample median
-/// → 30-sample windows → minimum of the window maxima). Falls back to the plain mean
+/// → 30-sample windows → second-highest window maximum). Falls back to the plain mean
 /// when there aren't enough valid windows, so sparse nights still report a value.
 fn nightly_skin_temp(temps_c: &[f64]) -> Option<f64> {
     let centi: Vec<u16> = temps_c
@@ -1466,17 +1466,16 @@ pub fn build_summary(db: &Path, tz: i64, runner: &dyn ModelRunner) -> Result<Val
     // Each night's wake date (the local date it ended on) and time in bed, to say which
     // one is its day's main sleep. Worked out before the loop because the answer for one
     // night depends on the others.
-    let is_main = main_sleeps(
-        &nights
-            .iter()
-            .map(|nt| {
-                let end_local = unix_in_epoch(nt.end_ds, nt.epoch_idx) + tz as f64 * 3600.0;
-                let in_bed_h =
-                    ((nt.end_ds - nt.start_ds) as f64 / 10.0 / 3600.0 * 10.0).round() / 10.0;
-                ((end_local / 86400.0).floor() as i64, in_bed_h)
-            })
-            .collect::<Vec<_>>(),
-    );
+    let wake_days: Vec<(i64, f64)> = nights
+        .iter()
+        .map(|nt| {
+            let end_local = unix_in_epoch(nt.end_ds, nt.epoch_idx) + tz as f64 * 3600.0;
+            let in_bed_h =
+                ((nt.end_ds - nt.start_ds) as f64 / 10.0 / 3600.0 * 10.0).round() / 10.0;
+            ((end_local / 86400.0).floor() as i64, in_bed_h)
+        })
+        .collect();
+    let is_main = main_sleeps(&wake_days);
     let mut nights_json = Vec::new();
     let mut asleep_by_night: Vec<i32> = Vec::new(); // oldest-first, for sleep debt
     for (night_idx, nt) in nights.iter().enumerate() {
@@ -1580,19 +1579,47 @@ pub fn build_summary(db: &Path, tz: i64, runner: &dyn ModelRunner) -> Result<Val
     }
     nights_json.reverse();
 
-    // sleep debt over the recent nights (newest-first for the linear-decay weighting),
-    // against an 8 h nightly need — the same ecore-ported algorithm as the ring.
+    // Sleep debt, as the app's 7.27 `sleep_debt_calculate` does it: a fixed window of the
+    // last 14 days, newest first, one slot per day, with a day that has no scored main
+    // sleep left as unset (`i32::MAX`) rather than dropped. The window length sets the
+    // decay, so it must be 14 slots, not "however many nights there are" — this used to
+    // pass every night on record (well over a hundred) and naps as nights of their own,
+    // which spread the decay across months.
+    //
+    // The need is a flat 8 h. The app uses a personal need (about 7.3 h in its logs), which
+    // the ring does not hold, so the figure here runs higher than the app's.
     let need_h = 8.0;
     let sleep_debt = {
         use oura_analysis::ported::sleep_debt::{sleep_debt, SleepDebtConfig};
-        let mut actual: Vec<i32> = asleep_by_night.clone();
-        actual.reverse(); // newest-first
-        let need = vec![(need_h * 3600.0) as i32; actual.len()];
+        const WINDOW_DAYS: i64 = 14;
+        const UNSET: i32 = i32::MAX;
+        let newest_day = wake_days
+            .iter()
+            .zip(&is_main)
+            .filter(|(_, m)| **m)
+            .map(|((day, _), _)| *day)
+            .max();
+        let mut actual = vec![UNSET; WINDOW_DAYS as usize];
+        if let Some(newest) = newest_day {
+            for ((day, _), (main, asleep)) in wake_days.iter().zip(is_main.iter().zip(&asleep_by_night)) {
+                let back = newest - day;
+                if *main && (0..WINDOW_DAYS).contains(&back) && *asleep > 0 {
+                    actual[back as usize] = *asleep;
+                }
+            }
+        }
+        let need = vec![(need_h * 3600.0) as i32; WINDOW_DAYS as usize];
         let d = sleep_debt(&actual, &need, &SleepDebtConfig::default());
+        let minutes = |v: i32| (v != UNSET).then(|| (v as f64 / 60.0).round());
         json!({
-            "debt_min": (d.debt_s as f64 / 60.0).round(),
-            "recent_shortfall_min": (d.recent_shortfall_s as f64 / 60.0).round(),
-            "valid": d.valid,
+            "debt_min": minutes(d.debt_s),
+            "recent_shortfall_min": minutes(d.recent_shortfall_s),
+            // Enough history to give a figure: 5 of the 14 days. The clients show the
+            // debt on this, as before.
+            "valid": d.debt_s != UNSET,
+            // The app's own, stricter flag: at least 4 h of debt, 7 nights, and 70% of
+            // them more than 45 min short. Not shown anywhere yet.
+            "significant": d.valid,
             "need_h": need_h,
         })
     };
