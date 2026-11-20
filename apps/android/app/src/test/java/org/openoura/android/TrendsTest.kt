@@ -135,7 +135,7 @@ class TrendsTest {
                 TrendMetric.READINESS, TrendMetric.SLEEP_SCORE, TrendMetric.ACTIVITY_SCORE,
                 TrendMetric.ASLEEP, TrendMetric.STEPS, TrendMetric.EFFICIENCY,
                 TrendMetric.RESTING_HR, TrendMetric.HRV, TrendMetric.BREATHING,
-                TrendMetric.SKIN_TEMP, TrendMetric.SPO2,
+                TrendMetric.SKIN_TEMP, TrendMetric.SPO2, TrendMetric.PULSE_SHAPE,
             ),
             TrendMetric.entries.toList(),
         )

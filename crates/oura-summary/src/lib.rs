@@ -14,6 +14,7 @@
 
 mod bedtime;
 mod daily_scores;
+pub mod ppg_shape;
 mod staging;
 
 use std::path::{Path, PathBuf};
@@ -1838,6 +1839,46 @@ pub fn build_summary_with(
     }
     stages.mark("stager");
 
+    // The pulse's shape from the raw PPG (`ppg_shape.rs`), for nights that recorded it.
+    // Cached per night beside the stages, keyed on the night's PPG event count: a night's
+    // value only changes when more of its PPG arrives, and working it out is about a
+    // millisecond a burst.
+    let pulse_shapes: Vec<Option<ppg_shape::NightShape>> = match dev.as_ref() {
+        Some((serial, ..)) => nights
+            .iter()
+            .map(|nt| {
+                let window = (nt.start_ds, nt.end_ds);
+                let capture = epochs[nt.epoch_idx].capture;
+                let count = store
+                    .count_events_in_window(serial, &[0x81], window, capture)
+                    .ok()?;
+                if count == 0 {
+                    return None;
+                }
+                let key = oura_store::StageCacheKey {
+                    serial: serial.clone(),
+                    start_ds: nt.start_ds,
+                    end_ds: nt.end_ds,
+                    capture_lo: capture.0,
+                    model: ppg_shape::CACHE_NAME.to_string(),
+                };
+                if let Some((inputs, json)) = store.stage_cache_get(&key).ok().flatten() {
+                    if inputs == count {
+                        return ppg_shape::from_cache(&json);
+                    }
+                }
+                let shape = store
+                    .raw_events_in_window(serial, 0x81, window, capture)
+                    .ok()
+                    .and_then(|rows| ppg_shape::night(&rows));
+                let _ = store.stage_cache_put(&key, count, &ppg_shape::to_cache(shape));
+                shape
+            })
+            .collect(),
+        None => vec![None; nights.len()],
+    };
+    stages.mark("pulse_shape");
+
     let mut nights_json = Vec::new();
     let mut night_scans: Vec<Option<NightScan>> = Vec::with_capacity(nights.len());
     let mut asleep_by_night: Vec<i32> = Vec::new(); // oldest-first, for sleep debt
@@ -1947,6 +1988,14 @@ pub fn build_summary_with(
             // Breaths per minute and their variability over the night, from the beats
             // (`staging::breathing_of`); only where the night went through the stager,
             // and null for a night under three hours.
+            // The pulse-shape index (second-derivative b/a) where Cardio PPG recorded the
+            // night; null otherwise. Our own, model-free measure (`ppg_shape.rs`).
+            "pulse_shape": pulse_shapes[night_idx].map(|p| json!({
+                "b_over_a": (p.b_over_a * 1000.0).round() / 1000.0,
+                "pulse_bpm": (p.pulse_bpm * 10.0).round() / 10.0,
+                "bursts": p.bursts,
+                "used": p.used,
+            })),
             "breathing_rate": breathing[night_idx].map(|b| json!({
                 "rate": b.rate,
                 "variability": b.variability,

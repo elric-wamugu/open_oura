@@ -84,6 +84,8 @@ data class NightRow(
     @SerialName("spo2_mean") val spo2Mean: Double? = null,
     /** Breaths per minute over the night; null where the night was not staged on this phone. */
     @SerialName("breathing_rate") val breathingRate: BreathingRate? = null,
+    /** The pulse-shape index from the raw PPG; null where Cardio PPG did not record the night. */
+    @SerialName("pulse_shape") val pulseShape: PulseShape? = null,
     @SerialName("deep_pct") val deepPct: Double? = null,
     @SerialName("light_pct") val lightPct: Double? = null,
     @SerialName("rem_pct") val remPct: Double? = null,
@@ -410,4 +412,17 @@ data class ReadinessContributors(
 data class BreathingRate(
     val rate: Double? = null,
     val variability: Double? = null,
+)
+
+/**
+ * A night's pulse shape (`oura-summary`'s `ppg_shape.rs`): the second-derivative b/a ratio,
+ * which grows less negative as arteries stiffen; the pulse rate the waveform gave, as a
+ * check on the signal; and how many of the night's bursts were clean enough to use.
+ */
+@Serializable
+data class PulseShape(
+    @SerialName("b_over_a") val bOverA: Double? = null,
+    @SerialName("pulse_bpm") val pulseBpm: Double? = null,
+    val bursts: Int? = null,
+    val used: Int? = null,
 )

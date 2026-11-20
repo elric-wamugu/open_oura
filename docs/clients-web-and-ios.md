@@ -461,6 +461,9 @@ nightly need" but "a 7.5 h need". `app.js` hardcodes "an".
   when no model ran. The stager is in the shared Rust, so either can turn it on with
   `SummaryOptions::stage_sleep`; see `docs/android-client-plan.md`.
 
+- **Pulse shape** (`nights[].pulse_shape`, from `oura-summary`'s `ppg_shape.rs`): Android
+  only — the Cardiovascular panel and a Trends chart. The web and iOS receive it and show
+  neither.
 - **Today and History layouts** (2026-11-20): Android's Today is a bento of the three
   scores, History a Day/Week/Month timeline, and Ring and You bentos too; the web and iOS keep
   their own layouts.

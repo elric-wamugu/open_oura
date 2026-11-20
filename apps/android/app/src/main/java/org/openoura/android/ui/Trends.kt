@@ -75,6 +75,7 @@ enum class TrendMetric(
     BREATHING("Breathing rate", "/min", 1, TrendGroup.BODY),
     SKIN_TEMP("Skin temperature", "°C", 1, TrendGroup.BODY),
     SPO2("Blood oxygen", "%", 0, TrendGroup.BODY),
+    PULSE_SHAPE("Pulse shape (b/a)", "", 2, TrendGroup.BODY),
 }
 
 /** A value on a day, the day counted from the epoch so gaps are simple arithmetic. */
@@ -121,11 +122,13 @@ fun trendPoints(summary: Summary, metric: TrendMetric): List<TrendPoint> =
             TrendMetric.SPO2 -> night?.spo2Mean
             TrendMetric.SKIN_TEMP -> night?.skinTemp
             TrendMetric.BREATHING -> night?.breathingRate?.rate
+            TrendMetric.PULSE_SHAPE -> night?.pulseShape?.bOverA
             // A day with a movement profile and no steps is a ring that was not worn, or
             // today before anyone has walked anywhere: neither is a zero-step day.
             TrendMetric.STEPS -> summary.activityDaily[ymd]?.steps
         }
-        value?.takeIf { it > 0 }?.let { TrendPoint(day, it) }
+        // b/a is negative by nature; every other metric is positive, and zero there is a gap.
+        value?.takeIf { it > 0 || metric == TrendMetric.PULSE_SHAPE }?.let { TrendPoint(day, it) }
     }.sortedBy { it.day }
 
 /** The last day anything was recorded: trends end there, not at today's empty column. */
@@ -162,6 +165,8 @@ fun TrendMetric.describeChange(w: TrendWindow): String? {
         unit == "%" -> "$shown%"
         else -> "$shown $unit"
     }
+    // b/a is negative: "higher" would read as stiffer-is-more, so it says which way it moved.
+    if (this == TrendMetric.PULSE_SHAPE) return "$amount ${if (change > 0) "less" else "more"} negative than $before"
     return "$amount ${if (change > 0) "higher" else "lower"} than $before"
 }
 
@@ -220,6 +225,7 @@ private fun TrendCard(metric: TrendMetric, w: TrendWindow) {
         TrendMetric.SPO2 -> colors.spo2
         TrendMetric.SKIN_TEMP -> colors.temp
         TrendMetric.BREATHING -> colors.rem
+        TrendMetric.PULSE_SHAPE -> colors.hr
         TrendMetric.ASLEEP, TrendMetric.STEPS -> colors.accent
     }
     val mean = w.mean
