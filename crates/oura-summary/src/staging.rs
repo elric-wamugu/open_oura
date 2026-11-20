@@ -84,13 +84,21 @@ pub fn stage_nights(
         let ds = (w.start_ds - MARGIN_DS, w.end_ds + MARGIN_DS);
         let cached = store.stage_cache_get(&key).ok().flatten();
         let settling = newest_capture - w.end_unix as i64 <= SETTLING_S;
-        let count = || store.count_events_in_window(serial, &INPUT_TAGS, ds, w.capture).ok();
+        let count = || {
+            store
+                .count_events_in_window(serial, &INPUT_TAGS, ds, w.capture)
+                .ok()
+        };
         if let Some((inputs, json)) = &cached {
             let fresh = !settling || count() == Some(*inputs);
             if fresh {
                 if let Ok(codes) = serde_json::from_str::<Vec<i64>>(json) {
                     stats.reused += 1;
-                    out.push(if codes.is_empty() { Staged::None } else { Staged::Stages(codes) });
+                    out.push(if codes.is_empty() {
+                        Staged::None
+                    } else {
+                        Staged::Stages(codes)
+                    });
                     continue;
                 }
             }
@@ -112,7 +120,11 @@ pub fn stage_nights(
             let _ = store.stage_cache_put(&key, inputs, &json);
         }
         stats.staged += 1;
-        out.push(if codes.is_empty() { Staged::None } else { Staged::Stages(codes) });
+        out.push(if codes.is_empty() {
+            Staged::None
+        } else {
+            Staged::Stages(codes)
+        });
     }
     (out, stats)
 }
@@ -182,7 +194,13 @@ mod tests {
 
     #[test]
     fn epochs_land_on_the_grid_and_gaps_read_as_wake() {
-        let w = Window { start_ds: 0, end_ds: 0, capture: (0, 0), start_unix: 1000.0, end_unix: 1000.0 + 150.0 };
+        let w = Window {
+            start_ds: 0,
+            end_ds: 0,
+            capture: (0, 0),
+            start_unix: 1000.0,
+            end_unix: 1000.0 + 150.0,
+        };
         // Five epochs; the stager covered the second to fourth, one unlabelled.
         let ts = [1_030_000, 1_060_000, 1_090_000];
         let labels = [1.0, 0.0, 3.0];
@@ -192,7 +210,13 @@ mod tests {
 
     #[test]
     fn a_night_with_no_sleep_has_no_hypnogram() {
-        let w = Window { start_ds: 0, end_ds: 0, capture: (0, 0), start_unix: 0.0, end_unix: 90.0 };
+        let w = Window {
+            start_ds: 0,
+            end_ds: 0,
+            capture: (0, 0),
+            start_unix: 0.0,
+            end_unix: 90.0,
+        };
         assert!(on_grid(&[0, 30_000], |_| 4.0, &w).is_empty());
     }
 }

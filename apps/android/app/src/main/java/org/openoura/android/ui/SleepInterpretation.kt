@@ -2,6 +2,7 @@ package org.openoura.android.ui
 
 import org.openoura.android.data.NightRow
 import org.openoura.android.data.SleepDebt
+import org.openoura.android.data.SleepScoreContributors
 import kotlin.math.floor
 import kotlin.math.roundToInt
 
@@ -74,6 +75,28 @@ object SleepInterpretation {
      * consonant.
      */
     internal fun article(need: String) = if (need.startsWith("8")) "an" else "a"
+
+    /**
+     * The word that goes with a Sleep Score, on the app's bands: 85 and up optimal, 70 to
+     * 84 good, 60 to 69 fair, below that pay attention.
+     */
+    fun scoreLabel(score: Int): String = when {
+        score >= 85 -> "Optimal"
+        score >= 70 -> "Good"
+        score >= 60 -> "Fair"
+        else -> "Pay attention"
+    }
+
+    /** The contributors in the app's order, with their names; ones not given are left out. */
+    fun scoreContributors(c: SleepScoreContributors): List<Pair<String, Int>> = listOfNotNull(
+        c.totalSleep?.let { "Total sleep" to it },
+        c.efficiency?.let { "Efficiency" to it },
+        c.restfulness?.let { "Restfulness" to it },
+        c.rem?.let { "REM sleep" to it },
+        c.deep?.let { "Deep sleep" to it },
+        c.latency?.let { "Latency" to it },
+        c.timing?.let { "Timing" to it },
+    )
 
     /**
      * Where a night's stages came from, in a line, or null when there are none to explain.

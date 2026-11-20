@@ -523,12 +523,15 @@ fun OpenOuraApp(
             )
         }
         entry<YouRoute>(metadata = TabRootMotion) {
-            val profile = remember { profiles.read() }
+            // Held as state: the chronotype row and the profile card both write the profile,
+            // and each must save on top of what the other last wrote.
+            var profile by remember { mutableStateOf(profiles.read()) }
             YouScreen(
                 profile = profile,
                 ringKeyFingerprint = ringKeyFp,
                 onSaveProfile = { p ->
                     profiles.write(p)
+                    profile = p
                     messages.show("Profile saved. Recomputing your figures…")
                     scope.launch { busy = true; repo.recompute(); busy = false }
                 },
@@ -536,6 +539,13 @@ fun OpenOuraApp(
                 onHealthConnect = { navigator.push(HealthConnectRoute) },
                 onBackup = { navigator.push(BackupRoute) },
                 onImportDatabase = { pickDatabase.launch(arrayOf("*/*")) },
+                chronotype = (state as? SummaryState.Ready)?.summary?.chronotype,
+                onChronotype = { c ->
+                    profile = profile.copy(chronotype = c)
+                    profiles.write(profile)
+                    messages.show("Chronotype saved. Rescoring your nights…")
+                    scope.launch { busy = true; repo.recompute(); busy = false }
+                },
                 stepTarget = stepTarget,
                 onStepTarget = { steps ->
                     Goals.setStepTarget(app, steps)

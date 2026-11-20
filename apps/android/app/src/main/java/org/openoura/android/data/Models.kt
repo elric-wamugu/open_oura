@@ -92,6 +92,8 @@ data class NightRow(
     /** Where the hypnogram came from: "model", "stager" (staged on this phone), "ring" (the
      *  ring's own phases) or "none". */
     @SerialName("stages_source") val stagesSource: String? = null,
+    /** The night's Sleep Score and contributors, computed in Rust; null without stages. */
+    @SerialName("sleep_score") val sleepScore: SleepScore? = null,
     val metrics: SleepMetrics? = null,
     val autonomic: Autonomic? = null,
     val series: NightSeries? = null,
@@ -271,6 +273,8 @@ data class Summary(
     /** What the on-device sleep stager did in this recompute: nights reused from its cache,
      *  staged now, and left for a later recompute. Diagnostic: logged, never rendered. */
     val stager: StagerStats? = null,
+    /** What the Sleep Score's timing was measured against. */
+    val chronotype: ChronotypeInfo? = null,
     val error: String? = null,
 ) {
     /**
@@ -324,3 +328,32 @@ internal fun localYmd(unix: Double): String {
 
 @Serializable
 data class StagerStats(val reused: Int = 0, val staged: Int = 0, val pending: Int = 0)
+
+/** A night's Sleep Score (0..100) and its seven contributors (1..100), from `oura-summary`. */
+@Serializable
+data class SleepScore(
+    val score: Int? = null,
+    val contributors: SleepScoreContributors = SleepScoreContributors(),
+)
+
+@Serializable
+data class SleepScoreContributors(
+    @SerialName("total_sleep") val totalSleep: Int? = null,
+    val deep: Int? = null,
+    val rem: Int? = null,
+    val efficiency: Int? = null,
+    val latency: Int? = null,
+    val restfulness: Int? = null,
+    val timing: Int? = null,
+)
+
+/** The chronotype the summary scored timing with: entered ("profile"), worked out from the
+ *  user's nights ("history"), or none yet ("none", with how many nights it has and needs). */
+@Serializable
+data class ChronotypeInfo(
+    val source: String? = null,
+    val type: String? = null,
+    @SerialName("ideal_midpoint") val idealMidpoint: String? = null,
+    val nights: Int? = null,
+    val needs: Int? = null,
+)

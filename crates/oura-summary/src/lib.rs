@@ -31,12 +31,84 @@ pub struct Demographics {
     pub height_m: f64,
     pub weight_kg: f64,
     pub ring_size: f64,
+    /// A chronotype the user entered, as the Oura app reports it. `None` lets the Sleep
+    /// Score work one out from the user's own nights.
+    pub chronotype: Option<Chronotype>,
+}
+
+/// The app's chronotype: a type and an ideal sleep midpoint. In `profile.json` as
+/// `"chronotype": {"type": "late morning", "ideal_midpoint": "03:30"}`, the same shape
+/// upstream's `tools/score_sleep_exact.py` reads.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Chronotype {
+    /// 1 early morning … 6 late evening (`CHRONOTYPE_NAMES`). Any of them turns on the
+    /// personal timing curve; the curve itself depends only on the midpoint.
+    pub kind: u8,
+    /// Minutes from local midnight, folded to -720..719 as the score's clock is (23:30 is
+    /// -30).
+    pub ideal_midpoint_min: i32,
+}
+
+/// The app's six chronotype names, in code order from 1.
+pub const CHRONOTYPE_NAMES: [&str; 6] = [
+    "early morning",
+    "morning",
+    "late morning",
+    "early evening",
+    "evening",
+    "late evening",
+];
+
+/// "HH:MM" to minutes folded to -720..719; `None` for anything else.
+fn fold_clock(hm: &str) -> Option<i32> {
+    let (h, m) = hm.trim().split_once(':')?;
+    let (h, m): (i32, i32) = (h.parse().ok()?, m.parse().ok()?);
+    if !(0..24).contains(&h) || !(0..60).contains(&m) {
+        return None;
+    }
+    Some(h * 60 + m - if h > 11 { 1440 } else { 0 })
+}
+
+/// Folded minutes back to "HH:MM".
+fn unfold_clock(min: i32) -> String {
+    let m = min.rem_euclid(1440);
+    format!("{:02}:{:02}", m / 60, m % 60)
+}
+
+impl Chronotype {
+    fn from_json(v: &Value) -> Option<Self> {
+        let kind = match &v["type"] {
+            Value::Number(n) => n.as_u64().filter(|k| (1..=6).contains(k))? as u8,
+            Value::String(s) => {
+                CHRONOTYPE_NAMES
+                    .iter()
+                    .position(|n| n.eq_ignore_ascii_case(s.trim()))? as u8
+                    + 1
+            }
+            _ => return None,
+        };
+        let ideal_midpoint_min = fold_clock(v["ideal_midpoint"].as_str()?)?;
+        Some(Chronotype {
+            kind,
+            ideal_midpoint_min,
+        })
+    }
+    fn to_json(self) -> Value {
+        json!({
+            "type": CHRONOTYPE_NAMES[(self.kind.clamp(1, 6) - 1) as usize],
+            "ideal_midpoint": unfold_clock(self.ideal_midpoint_min),
+        })
+    }
 }
 
 impl Demographics {
     pub fn to_json(self) -> Value {
-        json!({ "sex": self.sex.to_string(), "age": self.age, "height_m": self.height_m,
-                "weight_kg": self.weight_kg, "ring_size": self.ring_size })
+        let mut v = json!({ "sex": self.sex.to_string(), "age": self.age, "height_m": self.height_m,
+                "weight_kg": self.weight_kg, "ring_size": self.ring_size });
+        if let Some(c) = self.chronotype {
+            v["chronotype"] = c.to_json();
+        }
+        v
     }
     pub fn from_json(v: &Value) -> Self {
         let d = Demographics::default();
@@ -50,6 +122,7 @@ impl Demographics {
             height_m: v["height_m"].as_f64().unwrap_or(d.height_m),
             weight_kg: v["weight_kg"].as_f64().unwrap_or(d.weight_kg),
             ring_size: v["ring_size"].as_f64().unwrap_or(d.ring_size),
+            chronotype: Chronotype::from_json(&v["chronotype"]),
         }
     }
 }
@@ -61,6 +134,7 @@ impl Default for Demographics {
             height_m: 1.78,
             weight_kg: 75.0,
             ring_size: 10.0,
+            chronotype: None,
         }
     }
 }
@@ -288,11 +362,143 @@ struct Night {
     temp: Vec<f64>,
     spo2: Vec<f64>,
     motion: Vec<f64>,
+    /// The same motion samples with their ring time, for the sleep score's restfulness.
+    motion_t: Vec<(i64, f64)>,
     // timestamped (time_ds, value) HRV/HR samples for stage-resolved autonomics — the
     // flat `rmssd`/`hr` vecs above drop timing, which we need to map each sample to its
     // hypnogram stage.
     hrv_t: Vec<(i64, f64)>,
     hr_t: Vec<(i64, f64)>,
+}
+
+/// A night's scan for the Sleep Score, kept until the chronotype is known: the scan, the
+/// night's sleep midpoint on the score's folded clock, and what `app_sleep_score` needs.
+struct NightScan {
+    scan: oura_analysis::ported::sleep_inputs::Scan,
+    midpoint_min: i32,
+    start: i64,
+    tz_min: i32,
+}
+
+/// Scan a night's 30 s stages and motion for the Sleep Score. `None` without stages or with
+/// fewer than 10 epochs to scan. The scan does not depend on the chronotype; only the
+/// timing contributor does, so it is scored afterwards ([`sleep_score_json`]).
+fn scan_night(
+    stages: &[i64],
+    motion: &[(f64, f64)],
+    age: f64,
+    start_unix: f64,
+    end_unix: f64,
+    tz_hours: i64,
+) -> Option<NightScan> {
+    use oura_analysis::ported::sleep_inputs::night_from_stages;
+    if stages.is_empty() {
+        return None;
+    }
+    let codes: Vec<u8> = stages.iter().map(|&c| c.clamp(0, 15) as u8).collect();
+    let age = age.round().clamp(0.0, 255.0) as u8;
+    let (start, end, tz_min) = (
+        start_unix.round() as i64,
+        end_unix.round() as i64,
+        (tz_hours * 60) as i32,
+    );
+    let night = night_from_stages(age, start, end, tz_min, &codes, motion, None)?;
+    Some(NightScan {
+        scan: night.scan,
+        midpoint_min: night.timing.mid as i32,
+        start,
+        tz_min,
+    })
+}
+
+/// The chronotype to score timing with: the one the user entered, else one worked out from
+/// their own main nights — the median sleep midpoint of the newest [`CHRONO_NIGHTS`], once
+/// there are [`CHRONO_MIN_NIGHTS`] of them. Midpoints are on the score's clock folded at
+/// noon, so a midpoint just before midnight and one just after are neighbours, not a day
+/// apart.
+const CHRONO_NIGHTS: usize = 60;
+const CHRONO_MIN_NIGHTS: usize = 14;
+fn resolve_chronotype(
+    entered: Option<Chronotype>,
+    main_midpoints_newest_first: &[i32],
+) -> (Option<Chronotype>, Value) {
+    if let Some(c) = entered {
+        return (
+            Some(c),
+            json!({ "source": "profile", "type": CHRONOTYPE_NAMES[(c.kind.clamp(1, 6) - 1) as usize],
+                    "ideal_midpoint": unfold_clock(c.ideal_midpoint_min) }),
+        );
+    }
+    let mut mids: Vec<i32> = main_midpoints_newest_first
+        .iter()
+        .take(CHRONO_NIGHTS)
+        .copied()
+        .collect();
+    if mids.len() < CHRONO_MIN_NIGHTS {
+        return (
+            None,
+            json!({ "source": "none", "nights": mids.len(), "needs": CHRONO_MIN_NIGHTS }),
+        );
+    }
+    mids.sort_unstable();
+    let median = mids[mids.len() / 2];
+    let kind = chronotype_from_midpoint(median);
+    (
+        Some(Chronotype {
+            kind,
+            ideal_midpoint_min: median,
+        }),
+        json!({ "source": "history", "type": CHRONOTYPE_NAMES[(kind - 1) as usize],
+                "ideal_midpoint": unfold_clock(median), "nights": mids.len() }),
+    )
+}
+
+/// A chronotype named from a sleep midpoint, for one worked out from the user's nights.
+///
+/// Oura does not publish where its six types begin and end; its help pages give only the
+/// inputs (90 days of sleep timing, activity and body temperature) and that fewer than 10%
+/// of people fall in each of the two extremes. So these are one-hour bands of sleep
+/// midpoint, the usual way chronotype is grouped in sleep research (the Munich Chronotype
+/// Questionnaire's mid-sleep): before 02:00 early morning, then morning, late morning, early
+/// evening and evening an hour each, and from 06:00 late evening. The population's mid-sleep
+/// centres around 04:00, which leaves the extremes as the small tails Oura describes. An
+/// estimate, labelled as one wherever it is shown; the type does not change the score.
+fn chronotype_from_midpoint(folded_min: i32) -> u8 {
+    match folded_min {
+        m if m < 120 => 1,
+        m if m < 180 => 2,
+        m if m < 240 => 3,
+        m if m < 300 => 4,
+        m if m < 360 => 5,
+        _ => 6,
+    }
+}
+
+/// The night's Sleep Score: the app's daily score for the period and its seven
+/// contributors (each 1..100), from a [`scan_night`] scan.
+///
+/// The scoring is `oura-analysis`'s port (`sleep_inputs`, `sleep_score`, from upstream
+/// Th0rgal/open_oura#32). Timing is scored against `chrono`, which [`resolve_chronotype`]
+/// supplies; with none, against the port's fixed reference curve. The score is only as good
+/// as the stages it is given — the app scores its own staging.
+fn sleep_score_json(n: &NightScan, age: f64, chrono: Option<Chronotype>) -> Value {
+    use oura_analysis::ported::sleep_inputs::app_sleep_score;
+    let age = age.round().clamp(0.0, 255.0) as u32;
+    let chrono = chrono.map(|c| (c.kind, c.ideal_midpoint_min * 60));
+    let daily = app_sleep_score(&n.scan, age, n.start, n.tz_min, chrono);
+    let c = daily.contributors;
+    json!({
+        "score": daily.score,
+        "contributors": {
+            "total_sleep": c[0],
+            "deep": c[1],
+            "rem": c[2],
+            "efficiency": c[3],
+            "latency": c[4],
+            "restfulness": c[5],
+            "timing": c[6],
+        },
+    })
 }
 
 /// Mean HR / HRV within each sleep stage, mapping each timestamped sample to the
@@ -1419,6 +1625,7 @@ pub fn build_summary_with(
                 // the night, feeds the polysomnograph's movement lane.
                 if let Some(s) = v["motion_seconds"].as_f64() {
                     nights[idx].motion.push(s);
+                    nights[idx].motion_t.push((*ds, s));
                 }
             }
             _ => {}
@@ -1496,8 +1703,7 @@ pub fn build_summary_with(
         .iter()
         .map(|nt| {
             let end_local = unix_in_epoch(nt.end_ds, nt.epoch_idx) + tz as f64 * 3600.0;
-            let in_bed_h =
-                ((nt.end_ds - nt.start_ds) as f64 / 10.0 / 3600.0 * 10.0).round() / 10.0;
+            let in_bed_h = ((nt.end_ds - nt.start_ds) as f64 / 10.0 / 3600.0 * 10.0).round() / 10.0;
             ((end_local / 86400.0).floor() as i64, in_bed_h)
         })
         .collect();
@@ -1558,6 +1764,7 @@ pub fn build_summary_with(
     stages.mark("stager");
 
     let mut nights_json = Vec::new();
+    let mut night_scans: Vec<Option<NightScan>> = Vec::with_capacity(nights.len());
     let mut asleep_by_night: Vec<i32> = Vec::new(); // oldest-first, for sleep debt
     for (night_idx, nt) in nights.iter().enumerate() {
         let sleep_key = format!("{}:{}", nt.epoch_idx, nt.start_ds);
@@ -1579,7 +1786,10 @@ pub fn build_summary_with(
             ("stager", d)
         } else {
             let ring = stages_from_phase_data(&phase_events, nt.epoch_idx, nt.end_ds);
-            (if ring.is_empty() { "none" } else { "ring" }, smooth_stages(&ring, 5))
+            (
+                if ring.is_empty() { "none" } else { "ring" },
+                smooth_stages(&ring, 5),
+            )
         };
         let hyp = hyp.filter(|_| stages_source == "model");
         let stage_cells = (!full_stages.is_empty()).then(|| downsample_codes(&full_stages, 120));
@@ -1622,6 +1832,17 @@ pub fn build_summary_with(
                 (pct(1), pct(2), pct(3), pct(4), eff)
             }
         };
+        night_scans.push(scan_night(
+            &full_stages,
+            &nt.motion_t
+                .iter()
+                .map(|&(ds, sec)| (unix_in_epoch(ds, nt.epoch_idx), sec))
+                .collect::<Vec<_>>(),
+            demo.age,
+            start_unix,
+            end_unix,
+            tz,
+        ));
         nights_json.push(json!({
             "date": date_label(start_unix, tz),
             "ymd": ymd_label(start_unix, tz),
@@ -1665,10 +1886,26 @@ pub fn build_summary_with(
                 "motion": series(&nt.motion, 0),
             },
             "metrics": metrics,
+            // Filled in after the loop, once the chronotype is known.
+            "sleep_score": Value::Null,
             // mean HR/HRV per sleep stage (deep/light/rem) — deep-sleep HRV is the
             // recovery-relevant number; null when there's no hypnogram.
             "autonomic": autonomic,
         }));
+    }
+    // Sleep Scores, now that every night's midpoint is known for the chronotype.
+    let main_midpoints: Vec<i32> = night_scans
+        .iter()
+        .zip(&is_main)
+        .rev()
+        .filter(|(_, m)| **m)
+        .filter_map(|(n, _)| n.as_ref().map(|n| n.midpoint_min))
+        .collect();
+    let (chrono, chronotype_json) = resolve_chronotype(demo.chronotype, &main_midpoints);
+    for (n, out) in night_scans.iter().zip(nights_json.iter_mut()) {
+        if let Some(n) = n {
+            out["sleep_score"] = sleep_score_json(n, demo.age, chrono);
+        }
     }
     nights_json.reverse();
 
@@ -1694,7 +1931,9 @@ pub fn build_summary_with(
             .max();
         let mut actual = vec![UNSET; WINDOW_DAYS as usize];
         if let Some(newest) = newest_day {
-            for ((day, _), (main, asleep)) in wake_days.iter().zip(is_main.iter().zip(&asleep_by_night)) {
+            for ((day, _), (main, asleep)) in
+                wake_days.iter().zip(is_main.iter().zip(&asleep_by_night))
+            {
                 let back = newest - day;
                 if *main && (0..WINDOW_DAYS).contains(&back) && *asleep > 0 {
                     actual[back as usize] = *asleep;
@@ -2196,6 +2435,9 @@ pub fn build_summary_with(
 
     Ok(json!({
         "generated_at": now,
+        // What the Sleep Score's timing was measured against: "profile" (entered), "history"
+        // (worked out from the user's nights) or "none" (too few nights yet).
+        "chronotype": chronotype_json,
         "stager": stager_stats.map(|st| json!({
             "reused": st.reused,
             "staged": st.staged,
@@ -2597,5 +2839,80 @@ mod tests {
             vec![true; 3]
         );
         assert!(crate::main_sleeps(&[]).is_empty());
+    }
+
+    #[test]
+    fn a_chronotype_reads_from_the_profile_and_folds_at_noon() {
+        let c = crate::Chronotype::from_json(
+            &json!({"type": "Late Morning", "ideal_midpoint": "03:30"}),
+        )
+        .unwrap();
+        assert_eq!((c.kind, c.ideal_midpoint_min), (3, 210));
+        let late =
+            crate::Chronotype::from_json(&json!({"type": 6, "ideal_midpoint": "23:30"})).unwrap();
+        assert_eq!(late.ideal_midpoint_min, -30);
+        assert_eq!(crate::unfold_clock(-30), "23:30");
+        assert!(crate::Chronotype::from_json(
+            &json!({"type": "night owl", "ideal_midpoint": "03:30"})
+        )
+        .is_none());
+        assert!(
+            crate::Chronotype::from_json(&json!({"type": 2, "ideal_midpoint": "25:00"})).is_none()
+        );
+        assert!(crate::Chronotype::from_json(&serde_json::Value::Null).is_none());
+        // It survives a round trip through profile.json.
+        let d = crate::Demographics {
+            chronotype: Some(c),
+            ..Default::default()
+        };
+        assert_eq!(
+            crate::Demographics::from_json(&d.to_json()).chronotype,
+            Some(c)
+        );
+    }
+
+    #[test]
+    fn without_one_the_chronotype_is_the_median_midpoint_of_recent_main_nights() {
+        let entered = crate::Chronotype {
+            kind: 2,
+            ideal_midpoint_min: 150,
+        };
+        assert_eq!(
+            crate::resolve_chronotype(Some(entered), &[300; 30]).0,
+            Some(entered)
+        );
+        // Too few nights: none.
+        assert_eq!(crate::resolve_chronotype(None, &[200; 13]).0, None);
+        // Around midnight the folded clock keeps 23:50 and 00:10 neighbours.
+        let mut mids = vec![-10; 8];
+        mids.extend([10; 7]);
+        let (c, v) = crate::resolve_chronotype(None, &mids);
+        assert_eq!(c.unwrap().ideal_midpoint_min, -10);
+        assert_eq!(v["ideal_midpoint"], "23:50");
+        assert_eq!(v["source"], "history");
+        assert_eq!(v["type"], "early morning");
+        // Only the newest 60 count.
+        let mut recent = vec![240; 60];
+        recent.extend([0; 100]);
+        assert_eq!(
+            crate::resolve_chronotype(None, &recent)
+                .0
+                .unwrap()
+                .ideal_midpoint_min,
+            240
+        );
+    }
+
+    #[test]
+    fn a_worked_out_chronotype_is_named_from_one_hour_bands_of_midpoint() {
+        let name =
+            |m: i32| crate::CHRONOTYPE_NAMES[(crate::chronotype_from_midpoint(m) - 1) as usize];
+        assert_eq!(name(-30), "early morning"); // 23:30
+        assert_eq!(name(119), "early morning");
+        assert_eq!(name(120), "morning"); // 02:00
+        assert_eq!(name(222), "late morning"); // 03:42
+        assert_eq!(name(240), "early evening"); // 04:00
+        assert_eq!(name(330), "evening");
+        assert_eq!(name(360), "late evening"); // 06:00
     }
 }
