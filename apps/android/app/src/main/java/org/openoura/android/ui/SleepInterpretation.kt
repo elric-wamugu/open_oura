@@ -111,6 +111,18 @@ object SleepInterpretation {
     }
 
     /**
+     * Said under the headline figures of a night the ring has not declared yet, so its times
+     * are not taken as the ring's: they move, sometimes by most of an hour, when it does.
+     */
+    fun detectedNote(detected: Boolean): String? = if (detected) {
+        "The ring hasn't confirmed this night yet. Its start and end were worked out on this " +
+            "phone from your movement and skin temperature, and the ring's own times replace " +
+            "them after a later sync."
+    } else {
+        null
+    }
+
+    /**
      * The sleep-debt footnote, or null when there is not enough history to mean anything.
      *
      * `valid` is the brain's own judgement on that and is not second-guessed here.

@@ -2,6 +2,7 @@ package org.openoura.android
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.openoura.android.data.NightRow
@@ -142,6 +143,17 @@ class SleepInterpretationTest {
         )
         assertNull(SleepInterpretation.stageSourceNote("none"))
         assertNull(SleepInterpretation.stageSourceNote(null))
+    }
+
+    @Test
+    fun `a night the ring has not declared says so, and a declared one says nothing`() {
+        val note = SleepInterpretation.detectedNote(true)
+        assertTrue(note!!.startsWith("The ring hasn't confirmed this night yet."))
+        assertNull(SleepInterpretation.detectedNote(false))
+        // The flag arrives from the summary as `detected`; a summary without it is a declared night.
+        val json = kotlinx.serialization.json.Json { ignoreUnknownKeys = true }
+        assertTrue(json.decodeFromString<org.openoura.android.data.NightRow>("""{"detected":true}""").detected)
+        assertFalse(json.decodeFromString<org.openoura.android.data.NightRow>("{}").detected)
     }
 
     @Test

@@ -76,6 +76,8 @@ data class NightRow(
      *  tile that wants "the latest night" must skip them too. True when the summary
      *  predates the field. */
     val main: Boolean = true,
+    /** Found on this phone from motion and temperature; the ring has not declared it yet. */
+    val detected: Boolean = false,
     @SerialName("hrv_ms") val hrvMs: Double? = null,
     val rhr: Double? = null,
     @SerialName("skin_temp") val skinTemp: Double? = null,
