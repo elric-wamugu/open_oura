@@ -847,6 +847,18 @@ Chosen from three Material 3 Expressive mockups (hero score, bento, day story).
   score, Activity score, new to Trends), **Sleep and activity** (time asleep, steps, sleep
   efficiency) and **Body signals** (resting heart rate, HRV, breathing rate, skin
   temperature, blood oxygen). Score changes read in points, step changes in steps.
+- **Ring** (`ui/RingBento.kt`, `RingScreen.kt`): the title is "Ring" over the firmware, with a
+  "Synced 23:44" chip that opens the sync log. A tall Battery tile (level, time left from the
+  newest discharge runs, volts; toned on the battery band), History and "On this phone"
+  beside it, then the last week's charge chart, which opens the discharge runs. Then the
+  ring's features as switch rows ("Recording on the ring"), the three biggest data streams
+  with the rest behind a tap, and Insights and Device details (ID, MAC, hardware, sync
+  cursor) as folded rows. The single "Device & data" and "Battery" panels are gone.
+- **You** (`YouScreen.kt`): the profile as an indigo card whose Edit opens the form in a
+  bottom sheet; the daily step target (amber) and the chronotype as two tiles opening their
+  dialogs; "Ring and data" as one list (Syncing, Backup with its automatic state, Health
+  Connect, Ring key) with Import database and Compact as chips; then notifications and
+  wallpaper colours, and a one-line footer.
 - Topic colours (`Topics`): Readiness the brand's primary container, Sleep indigo and
   Activity amber, with light-theme counterparts.
 

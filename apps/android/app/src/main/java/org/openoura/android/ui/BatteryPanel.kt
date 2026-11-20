@@ -80,71 +80,7 @@ fun DrawScope.drawBatteryChart(series: List<BatteryPoint>, percent: Color, volts
 }
 
 @Composable
-fun BatteryPanel(
-    battery: Battery,
-    device: Device?,
-    expanded: Boolean,
-    onToggle: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    val cs = MaterialTheme.colorScheme
-    val series = battery.series
-    // The reconciled figure from the brain, not the tail of the series — the brain already
-    // picked whichever source is freshest, and reading the tail here is exactly what made
-    // this header disagree with the top bar.
-    val last = series.lastOrNull()
-    val pct = device?.batteryPct ?: last?.pct
-    val volts = device?.batteryV ?: last?.let { it.mv / 1000.0 }
-    val charging = device?.batteryCharging == true
-    val tone = batteryTone(device?.batteryStatus)
-    val toned = tone.colors()
-
-    ExpandablePanel(
-        icon = batteryIcon(tone, charging),
-        title = "Battery",
-        // The header says something useful while collapsed.
-        summary = pct?.let { p ->
-            "$p%" + (volts?.let { " · ${"%.2f".format(it)} V" } ?: "") + (if (charging) " · charging" else "")
-        } ?: "No reading yet",
-        expanded = expanded,
-        onToggle = onToggle,
-        iconContainer = toned?.container ?: cs.secondaryContainer,
-        iconContent = toned?.onContainer ?: cs.onSecondaryContainer,
-        modifier = modifier,
-    ) {
-        if (series.size < 2) {
-            Text(
-                "No battery log yet — the ring emits these as it discharges.",
-                style = MaterialTheme.typography.bodyMedium,
-                color = cs.onSurfaceVariant,
-            )
-        } else {
-            val voltsColor = cs.tertiary
-            Surface(shape = MaterialTheme.shapes.large, color = cs.surfaceContainerHigh) {
-                Canvas(
-                    Modifier
-                        .fillMaxWidth()
-                        .height(140.dp)
-                        .padding(12.dp),
-                ) { drawBatteryChart(series, cs.primary, voltsColor, cs.outlineVariant) }
-            }
-            Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                Legend("Charge %", cs.primary)
-                Legend("Volts, 3.3–4.25 V", voltsColor)
-            }
-            if (battery.cycles.isNotEmpty()) CycleList(battery)
-        }
-        Text(
-            "Percent comes from voltage, so the last quarter falls away quickly and a reading " +
-                "taken mid-sync can dip well below the resting level — watch the volts line for that.",
-            style = MaterialTheme.typography.bodySmall,
-            color = cs.onSurfaceVariant,
-        )
-    }
-}
-
-@Composable
-private fun CycleList(battery: Battery) {
+internal fun CycleList(battery: Battery) {
     val cs = MaterialTheme.colorScheme
     val fmt = remember { DateTimeFormatter.ofPattern("MMM d") }
     val recent = battery.cycles.takeLast(6).reversed()

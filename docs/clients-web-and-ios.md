@@ -462,7 +462,8 @@ nightly need" but "a 7.5 h need". `app.js` hardcodes "an".
   `SummaryOptions::stage_sleep`; see `docs/android-client-plan.md`.
 
 - **Today and History layouts** (2026-11-20): Android's Today is a bento of the three
-  scores and History a Day/Week/Month timeline; the web and iOS keep their own layouts.
+  scores, History a Day/Week/Month timeline, and Ring and You bentos too; the web and iOS keep
+  their own layouts.
 - **Detected nights** (`nights[].detected`, from `oura-summary`'s `bedtime.rs`): every
   client gets the night itself; only Android says it is not yet confirmed by the ring.
 - **Breathing rate** (`nights[].breathing_rate`, from `oura-summary`'s `staging.rs`):

@@ -23,6 +23,20 @@ object Chronotypes {
      * its type boundaries, so the name comes from one-hour bands of sleep midpoint
      * (`chronotype_from_midpoint` in `oura-summary`).
      */
+    /** The tile's name for it: "Evening", or "Not yet". */
+    fun shortName(info: ChronotypeInfo?): String = when (info?.source) {
+        "profile", "history" -> info.type?.let(::title) ?: "Worked out"
+        else -> "Not yet"
+    }
+
+    /** Under the name: "estimated · 05:08", "entered · 03:30", or how many nights it needs. */
+    fun shortDetail(info: ChronotypeInfo?): String = when (info?.source) {
+        "profile" -> "entered · ${info.idealMidpoint}"
+        "history" -> "estimated · ${info.idealMidpoint}"
+        "none" -> "needs ${info.needs} nights"
+        else -> "tap to set"
+    }
+
     fun describe(info: ChronotypeInfo?): String = when (info?.source) {
         "profile" -> "${info.type?.let(::title) ?: "Entered"}, midpoint ${info.idealMidpoint}. Entered by you"
         "history" -> "${info.type?.let(::title)?.plus(" (estimated)") ?: "Worked out"}, midpoint " +

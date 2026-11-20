@@ -1,6 +1,18 @@
 package org.openoura.android.ui
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material3.AssistChip
+import androidx.compose.material3.AssistChipDefaults
+import androidx.compose.material3.Icon
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.res.painterResource
+import org.openoura.android.ui.components.ExpandablePanel
+import org.openoura.android.ui.components.SectionHeader
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -32,8 +44,9 @@ import org.openoura.android.ui.components.SyncStatusCard
 import org.openoura.android.ui.theme.dataColors
 
 /**
- * The Ring tab: everything about the device rather than about you — syncing it, its
- * battery history, and what it is recording.
+ * The Ring tab: everything about the device rather than about you — its battery, what it is
+ * recording, what has come in, and its identity. Laid out as a bento since 2026-11-20: the
+ * battery as the tall tile, the ring's features as switch rows, and the detail behind rows.
  */
 @Composable
 fun RingScreen(
@@ -52,17 +65,37 @@ fun RingScreen(
     /** Battery alerts can't reach the user: notifications or a battery channel are off. */
     alertsOff: Boolean,
     onEnableAlerts: () -> Unit,
+    /** The "Synced 23:44" chip opens the sync log. */
+    onOpenSyncLog: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val summary = (state as? SummaryState.Ready)?.summary
     val device = summary?.device
-    val subtitle = listOfNotNull(
-        device?.batteryPct?.let { "$it% battery" },
-        device?.syncedHm?.let { "synced $it" },
-    ).joinToString(" · ").ifEmpty { null }
+    val subtitle = device?.firmware?.let { "Firmware $it" }
     val syncing = syncPhase is SyncPhase.Running
+    var insightsOpen by rememberSaveable { mutableStateOf(false) }
+    var streamsOpen by rememberSaveable { mutableStateOf(false) }
 
-    ScreenScaffold(title = "Ring", subtitle = subtitle, large = true, modifier = modifier) { padding ->
+    ScreenScaffold(
+        title = "Ring",
+        subtitle = subtitle,
+        large = true,
+        // When it last synced lives here now that Today no longer says; the chip opens the log.
+        actions = {
+            device?.syncedHm?.let { hm ->
+                AssistChip(
+                    onClick = onOpenSyncLog,
+                    label = { Text("Synced $hm") },
+                    leadingIcon = {
+                        Icon(painterResource(R.drawable.ic_sym_sync), contentDescription = null, modifier = Modifier.size(AssistChipDefaults.IconSize))
+                    },
+                    shape = CircleShape,
+                    modifier = Modifier.padding(end = 8.dp),
+                )
+            }
+        },
+        modifier = modifier,
+    ) { padding ->
         val pull = rememberPullToRefreshState()
         PullToRefreshBox(
             isRefreshing = syncing,
@@ -95,23 +128,56 @@ fun RingScreen(
                         Notice("Nothing synced yet. Sync with the ring, or import a database from the You tab.")
                     }
                 } else {
-                    item(key = "battery") {
-                        BatteryPanel(
-                            battery = summary.battery,
-                            device = device,
-                            expanded = batteryExpanded,
-                            onToggle = onToggleBattery,
-                        )
-                    }
-                    item(key = "device") {
-                        DeviceHealthPanel(
-                            device = device,
-                            expanded = deviceExpanded,
-                            onToggle = onToggleDevice,
-                            onToggleCapability = onToggleCapability,
-                            busyCapability = busyCapability,
-                            databaseBytes = databaseBytes,
-                        )
+                    item(key = "bento") { RingBento(device, summary.battery, databaseBytes) }
+                    item(key = "charge") { ChargeTile(summary.battery, batteryExpanded, onToggleBattery) }
+                    if (device != null) {
+                        if (device.measuring.isNotEmpty()) {
+                            item(key = "recording") {
+                                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    SectionHeader("Recording on the ring")
+                                    Capabilities(device, onToggleCapability, busyCapability)
+                                    Text(
+                                        "Each switch writes to the ring, which takes about fifteen seconds.",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.padding(horizontal = 4.dp),
+                                    )
+                                }
+                            }
+                        }
+                        if (device.streams.isNotEmpty()) {
+                            item(key = "data") {
+                                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    SectionHeader("Data captured")
+                                    DataTile(device, streamsOpen) { streamsOpen = !streamsOpen }
+                                }
+                            }
+                        }
+                        if (device.insights.isNotEmpty()) {
+                            item(key = "insights") {
+                                val live = device.insights.count { !it.gated }
+                                val gated = device.insights.size - live
+                                ExpandablePanel(
+                                    icon = R.drawable.ic_sym_info,
+                                    title = "Insights",
+                                    summary = listOfNotNull("$live live", if (gated > 0) "$gated need more" else null).joinToString(" · "),
+                                    expanded = insightsOpen,
+                                    onToggle = { insightsOpen = !insightsOpen },
+                                ) { Insights(device) }
+                            }
+                        }
+                        item(key = "device") {
+                            ExpandablePanel(
+                                icon = R.drawable.ic_sym_database,
+                                title = "Device details",
+                                summary = "ID, firmware, hardware, sync cursor",
+                                expanded = deviceExpanded,
+                                onToggle = onToggleDevice,
+                            ) {
+                                ShortPeriodsNote(device)
+                                Identity(device)
+                            }
+                        }
                     }
                 }
             }

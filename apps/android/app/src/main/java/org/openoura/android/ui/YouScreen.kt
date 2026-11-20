@@ -4,6 +4,17 @@ import org.openoura.android.data.ChronotypeSetting
 import org.openoura.android.data.ChronotypeInfo
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.Alignment
+import androidx.compose.foundation.layout.IntrinsicSize
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.AssistChip
+import androidx.compose.material3.AssistChipDefaults
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.Surface
+import androidx.compose.ui.text.style.TextAlign
+import kotlin.math.roundToInt
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.material3.RadioButton
 import androidx.compose.foundation.selection.selectable
@@ -53,6 +64,7 @@ import org.openoura.android.ui.theme.CodeType
 import org.openoura.android.ui.theme.ThemePrefs
 
 /** The You tab: your profile, the ring's key and your data, and how the app looks. */
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
 fun YouScreen(
     profile: RingProfile,
@@ -64,6 +76,8 @@ fun YouScreen(
     onSyncLog: () -> Unit,
     onHealthConnect: () -> Unit,
     onBackup: () -> Unit,
+    /** "Automatic · daily", or what the Backup screen offers. */
+    backupDetail: String,
     onImportDatabase: () -> Unit,
     onCompactDatabase: () -> Unit,
     /** The daily step target the steps widget's ring fills towards. */
@@ -91,67 +105,70 @@ fun YouScreen(
                 .padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 24.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            SectionHeader("Profile")
-            ProfileCard(initial = profile, onSave = onSaveProfile)
+            // Profile as a card, the form in a sheet (2026-11-20): the four figures are set
+            // once and read often, so the page shows them rather than four text fields.
+            var editingProfile by rememberSaveable { mutableStateOf(false) }
+            ProfileSummary(profile, onEdit = { editingProfile = true })
+            if (editingProfile) {
+                ModalBottomSheet(onDismissRequest = { editingProfile = false }) {
+                    ProfileCard(
+                        initial = profile,
+                        onSave = {
+                            onSaveProfile(it)
+                            editingProfile = false
+                        },
+                        modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 24.dp),
+                    )
+                }
+            }
 
-            SectionHeader("Ring & data", Modifier.padding(top = 8.dp))
-            Group(
-                listOf(
-                    LinkRow(
-                        icon = R.drawable.ic_sym_key,
-                        title = "Ring key",
-                        detail = ringKeyFingerprint?.let { "#$it" } ?: "Not set — the ring won't sync without it",
-                        code = ringKeyFingerprint != null,
-                        onClick = onRingKey,
-                    ),
-                    LinkRow(
-                        icon = R.drawable.ic_sym_sync,
-                        title = "Syncing",
-                        detail = syncDetail,
-                        onClick = onSyncLog,
-                    ),
-                    LinkRow(
-                        icon = R.drawable.ic_sym_health_and_safety,
-                        title = "Health Connect",
-                        detail = "Share nights, vitals and activity with other apps",
-                        onClick = onHealthConnect,
-                    ),
-                    LinkRow(
-                        icon = R.drawable.ic_sym_database,
-                        title = "Backup",
-                        detail = "Save an encrypted copy, or restore one",
-                        onClick = onBackup,
-                    ),
-                    LinkRow(
-                        icon = R.drawable.ic_sym_file_open,
-                        title = "Import database",
-                        detail = "Load history from an oura.db file",
-                        onClick = onImportDatabase,
-                        chevron = false,
-                    ),
-                    LinkRow(
-                        icon = R.drawable.ic_sym_database,
-                        title = "Compact database",
-                        detail = "Give unused space back to the phone. Your history is not changed",
-                        onClick = onCompactDatabase,
-                        chevron = false,
-                    ),
-                ),
-            )
-
-            SectionHeader("Sleep score", Modifier.padding(top = 8.dp))
+            // The two things that tune the scores: the step target and the chronotype.
+            var editingSteps by rememberSaveable { mutableStateOf(false) }
             var editingChronotype by rememberSaveable { mutableStateOf(false) }
-            Group(
-                listOf(
-                    LinkRow(
-                        icon = R.drawable.ic_sym_bedtime,
-                        title = "Chronotype",
-                        detail = Chronotypes.describe(chronotype),
-                        onClick = { editingChronotype = true },
-                        chevron = false,
-                    ),
-                ),
-            )
+            Row(Modifier.fillMaxWidth().height(IntrinsicSize.Min), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Surface(
+                    onClick = { editingSteps = true },
+                    shape = RoundedCornerShape(24.dp),
+                    color = Topics.activity.container,
+                    contentColor = Topics.activity.onContainer,
+                    modifier = Modifier.weight(1f).fillMaxHeight(),
+                ) {
+                    Column(Modifier.padding(16.dp)) {
+                        Text("Daily steps", style = MaterialTheme.typography.labelMedium)
+                        Text("%,d".format(stepTarget), style = MaterialTheme.typography.headlineSmallEmphasized)
+                        Text("target", style = MaterialTheme.typography.labelSmall)
+                    }
+                }
+                Surface(
+                    onClick = { editingChronotype = true },
+                    shape = RoundedCornerShape(24.dp),
+                    color = MaterialTheme.colorScheme.surfaceContainer,
+                    modifier = Modifier.weight(1f).fillMaxHeight(),
+                ) {
+                    Column(Modifier.padding(16.dp)) {
+                        Text("Chronotype", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text(
+                            Chronotypes.shortName(chronotype),
+                            style = MaterialTheme.typography.titleLargeEmphasized,
+                        )
+                        Text(
+                            Chronotypes.shortDetail(chronotype),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            }
+            if (editingSteps) {
+                StepTargetDialog(
+                    current = stepTarget,
+                    onSave = {
+                        onStepTarget(it)
+                        editingSteps = false
+                    },
+                    onDismiss = { editingSteps = false },
+                )
+            }
             if (editingChronotype) {
                 ChronotypeDialog(
                     current = profile.chronotype,
@@ -163,48 +180,64 @@ fun YouScreen(
                 )
             }
 
-            SectionHeader("Goals", Modifier.padding(top = 8.dp))
-            var editingSteps by rememberSaveable { mutableStateOf(false) }
+            SectionHeader("Ring and data", Modifier.padding(top = 8.dp))
             Group(
                 listOf(
                     LinkRow(
-                        icon = R.drawable.ic_sym_directions_walk,
-                        title = "Daily step target",
-                        detail = "%,d steps. The steps widget's ring fills towards it".format(stepTarget),
-                        onClick = { editingSteps = true },
-                        chevron = false,
+                        icon = R.drawable.ic_sym_sync,
+                        title = "Syncing",
+                        detail = syncDetail,
+                        onClick = onSyncLog,
+                    ),
+                    LinkRow(
+                        icon = R.drawable.ic_sym_database,
+                        title = "Backup",
+                        detail = backupDetail,
+                        onClick = onBackup,
+                    ),
+                    LinkRow(
+                        icon = R.drawable.ic_sym_health_and_safety,
+                        title = "Health Connect",
+                        detail = "Share nights, vitals and activity with other apps",
+                        onClick = onHealthConnect,
+                    ),
+                    LinkRow(
+                        icon = R.drawable.ic_sym_key,
+                        title = "Ring key",
+                        detail = ringKeyFingerprint?.let { "#$it" } ?: "Not set — the ring won't sync without it",
+                        code = ringKeyFingerprint != null,
+                        onClick = onRingKey,
                     ),
                 ),
             )
-            if (editingSteps) {
-                StepTargetDialog(
-                    current = stepTarget,
-                    onSave = {
-                        onStepTarget(it)
-                        editingSteps = false
-                    },
-                    onDismiss = { editingSteps = false },
+            // One-off jobs on the database, smaller than the rows above.
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                AssistChip(
+                    onClick = onImportDatabase,
+                    label = { Text("Import database") },
+                    leadingIcon = { Icon(painterResource(R.drawable.ic_sym_file_open), contentDescription = null, Modifier.size(AssistChipDefaults.IconSize)) },
+                    shape = CircleShape,
+                )
+                AssistChip(
+                    onClick = onCompactDatabase,
+                    label = { Text("Compact") },
+                    leadingIcon = { Icon(painterResource(R.drawable.ic_sym_database), contentDescription = null, Modifier.size(AssistChipDefaults.IconSize)) },
+                    shape = CircleShape,
                 )
             }
 
-            SectionHeader("Notifications", Modifier.padding(top = 8.dp))
+            SectionHeader("Notifications and appearance", Modifier.padding(top = 8.dp))
             AlertRows(alerts, notificationsAllowed, onAlert, onNotificationSettings)
 
-            SectionHeader("Appearance", Modifier.padding(top = 8.dp))
             AppearanceRow(dynamicColor, onDynamicColor)
 
-            SectionHeader("About", Modifier.padding(top = 8.dp))
             val version = rememberVersion()
-            Group(
-                listOf(
-                    LinkRow(
-                        icon = R.drawable.ic_sym_info,
-                        title = "open_oura${version?.let { " $it" } ?: ""}",
-                        detail = "Everything here is computed on this device. Nothing left it.",
-                        onClick = null,
-                        chevron = false,
-                    ),
-                ),
+            Text(
+                "open_oura${version?.let { " $it" } ?: ""} · Everything here is computed on this device. Nothing left it.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
             )
         }
     }
@@ -464,5 +497,35 @@ private fun rememberVersion(): String? {
         val debug = context.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0
         runCatching { context.packageManager.getPackageInfo(context.packageName, 0).versionName }.getOrNull()
             ?.let { if (debug) "$it (debug)" else it }
+    }
+}
+
+/** "34 · male · 72 kg · 1.76 m" — the profile as one line. Pure, so tested. */
+internal fun profileLine(p: RingProfile): String = listOf(
+    "${p.age.roundToInt()}",
+    if (p.sex.uppercase().startsWith("F")) "female" else "male",
+    "${p.weight_kg.roundToInt()} kg",
+    "%.2f m".format(p.height_m),
+).joinToString(" · ")
+
+/** The profile as an indigo card with an Edit button; the form opens in a sheet. */
+@Composable
+private fun ProfileSummary(profile: RingProfile, onEdit: () -> Unit) {
+    val t = Topics.sleep
+    Surface(
+        onClick = onEdit,
+        shape = RoundedCornerShape(topStart = 32.dp, topEnd = 32.dp, bottomEnd = 12.dp, bottomStart = 32.dp),
+        color = t.container,
+        contentColor = t.onContainer,
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
+            ShapedIcon(R.drawable.ic_sym_person, container = t.onContainer.copy(alpha = 0.16f), content = t.onContainer)
+            Column(Modifier.weight(1f)) {
+                Text("Your profile", style = MaterialTheme.typography.titleMediumEmphasized)
+                Text(profileLine(profile), style = MaterialTheme.typography.bodyMedium)
+            }
+            Text("Edit", style = MaterialTheme.typography.labelLarge)
+        }
     }
 }

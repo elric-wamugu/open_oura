@@ -37,57 +37,9 @@ import org.openoura.android.ui.components.ShapedIcon
 import org.openoura.android.ui.theme.CodeType
 import kotlin.math.roundToInt
 
-/**
- * Device & data health, mirroring the web dashboard's panel of the same name.
- *
- * This is the screen that answers "is the ring actually recording what I think it is". Not
- * a vital in sight: how much history exists, which event families are arriving and in what
- * volume, which derived metrics that does and does not unlock, and the ring's own identity.
- *
- * Mostly a read of the summary, with one exception: the capability rows write. Tapping one
- * connects to the ring and sets a feature mode, the same operation the web dashboard
- * offers. Still web-only are the key export/QR tools — the key has its own screen here —
- * and the per-event-type table.
- */
-@Composable
-fun DeviceHealthPanel(
-    device: Device?,
-    expanded: Boolean,
-    onToggle: () -> Unit,
-    /** Flip one on-ring capability. Null leaves the rows read-only. */
-    onToggleCapability: ((Capability) -> Unit)? = null,
-    /** The capability currently being written to the ring, if any. */
-    busyCapability: String? = null,
-    /** Size of the local oura.db on disk, if known. */
-    databaseBytes: Long? = null,
-    modifier: Modifier = Modifier,
-) {
-    val d = device ?: return
-    val context = LocalContext.current
-    // Android's own short form ("729 MB"), so it reads the same as the Storage settings.
-    val dbSize = databaseBytes?.let { android.text.format.Formatter.formatShortFileSize(context, it) }
-    ExpandablePanel(
-        icon = R.drawable.ic_sym_database,
-        title = "Device & data",
-        // Worth reading while collapsed: the two numbers that say whether there is
-        // anything to look at inside.
-        summary = listOfNotNull(
-            d.nights?.let { "$it nights" },
-            d.totalEvents?.let { "${compact(it)} events" },
-            dbSize,
-        ).joinToString(" · ").ifEmpty { null },
-        expanded = expanded,
-        onToggle = onToggle,
-        modifier = modifier,
-    ) {
-        StatGrid(d, dbSize)
-        ShortPeriodsNote(d)
-        Streams(d)
-        Insights(d)
-        Capabilities(d, onToggleCapability, busyCapability)
-        Identity(d)
-    }
-}
+// The Ring tab's parts about the device and its data (2026-11-20: laid out by RingScreen
+// as a bento rather than one "Device & data" panel). Mostly a read of the summary, with one
+// exception: the capability rows write to the ring.
 
 /**
  * The same glyph the web panel shows beside each capability, keyed the same way.
@@ -106,7 +58,7 @@ private fun capabilityIcon(name: String): Int = when (name) {
 }
 
 /** 2,900,505 → "2.9M". The header has room for a shape, not a figure. */
-private fun compact(n: Long): String = when {
+internal fun compact(n: Long): String = when {
     n >= 1_000_000 -> "%.1fM".format(n / 1_000_000.0)
     n >= 1_000 -> "%.0fk".format(n / 1_000.0)
     else -> "$n"
@@ -114,63 +66,12 @@ private fun compact(n: Long): String = when {
 
 private fun grouped(n: Long): String = "%,d".format(n)
 
-@Composable
-private fun Subhead(text: String) {
-    Text(
-        text,
-        style = MaterialTheme.typography.titleSmallEmphasized,
-        color = MaterialTheme.colorScheme.primary,
-        modifier = Modifier.padding(start = 4.dp, bottom = 4.dp),
-    )
-}
-
-private data class Stat(val label: String, val value: String, val tint: Color? = null, val caption: String? = null)
-
-@Composable
-private fun StatGrid(d: Device, dbSize: String?) {
-    val cs = MaterialTheme.colorScheme
-    val fresh = d.freshHours?.let { if (it < 1) "<1" else it.roundToInt().toString() } ?: "—"
-    // The brain's band, as everywhere else: amber at 20%, red at 10% and 5%.
-    val batteryTint = batteryTone(d.batteryStatus).colors()?.color
-    val items = listOf(
-        Stat("Battery", (d.batteryPct?.let { "$it" } ?: "—") + "%", tint = batteryTint),
-        Stat("Last sync", "$fresh h ago"),
-        Stat("History", "%.1f days".format(d.daysOfData ?: 0.0)),
-        Stat("Events", grouped(d.totalEvents ?: 0), caption = dbSize?.let { "$it on this phone" }),
-    )
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        items.chunked(2).forEach { pair ->
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                pair.forEach { (label, value, tint, caption) ->
-                    Surface(
-                        shape = MaterialTheme.shapes.large,
-                        color = cs.surfaceContainerHigh,
-                        modifier = Modifier.weight(1f),
-                    ) {
-                        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                            Text(label, style = MaterialTheme.typography.labelMedium, color = cs.onSurfaceVariant)
-                            Text(
-                                value,
-                                style = MaterialTheme.typography.titleLargeEmphasized,
-                                color = tint ?: cs.onSurface,
-                            )
-                            caption?.let {
-                                Text(it, style = MaterialTheme.typography.labelSmall, color = cs.onSurfaceVariant)
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-}
-
 /**
  * The ring logs bedtime periods this app refuses to call sleep. Saying so keeps the night
  * count from quietly disagreeing with the ring's own tally.
  */
 @Composable
-private fun ShortPeriodsNote(d: Device) {
+internal fun ShortPeriodsNote(d: Device) {
     val dropped = d.shortPeriodsExcluded?.takeIf { it > 0 } ?: return
     val nights = d.nights ?: 0
     Text(
@@ -182,15 +83,17 @@ private fun ShortPeriodsNote(d: Device) {
     )
 }
 
-/** Event families by volume. The bar is relative to the largest, as on the web. */
+/**
+ * Event families by volume, the first [limit] of them. The bar is relative to the largest,
+ * as on the web.
+ */
 @Composable
-private fun Streams(d: Device) {
+internal fun Streams(d: Device, limit: Int = Int.MAX_VALUE) {
     val cs = MaterialTheme.colorScheme
     val streams = d.streams.takeIf { it.isNotEmpty() } ?: return
     val max = streams.maxOf { it.count }.coerceAtLeast(1)
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Subhead("Data captured")
-        streams.forEach { s ->
+        streams.take(limit).forEach { s ->
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text(s.name, style = MaterialTheme.typography.bodySmall, modifier = Modifier.weight(0.4f))
                 Box(
@@ -222,11 +125,10 @@ private fun Streams(d: Device) {
 
 /** What can be computed from what is arriving — and, when it cannot, why not. */
 @Composable
-private fun Insights(d: Device) {
+internal fun Insights(d: Device) {
     val cs = MaterialTheme.colorScheme
     val insights = d.insights.takeIf { it.isNotEmpty() } ?: return
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Subhead("Insights available")
         insights.forEach { i ->
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
@@ -267,19 +169,18 @@ private fun Insights(d: Device) {
  * would fail in a way neither row could explain.
  */
 @Composable
-private fun Capabilities(d: Device, onToggle: ((Capability) -> Unit)?, busy: String?) {
+internal fun Capabilities(d: Device, onToggle: ((Capability) -> Unit)?, busy: String?) {
     val cs = MaterialTheme.colorScheme
     val caps = d.measuring.takeIf { it.isNotEmpty() } ?: return
+    // The section heading ("Recording on the ring") is the caller's: it is what tells you
+    // the ring is about to be written to rather than the app's own settings.
     Column(verticalArrangement = Arrangement.spacedBy(ListItemDefaults.SegmentedGap)) {
-        // The heading is what tells you the ring is about to be written to rather than the
-        // app's own settings — the part worth knowing before you touch one.
-        Subhead(if (onToggle != null) "On the ring · tap to change" else "On the ring")
         caps.forEachIndexed { index, m ->
             val working = busy == m.feature
             val changeable = onToggle != null && m.feature.isNotBlank() && busy == null
             SegmentedListItem(
                 shapes = ListItemDefaults.segmentedShapes(index, caps.size),
-                colors = ListItemDefaults.segmentedColors(containerColor = cs.surfaceContainerHigh),
+                colors = ListItemDefaults.segmentedColors(containerColor = cs.surfaceContainer),
                 leadingContent = {
                     // Lit when the ring is recording it, quiet when it is not, so the column
                     // reads at a glance without following each row to its switch.
@@ -322,7 +223,7 @@ private fun Capabilities(d: Device, onToggle: ((Capability) -> Unit)?, busy: Str
 
 /** The ring's identity and sync internals — the numbers worth quoting in a bug report. */
 @Composable
-private fun Identity(d: Device) {
+internal fun Identity(d: Device) {
     val cs = MaterialTheme.colorScheme
     val rows = listOfNotNull(
         d.serial?.let { "Ring ID" to it },
@@ -336,7 +237,6 @@ private fun Identity(d: Device) {
     ).takeIf { it.isNotEmpty() } ?: return
 
     Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        Subhead("Device")
         Surface(shape = MaterialTheme.shapes.large, color = cs.surfaceContainerHigh) {
             Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 rows.forEach { (k, v) ->

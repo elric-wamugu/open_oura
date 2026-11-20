@@ -543,6 +543,7 @@ fun OpenOuraApp(
                 alertsOff = !alertsOn && ringKeyFp != null &&
                     (alertSwitches[AlertKind.BATTERY_LOW] != false || alertSwitches[AlertKind.BATTERY_FULL] != false),
                 onEnableAlerts = ::enableAlerts,
+                onOpenSyncLog = { navigator.push(SyncLogRoute) },
                 onToggleCapability = { cap ->
                     // The ring holds one connection; a drain already has it.
                     if (RingSyncService.isRunning) {
@@ -598,6 +599,7 @@ fun OpenOuraApp(
                 onSyncLog = { navigator.push(SyncLogRoute) },
                 onHealthConnect = { navigator.push(HealthConnectRoute) },
                 onBackup = { navigator.push(BackupRoute) },
+                backupDetail = if (autoBackup.enabled) "Automatic · daily" else "Save an encrypted copy, or restore one",
                 onImportDatabase = { pickDatabase.launch(arrayOf("*/*")) },
                 chronotype = (state as? SummaryState.Ready)?.summary?.chronotype,
                 onChronotype = { c ->
