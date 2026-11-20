@@ -1730,6 +1730,8 @@ pub fn build_summary_with(
     };
     let mut device_stages: Vec<Option<Vec<i64>>> = vec![None; nights.len()];
     let mut stager_stats: Option<staging::Stats> = None;
+    // Breathing rate per night, worked out beside the stager from the same beats.
+    let mut breathing: Vec<Option<staging::Breathing>> = vec![None; nights.len()];
     if let (Some(budget), Some(serial)) = (opts.stage_sleep, dev.as_ref().map(|d| d.0.clone())) {
         let todo: Vec<usize> = (0..nights.len())
             .rev()
@@ -1764,10 +1766,11 @@ pub fn build_summary_with(
             newest_capture,
             budget,
         );
-        for (k, r) in results.into_iter().enumerate() {
+        for (k, (r, b)) in results.into_iter().enumerate() {
             if let staging::Staged::Stages(codes) = r {
                 device_stages[todo[k]] = Some(codes);
             }
+            breathing[todo[k]] = b;
         }
         stager_stats = Some(st);
     }
@@ -1876,6 +1879,13 @@ pub fn build_summary_with(
             "rhr": nt.hr.iter().cloned().fold(f64::INFINITY, f64::min).is_finite().then(|| nt.hr.iter().cloned().fold(f64::INFINITY, f64::min).round()),
             "skin_temp": nightly_skin_temp(&nt.temp).map(|x| (x * 10.0).round() / 10.0),
             "spo2_mean": mean(&nt.spo2).map(|x| x.round()),
+            // Breaths per minute and their variability over the night, from the beats
+            // (`staging::breathing_of`); only where the night went through the stager,
+            // and null for a night under three hours.
+            "breathing_rate": breathing[night_idx].map(|b| json!({
+                "rate": b.rate,
+                "variability": b.variability,
+            })),
             "deep_pct": deep_pct,
             "light_pct": light_pct,
             "rem_pct": rem_pct,

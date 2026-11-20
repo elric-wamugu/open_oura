@@ -461,6 +461,9 @@ nightly need" but "a 7.5 h need". `app.js` hardcodes "an".
   when no model ran. The stager is in the shared Rust, so either can turn it on with
   `SummaryOptions::stage_sleep`; see `docs/android-client-plan.md`.
 
+- **Breathing rate** (`nights[].breathing_rate`, from `oura-summary`'s `staging.rs`):
+  Android only — a Breathing section in the sleep report and a Trends chart. Computed only
+  where the on-device stager runs, so the web (with SleepNet models) has none.
 - **Readiness and Activity Score** (`readiness` and `activity_scores`, by date, from
   `oura-summary`'s `daily_scores.rs`): Android only — the scores row on Today, a Readiness
   page and an Activity score section. The web and iOS receive both and show neither.

@@ -80,6 +80,8 @@ data class NightRow(
     val rhr: Double? = null,
     @SerialName("skin_temp") val skinTemp: Double? = null,
     @SerialName("spo2_mean") val spo2Mean: Double? = null,
+    /** Breaths per minute over the night; null where the night was not staged on this phone. */
+    @SerialName("breathing_rate") val breathingRate: BreathingRate? = null,
     @SerialName("deep_pct") val deepPct: Double? = null,
     @SerialName("light_pct") val lightPct: Double? = null,
     @SerialName("rem_pct") val remPct: Double? = null,
@@ -399,4 +401,11 @@ data class ReadinessContributors(
     @SerialName("sleep_regularity") val sleepRegularity: Int? = null,
     @SerialName("previous_day_activity") val previousDayActivity: Int? = null,
     @SerialName("activity_balance") val activityBalance: Int? = null,
+)
+
+/** A night's average breathing rate and how much it varied, both in breaths per minute. */
+@Serializable
+data class BreathingRate(
+    val rate: Double? = null,
+    val variability: Double? = null,
 )

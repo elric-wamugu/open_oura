@@ -3,6 +3,7 @@ package org.openoura.android
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
+import org.openoura.android.data.BreathingRate
 import org.openoura.android.data.DailyStat
 import org.openoura.android.data.NightRow
 import org.openoura.android.data.SleepMetrics
@@ -113,6 +114,18 @@ class TrendsTest {
         )
         assertEquals(listOf(8.0, 7.5, 7.0), trendPoints(s, TrendMetric.ASLEEP).map { it.value })
         assertEquals(emptyList<TrendPoint>(), trendPoints(s, TrendMetric.HRV))
+    }
+
+    @Test
+    fun `breathing rate charts each night that has one, read from the summary's JSON`() {
+        val json = kotlinx.serialization.json.Json { ignoreUnknownKeys = true }
+        val row = json.decodeFromString<NightRow>(
+            """{"ymd":"2026-11-14","breathing_rate":{"rate":13.625,"variability":3.875}}""",
+        )
+        assertEquals(BreathingRate(rate = 13.625, variability = 3.875), row.breathingRate)
+        val s = Summary(nights = listOf(row.copy(start = "23:30", end = "07:30"), night("2026-11-14")))
+        assertEquals(listOf(13.625), trendPoints(s, TrendMetric.BREATHING).map { it.value })
+        assertEquals("13.6", TrendMetric.BREATHING.format(13.625))
     }
 
     @Test
