@@ -13,7 +13,7 @@ import org.openoura.android.R
 import org.openoura.android.ble.SyncPhase
 import org.openoura.android.data.SummaryState
 import org.openoura.android.ui.ScoreBento
-import org.openoura.android.ui.DeviceHealthPanel
+import org.openoura.android.ui.RingBento
 import org.openoura.android.ui.StatusKind
 import org.openoura.android.ui.StatusLevel
 import org.openoura.android.ui.TileStatus
@@ -62,15 +62,8 @@ private fun SyncStatusPreview() = Frame {
 
 @PreviewLightDark
 @Composable
-private fun DeviceHealthPreview() = Frame {
-    DeviceHealthPanel(
-        device = PreviewFixtures.device,
-        expanded = true,
-        onToggle = {},
-        onToggleCapability = {},
-        busyCapability = "spo2",
-        databaseBytes = 729_436_160,
-    )
+private fun RingBentoPreview() = Frame {
+    RingBento(PreviewFixtures.device, org.openoura.android.data.Battery(), databaseBytes = 729_436_160)
 }
 
 @PreviewLightDark
