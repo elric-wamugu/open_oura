@@ -13,7 +13,11 @@
 
 use std::time::{Duration, Instant};
 
-use oura_analysis::ported::sleepstaging::{events::collect, pipeline};
+use oura_analysis::ported::breathing_rate::breathing_rate;
+use oura_analysis::ported::sleepstaging::{
+    events::{collect, StagerInputs},
+    pipeline,
+};
 use oura_store::{StageCacheKey, Store};
 
 /// Names the stager in the cache. Change it when the model or the pipeline changes, so old
@@ -59,8 +63,24 @@ pub struct Stats {
     pub pending: usize,
 }
 
-/// Stage `windows` (newest first is the caller's order), reusing the cache. `to_unix` maps
-/// ring time to Unix seconds for a window's boot. Returns one result per window.
+/// Names the breathing-rate results in the same cache, beside the stages. Change it when
+/// the breathing-rate code changes.
+pub const BREATHING: &str = "breathing-rate-v1";
+
+/// A night's breathing rate and its variability, in breaths per minute.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Breathing {
+    pub rate: f32,
+    pub variability: f32,
+}
+
+/// Stage `windows` (newest first is the caller's order), reusing the cache, and work out
+/// each night's breathing rate from the same beats. `to_unix` maps ring time to Unix
+/// seconds for a window's boot. Returns one result per window.
+///
+/// The two are cached separately, under [`MODEL`] and [`BREATHING`], so a night staged
+/// before breathing rate existed gains one without being staged again: the stager is the
+/// expensive part, and the breathing rate needs only the night's events read back.
 pub fn stage_nights(
     store: &Store,
     serial: &str,
@@ -69,75 +89,132 @@ pub fn stage_nights(
     scalars: [f32; 3],
     newest_capture: i64,
     budget: Duration,
-) -> (Vec<Staged>, Stats) {
+) -> (Vec<(Staged, Option<Breathing>)>, Stats) {
     let began = Instant::now();
     let mut out = Vec::with_capacity(windows.len());
     let mut stats = Stats::default();
     for (i, w) in windows.iter().enumerate() {
-        let key = StageCacheKey {
+        let key = |model: &str| StageCacheKey {
             serial: serial.to_string(),
             start_ds: w.start_ds,
             end_ds: w.end_ds,
             capture_lo: w.capture.0,
-            model: MODEL.to_string(),
+            model: model.to_string(),
         };
+        let (stage_key, breath_key) = (key(MODEL), key(BREATHING));
         let ds = (w.start_ds - MARGIN_DS, w.end_ds + MARGIN_DS);
-        let cached = store.stage_cache_get(&key).ok().flatten();
         let settling = newest_capture - w.end_unix as i64 <= SETTLING_S;
-        let count = || {
-            store
-                .count_events_in_window(serial, &INPUT_TAGS, ds, w.capture)
-                .ok()
+        // The input count, read at most once: only a settling night needs it.
+        let mut counted: Option<Option<i64>> = None;
+        let mut fresh = |inputs: i64| {
+            !settling
+                || *counted.get_or_insert_with(|| {
+                    store
+                        .count_events_in_window(serial, &INPUT_TAGS, ds, w.capture)
+                        .ok()
+                }) == Some(inputs)
         };
-        if let Some((inputs, json)) = &cached {
-            let fresh = !settling || count() == Some(*inputs);
-            if fresh {
-                if let Ok(codes) = serde_json::from_str::<Vec<i64>>(json) {
-                    stats.reused += 1;
-                    out.push(if codes.is_empty() {
-                        Staged::None
-                    } else {
-                        Staged::Stages(codes)
-                    });
-                    continue;
-                }
-            }
+        let stages: Option<Vec<i64>> = store
+            .stage_cache_get(&stage_key)
+            .ok()
+            .flatten()
+            .filter(|(inputs, _)| fresh(*inputs))
+            .and_then(|(_, json)| serde_json::from_str(&json).ok());
+        let breathing: Option<Option<Breathing>> = store
+            .stage_cache_get(&breath_key)
+            .ok()
+            .flatten()
+            .filter(|(inputs, _)| fresh(*inputs))
+            .and_then(|(_, json)| serde_json::from_str::<Vec<f32>>(&json).ok())
+            .map(|v| match v[..] {
+                [rate, variability] => Some(Breathing { rate, variability }),
+                _ => None,
+            });
+        if let (Some(codes), Some(b)) = (&stages, breathing) {
+            stats.reused += 1;
+            out.push((staged(codes.clone()), b));
+            continue;
         }
         if began.elapsed() >= budget {
             stats.pending += 1;
-            out.push(Staged::None);
+            out.push((
+                stages.map(staged).unwrap_or(Staged::None),
+                breathing.flatten(),
+            ));
             continue;
         }
         let Ok(rows) = store.decoded_events_in_window(serial, &INPUT_TAGS, ds, w.capture) else {
-            out.push(Staged::None);
+            out.push((Staged::None, None));
             continue;
         };
         let inputs = rows.len() as i64;
-        let codes = stage_one(&rows, w, &|d| to_unix(i, d), scalars).unwrap_or_default();
-        // Kept even when empty: a night without the data to stage it is not tried again
-        // until it gains some.
-        if let Ok(json) = serde_json::to_string(&codes) {
-            let _ = store.stage_cache_put(&key, inputs, &json);
-        }
-        stats.staged += 1;
-        out.push(if codes.is_empty() {
-            Staged::None
-        } else {
-            Staged::Stages(codes)
+        let collected = collect(
+            &rows,
+            &|d, _| to_unix(i, d),
+            w.start_ds,
+            w.end_ds,
+            0,
+            scalars,
+        )
+        .ok();
+        let codes = match stages {
+            Some(codes) => {
+                stats.reused += 1;
+                codes
+            }
+            None => {
+                let codes = collected
+                    .as_ref()
+                    .and_then(|inp| stage_one(inp, w))
+                    .unwrap_or_default();
+                // Kept even when empty: a night without the data to stage it is not tried
+                // again until it gains some.
+                if let Ok(json) = serde_json::to_string(&codes) {
+                    let _ = store.stage_cache_put(&stage_key, inputs, &json);
+                }
+                stats.staged += 1;
+                codes
+            }
+        };
+        let b = collected.as_ref().and_then(|inp| breathing_of(inp, w));
+        let json = b.map_or("[]".to_string(), |b| {
+            format!("[{},{}]", b.rate, b.variability)
         });
+        let _ = store.stage_cache_put(&breath_key, inputs, &json);
+        out.push((staged(codes), b));
     }
     (out, stats)
 }
 
-/// Stage one night; an empty result when the stager cannot.
-fn stage_one(
-    rows: &[(i64, u8, String, i64)],
-    w: &Window,
-    to_unix: &dyn Fn(i64) -> f64,
-    scalars: [f32; 3],
-) -> Option<Vec<i64>> {
-    // No ring `time_sync` rows are passed, so `collect` dates everything with our own clock.
-    let inp = collect(rows, &|ds, _| to_unix(ds), w.start_ds, w.end_ds, 0, scalars).ok()?;
+fn staged(codes: Vec<i64>) -> Staged {
+    if codes.is_empty() {
+        Staged::None
+    } else {
+        Staged::Stages(codes)
+    }
+}
+
+/// The night's breathing rate from its corrected beats (`breathing_rate`, from upstream
+/// Th0rgal/open_oura#32). Only the beats the corrector marked valid are used.
+///
+/// The port also takes one motion byte per 30 s epoch, but motion only decides each
+/// epoch's usable flag, and the night average counts every epoch with beats whatever its
+/// flag — so zeros are passed rather than inventing a conversion from the accelerometer
+/// features. `None` for a night under three hours or without beats.
+fn breathing_of(inp: &StagerInputs, w: &Window) -> Option<Breathing> {
+    let start_ms = (w.start_unix * 1000.0).round() as i64;
+    let epochs = ((w.end_unix - w.start_unix) / 30.0).ceil().max(0.0) as usize;
+    let (mut ibi, mut ts) = (Vec::new(), Vec::new());
+    for b in inp.beats.iter().filter(|b| b.3 == 1.0) {
+        ibi.push(b.1.round().clamp(0.0, u16::MAX as f32) as u16);
+        ts.push(b.0);
+    }
+    let (rate, variability, _hr) = breathing_rate(start_ms, &ibi, &ts, &vec![0u8; epochs]);
+    (rate > 0.0).then_some(Breathing { rate, variability })
+}
+
+/// Stage one night from its collected inputs; `None` when the stager cannot.
+fn stage_one(inp: &StagerInputs, w: &Window) -> Option<Vec<i64>> {
     let ibi_ts: Vec<i64> = inp.beats.iter().map(|b| b.0).collect();
     let ibi: Vec<[f32; 3]> = inp.beats.iter().map(|b| [b.1, b.2, b.3]).collect();
     let acm_ts: Vec<i64> = inp.acm.iter().map(|a| a.0).collect();

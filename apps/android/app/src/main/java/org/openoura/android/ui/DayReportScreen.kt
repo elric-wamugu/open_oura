@@ -147,6 +147,21 @@ private fun ColumnScope.SleepReport(s: Summary, ymd: String) {
         )
     }
 
+    n.breathingRate?.rate?.let { rate ->
+        SectionHeader("Breathing", Modifier.padding(top = 4.dp))
+        MetricGrid(
+            listOfNotNull(
+                "%.1f /min".format(rate) to "Breathing rate",
+                n.breathingRate.variability?.let { "%.1f /min".format(it) to "Variability" },
+            ),
+        )
+        Footnote(
+            "Worked out on this phone from the rhythm breathing leaves in your heartbeat, " +
+                "averaged over the middle of the night. Most adults breathe 12 to 20 times a " +
+                "minute asleep; a change from your own usual rate says more than the number.",
+        )
+    }
+
     n.autonomic?.let { a ->
         if (listOfNotNull(a.hrDeep, a.hrLight, a.hrRem, a.hrvDeep, a.hrvLight, a.hrvRem).isNotEmpty()) {
             SectionHeader("Autonomic recovery by stage", Modifier.padding(top = 4.dp))

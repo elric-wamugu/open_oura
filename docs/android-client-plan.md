@@ -824,6 +824,33 @@ efficiency, restfulness, REM, deep, latency, timing), shown on Today's sleep car
   way.
 - **Android only.** The web and iOS receive `sleep_score` in the summary and show nothing.
 
+### Breathing rate (2026-11-20)
+
+The sleep report gains a **Breathing** section — the night's average breathing rate and
+its variability, in breaths per minute — and Trends gains a **Breathing rate** chart.
+
+The computation is upstream's port (`oura-analysis::ported::breathing_rate`, from
+Th0rgal/open_oura#32, with its reference vectors): the night's beats resampled at 4 Hz, a
+12th-order band-pass, peak picking, a rate per 30 s epoch over the last two minutes, and the
+night average with two hours trimmed from each end. Under three hours there is none.
+
+It runs beside the stager in `oura-summary`'s `staging.rs`, on the same beats the stager
+reads — the ones the IBI corrector marks valid — and is cached beside the stages under its
+own name (`breathing-rate-v1`), so nights already staged gained a breathing rate without
+being staged again: the first recompute read their events back (about 7 s for 125 nights
+on a laptop; on the Pixel 9a the stager's 10 s budget covered 118 and the next recompute
+the other 7), later ones reuse the cache.
+
+The port also takes one motion byte per epoch. Motion only sets each epoch's usable flag,
+and the night average counts every epoch with beats whatever that flag says, so zeros are
+passed rather than a made-up conversion from the accelerometer features.
+
+**On this user's history**: 115 of 125 nights, mean 14.0 breaths/min (12.6–19.3);
+variability mean 3.4. Not checked against the Oura app. Only nights that go through the
+on-device stager get one, so the desktop with SleepNet models has none.
+
+Android only: the summary carries `nights[].breathing_rate` for every client.
+
 ### Activity Score and Readiness (2026-11-20)
 
 Today opens with the day's three scores — Readiness, Sleep, Activity — each opening its

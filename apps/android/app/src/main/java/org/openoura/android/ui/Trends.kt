@@ -51,6 +51,7 @@ enum class TrendMetric(val title: String, val unit: String, val decimals: Int, v
     EFFICIENCY("Sleep efficiency", "%", 0),
     SPO2("Blood oxygen", "%", 0),
     SKIN_TEMP("Skin temperature", "°C", 1),
+    BREATHING("Breathing rate", "/min", 1),
     STEPS("Steps", "", 0, bars = true),
 }
 
@@ -94,6 +95,7 @@ fun trendPoints(summary: Summary, metric: TrendMetric): List<TrendPoint> =
             TrendMetric.EFFICIENCY -> night?.efficiency
             TrendMetric.SPO2 -> night?.spo2Mean
             TrendMetric.SKIN_TEMP -> night?.skinTemp
+            TrendMetric.BREATHING -> night?.breathingRate?.rate
             // A day with a movement profile and no steps is a ring that was not worn, or
             // today before anyone has walked anywhere: neither is a zero-step day.
             TrendMetric.STEPS -> summary.activityDaily[ymd]?.steps
@@ -183,6 +185,7 @@ private fun TrendCard(metric: TrendMetric, w: TrendWindow) {
         TrendMetric.EFFICIENCY -> colors.deep
         TrendMetric.SPO2 -> colors.spo2
         TrendMetric.SKIN_TEMP -> colors.temp
+        TrendMetric.BREATHING -> colors.rem
         TrendMetric.ASLEEP, TrendMetric.STEPS -> colors.accent
     }
     val mean = w.mean
