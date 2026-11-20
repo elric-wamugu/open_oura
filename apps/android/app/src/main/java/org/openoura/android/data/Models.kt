@@ -273,6 +273,10 @@ data class Summary(
     /** What the on-device sleep stager did in this recompute: nights reused from its cache,
      *  staged now, and left for a later recompute. Diagnostic: logged, never rendered. */
     val stager: StagerStats? = null,
+    /** Activity Score by local date (04:00 to 04:00), from `oura-summary`. */
+    @SerialName("activity_scores") val activityScores: Map<String, ActivityScore> = emptyMap(),
+    /** Readiness Score by local date (the day a night was woken on), from `oura-summary`. */
+    val readiness: Map<String, ReadinessScore> = emptyMap(),
     /** What the Sleep Score's timing was measured against. */
     val chronotype: ChronotypeInfo? = null,
     val error: String? = null,
@@ -356,4 +360,43 @@ data class ChronotypeInfo(
     @SerialName("ideal_midpoint") val idealMidpoint: String? = null,
     val nights: Int? = null,
     val needs: Int? = null,
+)
+
+/** A day's Activity Score (0..100) and its contributors (0..100), from `oura-summary`. */
+@Serializable
+data class ActivityScore(
+    val score: Int? = null,
+    val contributors: ActivityScoreContributors = ActivityScoreContributors(),
+    @SerialName("active_kcal") val activeKcal: Int? = null,
+    @SerialName("target_kcal") val targetKcal: Int? = null,
+)
+
+@Serializable
+data class ActivityScoreContributors(
+    @SerialName("meet_daily_targets") val meetDailyTargets: Int? = null,
+    @SerialName("stay_active") val stayActive: Int? = null,
+    @SerialName("move_every_hour") val moveEveryHour: Int? = null,
+    @SerialName("training_frequency") val trainingFrequency: Int? = null,
+    @SerialName("training_volume") val trainingVolume: Int? = null,
+    @SerialName("recovery_time") val recoveryTime: Int? = null,
+)
+
+/** A day's Readiness Score (0..100) and its contributors (1..100, 0 when not available). */
+@Serializable
+data class ReadinessScore(
+    val score: Int? = null,
+    val contributors: ReadinessContributors = ReadinessContributors(),
+)
+
+@Serializable
+data class ReadinessContributors(
+    @SerialName("resting_heart_rate") val restingHeartRate: Int? = null,
+    @SerialName("hrv_balance") val hrvBalance: Int? = null,
+    @SerialName("body_temperature") val bodyTemperature: Int? = null,
+    @SerialName("recovery_index") val recoveryIndex: Int? = null,
+    @SerialName("previous_night") val previousNight: Int? = null,
+    @SerialName("sleep_balance") val sleepBalance: Int? = null,
+    @SerialName("sleep_regularity") val sleepRegularity: Int? = null,
+    @SerialName("previous_day_activity") val previousDayActivity: Int? = null,
+    @SerialName("activity_balance") val activityBalance: Int? = null,
 )
