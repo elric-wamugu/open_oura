@@ -61,6 +61,7 @@ fun TodayScreen(
     onRetrySummary: () -> Unit,
     onImportDatabase: () -> Unit,
     onOpenDay: (String, Boolean) -> Unit,
+    onOpenReadiness: (String) -> Unit,
     onBrowseDays: () -> Unit,
     onOpenRing: () -> Unit,
     cardioExpanded: Boolean,
@@ -130,7 +131,7 @@ fun TodayScreen(
                         }
                     }
 
-                    is SummaryState.Ready -> readyItems(state, onOpenDay, onBrowseDays, cardioExpanded, onToggleCardio, lastHeartRate, onMeasureHeartRate, onOpenHeartRate)
+                    is SummaryState.Ready -> readyItems(state, onOpenDay, onOpenReadiness, onBrowseDays, cardioExpanded, onToggleCardio, lastHeartRate, onMeasureHeartRate, onOpenHeartRate)
                 }
             }
         }
@@ -140,6 +141,7 @@ fun TodayScreen(
 private fun androidx.compose.foundation.lazy.LazyListScope.readyItems(
     state: SummaryState.Ready,
     onOpenDay: (String, Boolean) -> Unit,
+    onOpenReadiness: (String) -> Unit,
     onBrowseDays: () -> Unit,
     cardioExpanded: Boolean,
     onToggleCardio: () -> Unit,
@@ -155,6 +157,18 @@ private fun androidx.compose.foundation.lazy.LazyListScope.readyItems(
                 style = MaterialTheme.typography.bodyLarge,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(horizontal = 4.dp),
+            )
+        }
+    }
+    s.days.firstOrNull()?.let { day ->
+        item(key = "scores") {
+            ScoresRow(
+                readiness = s.readiness[day]?.score,
+                sleep = s.nightForDay(day)?.sleepScore?.score,
+                activity = s.activityScores[day]?.score,
+                onReadiness = { onOpenReadiness(day) },
+                onSleep = { onOpenDay(day, true) },
+                onActivity = { onOpenDay(day, false) },
             )
         }
     }

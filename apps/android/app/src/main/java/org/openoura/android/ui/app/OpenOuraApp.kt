@@ -99,6 +99,8 @@ import org.openoura.android.ui.BackupScreen
 import org.openoura.android.ui.HeartRateScreen
 import org.openoura.android.ble.LiveHeartRate
 import org.openoura.android.ui.nav.HeartRateRoute
+import org.openoura.android.ui.nav.ReadinessRoute
+import org.openoura.android.ui.ReadinessScreen
 import org.openoura.android.widget.WidgetUpdates
 import org.openoura.android.ui.DaysBrowser
 import org.openoura.android.ui.describeBackup
@@ -403,6 +405,7 @@ fun OpenOuraApp(
                 onRetrySummary = { scope.launch { busy = true; repo.recompute(); busy = false } },
                 onImportDatabase = { pickDatabase.launch(arrayOf("*/*")) },
                 onOpenDay = { day, sleep -> navigator.push(DayReportRoute(day, sleep, Tab.TODAY)) },
+                onOpenReadiness = { day -> navigator.push(ReadinessRoute(day)) },
                 onBrowseDays = { navigator.select(Tab.HISTORY) },
                 onOpenRing = { navigator.select(Tab.RING) },
                 cardioExpanded = cardioOpen,
@@ -586,6 +589,12 @@ fun OpenOuraApp(
                         modifier = Modifier.padding(padding),
                     )
                 }
+            }
+        }
+        entry<ReadinessRoute> { key ->
+            val summary = (state as? SummaryState.Ready)?.summary
+            ScreenScaffold(title = "Readiness · ${dayTitle(key.ymd)}", onBack = navigator::back) { padding ->
+                if (summary != null) ReadinessScreen(summary, key.ymd, Modifier.padding(padding))
             }
         }
         entry<RingKeyRoute> {

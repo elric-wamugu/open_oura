@@ -12,6 +12,7 @@
 //! *render* it: web `dashboard/web/app.js`, iOS `apps/ios/OuraApp/OuraApp.swift`. See
 //! `docs/clients-web-and-ios.md`.
 
+mod daily_scores;
 mod staging;
 
 use std::path::{Path, PathBuf};
@@ -378,6 +379,10 @@ struct NightScan {
     midpoint_min: i32,
     start: i64,
     tz_min: i32,
+    /// For the readiness step: the night's window and its 30 s stage codes.
+    start_unix: f64,
+    end_unix: f64,
+    stages: Vec<u8>,
 }
 
 /// Scan a night's 30 s stages and motion for the Sleep Score. `None` without stages or with
@@ -408,6 +413,9 @@ fn scan_night(
         midpoint_min: night.timing.mid as i32,
         start,
         tz_min,
+        start_unix,
+        end_unix,
+        stages: codes,
     })
 }
 
@@ -1327,6 +1335,7 @@ fn tenths_ms(d: std::time::Duration) -> f64 {
 /// check is `profile_summary`'s dump, compared before and after.
 const JSON_EVENTS: &[&str] = &[
     "activity_information",
+    "alert_event",
     "bedtime_period",
     "debug_data",
     "ehr_acm_intensity_event",
@@ -1338,6 +1347,7 @@ const JSON_EVENTS: &[&str] = &[
     "spo2_event",
     "spo2_r_pi_event",
     "temp_event",
+    "wear_event",
 ];
 
 /// Choices a client makes about how much work a recompute does.
@@ -1907,6 +1917,45 @@ pub fn build_summary_with(
             out["sleep_score"] = sleep_score_json(n, demo.age, chrono);
         }
     }
+    stages.mark("sleep");
+
+    // Activity and readiness, day by day (daily_scores.rs).
+    let score_events: Vec<daily_scores::EventIn> = events
+        .iter()
+        .enumerate()
+        .filter(|(_, (_, tag, _, _))| matches!(*tag, 0x46 | 0x47 | 0x50 | 0x53 | 0x56 | 0x5d))
+        .map(|(i, (ds, tag, json, _))| daily_scores::EventIn {
+            unix: unix_in_epoch(*ds, event_epochs[i]),
+            tag: *tag,
+            json: json.as_str(),
+        })
+        .collect();
+    let score_nights: Vec<daily_scores::NightIn> = night_scans
+        .iter()
+        .zip(&is_main)
+        .filter_map(|(n, m)| {
+            n.as_ref().map(|n| daily_scores::NightIn {
+                start: n.start_unix,
+                end: n.end_unix,
+                is_main: *m,
+                scan: Some(n.scan),
+                stages: n.stages.clone(),
+            })
+        })
+        .collect();
+    let day_scores = daily_scores::compute(
+        &score_events,
+        &score_nights,
+        &daily_scores::Person {
+            age: demo.age.round().max(0.0) as u32,
+            sex: demo.sex,
+            weight_kg: demo.weight_kg,
+        },
+        tz,
+        chrono.map(|c| (c.kind, c.ideal_midpoint_min * 60)),
+    );
+    stages.mark("scores");
+
     nights_json.reverse();
 
     // Sleep debt, as the app's 7.27 `sleep_debt_calculate` does it: a fixed window of the
@@ -1955,7 +2004,6 @@ pub fn build_summary_with(
             "need_h": need_h,
         })
     };
-    stages.mark("sleep");
 
     let mut activity = activity_raw
         .as_ref()
@@ -2435,6 +2483,9 @@ pub fn build_summary_with(
 
     Ok(json!({
         "generated_at": now,
+        // Activity Score and Readiness by local date (daily_scores.rs).
+        "activity_scores": day_scores.activity,
+        "readiness": day_scores.readiness,
         // What the Sleep Score's timing was measured against: "profile" (entered), "history"
         // (worked out from the user's nights) or "none" (too few nights yet).
         "chronotype": chronotype_json,

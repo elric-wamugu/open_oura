@@ -217,6 +217,17 @@ private fun ColumnScope.ActivityReport(s: Summary, ymd: String) {
         ),
     )
 
+    s.activityScores[ymd]?.let { a ->
+        val total = a.score ?: return@let
+        SectionHeader("Activity score", Modifier.padding(top = 4.dp))
+        ScoreCard(total, ScoreText.activity(a.contributors))
+        Footnote(
+            "Worked out on this phone the way the Oura app scores a day, from 04:00 to 04:00, " +
+                "against the nine days before it." +
+                (a.targetKcal?.takeIf { it > 0 }?.let { " Today's target: $it active kcal, scaled by your readiness." } ?: ""),
+        )
+    }
+
     SectionHeader("Movement across the day", Modifier.padding(top = 4.dp))
     if (prof.size > 1) {
         MovementChart(prof = prof, steps = steps, dayTotalSteps = ds?.steps)
@@ -311,37 +322,10 @@ fun peakHrVerdict(pct: Int): String = when {
  * The page's headline figures on one tonal card. A browser can put four on a line; a phone
  * cannot once one is a bedtime range like "03:32–10:58", so they sit two by two.
  */
-/** The score with its word, then each contributor as a bar out of 100. */
 @Composable
 private fun SleepScoreCard(sc: SleepScore) {
-    val cs = MaterialTheme.colorScheme
     val total = sc.score ?: return
-    Surface(shape = MaterialTheme.shapes.extraLarge, color = cs.surfaceContainer, modifier = Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text("$total", style = MaterialTheme.typography.displaySmallEmphasized)
-                Text(
-                    SleepInterpretation.scoreLabel(total),
-                    style = MaterialTheme.typography.titleMedium,
-                    color = cs.onSurfaceVariant,
-                    modifier = Modifier.padding(bottom = 6.dp),
-                )
-            }
-            SleepInterpretation.scoreContributors(sc.contributors).forEach { (name, value) ->
-                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                    Row(Modifier.fillMaxWidth()) {
-                        Text(name, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
-                        Text("$value", style = MaterialTheme.typography.labelLarge)
-                    }
-                    LinearProgressIndicator(
-                        progress = { value / 100f },
-                        modifier = Modifier.fillMaxWidth(),
-                        drawStopIndicator = {},
-                    )
-                }
-            }
-        }
-    }
+    ScoreCard(total, SleepInterpretation.scoreContributors(sc.contributors))
 }
 
 @Composable

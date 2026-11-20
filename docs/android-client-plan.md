@@ -816,6 +816,39 @@ efficiency, restfulness, REM, deep, latency, timing), shown on Today's sleep car
   way.
 - **Android only.** The web and iOS receive `sleep_score` in the summary and show nothing.
 
+### Activity Score and Readiness (2026-11-20)
+
+Today opens with the day's three scores — Readiness, Sleep, Activity — each opening its
+page: a new Readiness page, the sleep report, and the activity report, which gains an
+"Activity score" section.
+
+Both come from upstream's ports (Th0rgal/open_oura#32), chained in `oura-summary`'s
+`daily_scores.rs` the way upstream's `tools/score_daily_exact.py` chains them:
+
+1. **Activity days** (`activity_day::compute_stateless`): a day runs 04:00 to 04:00 local;
+   its minutes come from `activity_information` (the decoded MET floats turned back into the
+   ring's bytes, the first body byte as steps), non-wear from `wear_event`, inactivity
+   alerts from `alert_event`, rest from the sleep periods; each day is scored against the
+   nine before it.
+2. **Readiness** (`daily::DailyScorer`, sleep regularity tracked): one step per day with a
+   scored main sleep, oldest first, so the nine long-term baselines build up from the start
+   of the history. A step takes the night's scan plus its lowest heart rate and time,
+   average RMSSD and highest temperature (`night_summary`), the previous day's activity
+   statistics, and fourteen days of history. The chronotype is the Sleep Score's.
+3. **Activity again**, with each day's readiness scaling its target.
+
+**Dating.** Upstream's activity port dates events with the ring's `time_sync` events and
+assumes one ring clock; this database has almost no `time_sync` rows and several reboots.
+So events go in already dated by the summary's clock, with their "ring time" set to Unix
+deciseconds and a single anchor at zero.
+
+**On this user's history**: readiness on 109 days, mean 66 (29–95); activity on 127 days,
+mean 66 (42–99). A recompute spends about 0.4 s on both. Not checked against the app.
+`wear_event` and `alert_event` were added to the events whose JSON the summary loads.
+
+Android only: the summary carries `readiness` and `activity_scores` by date for every
+client, and only Android shows them.
+
 ---
 
 ## Material 3 Expressive UI — **DONE** (2026-10-12)
