@@ -150,32 +150,22 @@ private fun androidx.compose.foundation.lazy.LazyListScope.readyItems(
     onOpenHeartRate: () -> Unit,
 ) {
     val s = state.summary
-    s.digest?.takeIf { it.isNotBlank() }?.let { digest ->
-        item(key = "digest") {
-            Text(
-                digest,
-                style = MaterialTheme.typography.bodyLarge,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(horizontal = 4.dp),
-            )
-        }
-    }
-    s.days.firstOrNull()?.let { day ->
-        item(key = "scores") {
-            ScoresRow(
-                readiness = s.readiness[day]?.score,
-                sleep = s.nightForDay(day)?.sleepScore?.score,
-                activity = s.activityScores[day]?.score,
-                onReadiness = { onOpenReadiness(day) },
-                onSleep = { onOpenDay(day, true) },
-                onActivity = { onOpenDay(day, false) },
-            )
-        }
-    }
+    // The summary's one-line `digest` ("HRV −11%, resting HR …") used to open the page. It
+    // repeated the vitals tiles below in a harder-to-read form, so Today starts with the
+    // scores instead (removed 2026-11-20 at the user's request).
+    // The day's date first, then its three scores, then the day itself.
     s.days.firstOrNull()?.let { day ->
         item(key = "day") {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 SectionHeader(dayTitle(day))
+                ScoresRow(
+                    readiness = s.readiness[day]?.score,
+                    sleep = s.nightForDay(day)?.sleepScore?.score,
+                    activity = s.activityScores[day]?.score,
+                    onReadiness = { onOpenReadiness(day) },
+                    onSleep = { onOpenDay(day, true) },
+                    onActivity = { onOpenDay(day, false) },
+                )
                 DayCard(
                     summary = s,
                     ymd = day,
