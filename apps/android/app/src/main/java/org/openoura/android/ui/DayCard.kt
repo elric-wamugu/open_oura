@@ -108,6 +108,7 @@ private fun SleepPart(n: NightRow) {
         icon = R.drawable.ic_sym_bedtime,
         title = "Sleep",
         meta = "${n.start ?: "—"}–${n.end ?: "—"} · ${num(n.inBedH)} h in bed",
+        score = n.sleepScore?.score,
     )
     // The split, not the night as it unfolded: how much of each stage is what a glance at
     // Today can take in, and the hour-by-hour picture is one tap away on the sleep page.
@@ -132,7 +133,7 @@ private fun ActivityPart(s: Summary, ymd: String) {
 }
 
 @Composable
-private fun PartHead(@DrawableRes icon: Int, title: String, meta: String) {
+private fun PartHead(@DrawableRes icon: Int, title: String, meta: String, score: Int? = null) {
     Row(
         Modifier.fillMaxWidth(),
         verticalAlignment = Alignment.CenterVertically,
@@ -142,6 +143,13 @@ private fun PartHead(@DrawableRes icon: Int, title: String, meta: String) {
         Column(Modifier.weight(1f)) {
             Text(title, style = MaterialTheme.typography.titleMediumEmphasized)
             Text(meta, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        // The night's Sleep Score, where the day card has room for one number.
+        score?.let {
+            Column(horizontalAlignment = Alignment.End) {
+                Text("$it", style = MaterialTheme.typography.titleLargeEmphasized)
+                Text("score", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
         }
         Icon(
             painterResource(R.drawable.ic_sym_chevron_right),

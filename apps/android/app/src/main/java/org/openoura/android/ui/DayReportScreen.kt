@@ -1,5 +1,8 @@
 package org.openoura.android.ui
 
+import androidx.compose.ui.Alignment
+import org.openoura.android.data.SleepScore
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.SizeTransform
 import androidx.compose.animation.fadeIn
@@ -110,6 +113,15 @@ private fun ColumnScope.SleepReport(s: Summary, ymd: String) {
             "${n.start ?: "—"}–${n.end ?: "—"}" to "Bedtime",
         ),
     )
+
+    n.sleepScore?.takeIf { it.score != null }?.let { score ->
+        SectionHeader("Sleep score", Modifier.padding(top = 4.dp))
+        SleepScoreCard(score)
+        Footnote(
+            "Worked out on this phone from the stages below, the way the Oura app scores a night. " +
+                Chronotypes.timingNote(s.chronotype),
+        )
+    }
 
     SectionHeader("Overnight polysomnograph", Modifier.padding(top = 4.dp))
     StageLegend(Modifier.padding(start = 4.dp))
@@ -299,6 +311,39 @@ fun peakHrVerdict(pct: Int): String = when {
  * The page's headline figures on one tonal card. A browser can put four on a line; a phone
  * cannot once one is a bedtime range like "03:32–10:58", so they sit two by two.
  */
+/** The score with its word, then each contributor as a bar out of 100. */
+@Composable
+private fun SleepScoreCard(sc: SleepScore) {
+    val cs = MaterialTheme.colorScheme
+    val total = sc.score ?: return
+    Surface(shape = MaterialTheme.shapes.extraLarge, color = cs.surfaceContainer, modifier = Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text("$total", style = MaterialTheme.typography.displaySmallEmphasized)
+                Text(
+                    SleepInterpretation.scoreLabel(total),
+                    style = MaterialTheme.typography.titleMedium,
+                    color = cs.onSurfaceVariant,
+                    modifier = Modifier.padding(bottom = 6.dp),
+                )
+            }
+            SleepInterpretation.scoreContributors(sc.contributors).forEach { (name, value) ->
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Row(Modifier.fillMaxWidth()) {
+                        Text(name, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+                        Text("$value", style = MaterialTheme.typography.labelLarge)
+                    }
+                    LinearProgressIndicator(
+                        progress = { value / 100f },
+                        modifier = Modifier.fillMaxWidth(),
+                        drawStopIndicator = {},
+                    )
+                }
+            }
+        }
+    }
+}
+
 @Composable
 private fun HeroStats(items: List<Pair<String, String>>) {
     Surface(

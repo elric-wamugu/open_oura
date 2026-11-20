@@ -1,5 +1,14 @@
 package org.openoura.android.ui
 
+import org.openoura.android.data.ChronotypeSetting
+import org.openoura.android.data.ChronotypeInfo
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.Alignment
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.material3.RadioButton
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.Row
 import android.content.pm.ApplicationInfo
 import androidx.annotation.DrawableRes
 import androidx.compose.foundation.layout.Arrangement
@@ -55,6 +64,9 @@ fun YouScreen(
     onImportDatabase: () -> Unit,
     onCompactDatabase: () -> Unit,
     /** The daily step target the steps widget's ring fills towards. */
+    /** The chronotype the Sleep Score used, and the one entered, if any. */
+    chronotype: ChronotypeInfo?,
+    onChronotype: (ChronotypeSetting?) -> Unit,
     stepTarget: Int,
     onStepTarget: (Int) -> Unit,
     /** Each alert's switch, and whether Android lets the app notify at all. */
@@ -118,6 +130,30 @@ fun YouScreen(
                 ),
             )
 
+            SectionHeader("Sleep score", Modifier.padding(top = 8.dp))
+            var editingChronotype by rememberSaveable { mutableStateOf(false) }
+            Group(
+                listOf(
+                    LinkRow(
+                        icon = R.drawable.ic_sym_bedtime,
+                        title = "Chronotype",
+                        detail = Chronotypes.describe(chronotype),
+                        onClick = { editingChronotype = true },
+                        chevron = false,
+                    ),
+                ),
+            )
+            if (editingChronotype) {
+                ChronotypeDialog(
+                    current = profile.chronotype,
+                    onSave = {
+                        onChronotype(it)
+                        editingChronotype = false
+                    },
+                    onDismiss = { editingChronotype = false },
+                )
+            }
+
             SectionHeader("Goals", Modifier.padding(top = 8.dp))
             var editingSteps by rememberSaveable { mutableStateOf(false) }
             Group(
@@ -162,6 +198,73 @@ fun YouScreen(
                 ),
             )
         }
+    }
+}
+
+/**
+ * Enter the chronotype the Oura app shows, or leave it to the Sleep Score to work one out
+ * from your nights. `null` saved means "work it out".
+ */
+@Composable
+private fun ChronotypeDialog(current: ChronotypeSetting?, onSave: (ChronotypeSetting?) -> Unit, onDismiss: () -> Unit) {
+    // -1 is "work it out from my nights".
+    var choice by rememberSaveable { mutableIntStateOf(current?.let { Chronotypes.NAMES.indexOf(it.type) } ?: -1) }
+    var midpoint by rememberSaveable { mutableStateOf(current?.ideal_midpoint ?: "") }
+    val parsed = Chronotypes.parseMidpoint(midpoint)
+    val ok = choice < 0 || parsed != null
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Chronotype") },
+        text = {
+            Column(Modifier.verticalScroll(rememberScrollState())) {
+                Text(
+                    "The Oura app shows your chronotype and ideal sleep midpoint once it has a few " +
+                        "months of your sleep. Enter them here to score timing as it does.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                ChoiceRow("Work it out from my nights", choice == -1) { choice = -1 }
+                Chronotypes.NAMES.forEachIndexed { i, name ->
+                    ChoiceRow(Chronotypes.title(name), choice == i) { choice = i }
+                }
+                if (choice >= 0) {
+                    OutlinedTextField(
+                        value = midpoint,
+                        onValueChange = { input -> midpoint = input.filter { it.isDigit() || it == ':' }.take(5) },
+                        label = { Text("Ideal sleep midpoint") },
+                        placeholder = { Text("03:30") },
+                        singleLine = true,
+                        isError = midpoint.isNotEmpty() && parsed == null,
+                        supportingText = { Text("24-hour clock, as HH:MM") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number, imeAction = ImeAction.Done),
+                        modifier = Modifier.padding(top = 8.dp),
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = {
+                    onSave(if (choice < 0) null else ChronotypeSetting(Chronotypes.NAMES[choice], parsed!!))
+                },
+                enabled = ok,
+            ) { Text("Save") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
+}
+
+@Composable
+private fun ChoiceRow(label: String, selected: Boolean, onSelect: () -> Unit) {
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .selectable(selected = selected, onClick = onSelect, role = Role.RadioButton)
+            .padding(vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        RadioButton(selected = selected, onClick = null)
+        Text(label, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.padding(start = 12.dp))
     }
 }
 

@@ -7,6 +7,7 @@ import org.junit.Test
 import org.openoura.android.data.NightRow
 import org.openoura.android.data.SleepDebt
 import org.openoura.android.data.SleepMetrics
+import org.openoura.android.data.SleepScoreContributors
 import org.openoura.android.ui.NightWindow
 import org.openoura.android.ui.SleepInterpretation
 import org.openoura.android.ui.nightWindow
@@ -141,5 +142,18 @@ class SleepInterpretationTest {
         )
         assertNull(SleepInterpretation.stageSourceNote("none"))
         assertNull(SleepInterpretation.stageSourceNote(null))
+    }
+
+    @Test
+    fun `a sleep score gets the app's word and its contributors in the app's order`() {
+        assertEquals("Optimal", SleepInterpretation.scoreLabel(85))
+        assertEquals("Good", SleepInterpretation.scoreLabel(84))
+        assertEquals("Fair", SleepInterpretation.scoreLabel(60))
+        assertEquals("Pay attention", SleepInterpretation.scoreLabel(59))
+        val c = SleepScoreContributors(totalSleep = 76, deep = 80, rem = 85, efficiency = 76, latency = 78, restfulness = 73, timing = null)
+        assertEquals(
+            listOf("Total sleep" to 76, "Efficiency" to 76, "Restfulness" to 73, "REM sleep" to 85, "Deep sleep" to 80, "Latency" to 78),
+            SleepInterpretation.scoreContributors(c),
+        )
     }
 }

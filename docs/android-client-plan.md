@@ -772,6 +772,50 @@ Neither is ground truth. The stager's author reports 92.6% agreement with the of
 stages on 14 nights from one person; how the ring's own stages compare with the app is
 unknown, and so, for this user, is which of the two is closer.
 
+### Sleep Score (2026-11-20)
+
+Each night now has the app's Sleep Score and its seven contributors (total sleep,
+efficiency, restfulness, REM, deep, latency, timing), shown on Today's sleep card and in a
+"Sleep score" section at the top of the sleep page.
+
+- **The port is upstream's.** `oura-analysis::sleep_inputs` and `sleep_score`, with the rest
+  of the score modules (readiness, activity, baselines, sleep regularity, rest mode, lowest
+  HR, night summary) and their test vectors, came from Th0rgal/open_oura#32 unchanged. Only
+  the Sleep Score is wired up so far.
+- **Computed in the shared brain** (`sleep_score_json` in `oura-summary`), from the night's
+  30 s stages and its `motion_event` motion seconds, with the age from the profile. Each
+  night carries `sleep_score: { score, contributors }`. The number is the app's *daily*
+  value for the period (`app_sleep_score`); a day with a nap is not yet scored as one day.
+- **Chronotype.** The timing contributor needs the app's chronotype, which the ring does
+  not hold. It is taken, in order, from:
+  1. **What the user entered** on the You tab (Sleep score → Chronotype), copied from the
+     Oura app: a type and an ideal sleep midpoint, kept in `profile.json` as
+     `"chronotype": {"type": "late morning", "ideal_midpoint": "03:30"}` — the shape
+     upstream's `tools/score_sleep_exact.py` reads.
+  2. **The user's own nights**: the median sleep midpoint of the newest 60 main nights, once
+     there are 14. Midpoints are on the score's clock, folded at noon, so 23:50 and 00:10
+     are neighbours. It is named from one-hour bands of that midpoint — before 02:00 early
+     morning, then morning, late morning, early evening and evening an hour each, from 06:00
+     late evening — and shown as "estimated". Oura does not publish its boundaries (its
+     help pages give the inputs and that under 10% of people fall in each extreme); the
+     bands are the usual grouping of mid-sleep in sleep research, centred on a population
+     mid-sleep around 04:00. One difference from that research: it uses mid-sleep on free
+     days, and this uses every main night. The name does not change the score.
+  3. Otherwise the port's fixed curve (upstream's notes say that can move the score by tens
+     of points).
+
+  The summary reports which in `chronotype` (`source`: "profile", "history" or "none"), and
+  the sleep page says it under the score. Scoring from one's own habit means a consistently
+  late sleeper is not marked down for it; the app's chronotype is also learnt from the
+  user's history, so the two should be close.
+- **The app's own staging is the other missing input**: the score is as good as the stages
+  it is given, which on Android are now the on-device stager's.
+- **Not checked against the app.** Upstream's tests compare its Rust against its own Python
+  on random inputs. On this user's history, main nights score 15–96, mean 66 with the
+  stager's stages and 69 with the ring's; the same night scores within a few points either
+  way.
+- **Android only.** The web and iOS receive `sleep_score` in the summary and show nothing.
+
 ---
 
 ## Material 3 Expressive UI — **DONE** (2026-10-12)

@@ -461,6 +461,11 @@ nightly need" but "a 7.5 h need". `app.js` hardcodes "an".
   when no model ran. The stager is in the shared Rust, so either can turn it on with
   `SummaryOptions::stage_sleep`; see `docs/android-client-plan.md`.
 
+- **Sleep Score** (`nights[].sleep_score`, computed in `oura-summary` from upstream's
+  `sleep_inputs`/`sleep_score` port): shown on Android only, on Today's sleep card and the
+  sleep page. The web and iOS receive the field and do not render it. See
+  `docs/android-client-plan.md` for what it is missing (chronotype, the app's staging).
+
 Two Android features have no web or iOS counterpart, and are not omissions to close:
 
 - **Unattended sync** (`apps/android/.../sync/AutoSync.kt`): a 3-hour WorkManager floor plus

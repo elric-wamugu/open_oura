@@ -23,7 +23,16 @@ data class RingProfile(
     val height_m: Double = 1.78,
     val weight_kg: Double = 75.0,
     val ring_size: Double = 10.0,
+    /** A chronotype entered from the Oura app; null lets the Sleep Score work one out. */
+    val chronotype: ChronotypeSetting? = null,
 )
+
+/**
+ * The Oura app's chronotype as `oura-summary` reads it from `profile.json`: one of
+ * [Chronotypes.NAMES] and the ideal sleep midpoint as "HH:MM".
+ */
+@Serializable
+data class ChronotypeSetting(val type: String, val ideal_midpoint: String)
 
 class ProfileStore(private val ctx: Context) {
     private val json = Json { ignoreUnknownKeys = true; prettyPrint = true }

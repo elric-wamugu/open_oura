@@ -80,6 +80,8 @@ fun ProfileCard(
                             height_m = height.toDoubleOrNull() ?: initial.height_m,
                             weight_kg = weight.toDoubleOrNull() ?: initial.weight_kg,
                             ring_size = initial.ring_size,
+                            // Set on its own row of the You tab; saving this card keeps it.
+                            chronotype = initial.chronotype,
                         ),
                     )
                 },
