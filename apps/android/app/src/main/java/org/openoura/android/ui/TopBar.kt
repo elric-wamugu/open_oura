@@ -111,3 +111,38 @@ fun OpenRingMark(tint: Color, size: Dp = 17.dp) {
         )
     }
 }
+
+/**
+ * Today's battery pill: the icon and the level, in a small fully rounded outline. No sync
+ * age: the Ring tab says when it last synced. Toned on the battery band like [BatteryChip],
+ * and like it opens the Ring tab.
+ */
+@Composable
+fun BatteryPill(device: Device?, onClick: () -> Unit, modifier: Modifier = Modifier) {
+    val cs = MaterialTheme.colorScheme
+    val tone = batteryTone(device?.batteryStatus)
+    val toned = tone.colors()
+    val charging = device?.batteryCharging == true
+    androidx.compose.material3.Surface(
+        onClick = onClick,
+        shape = androidx.compose.foundation.shape.CircleShape,
+        color = toned?.container ?: Color.Transparent,
+        contentColor = toned?.onContainer ?: cs.onSurface,
+        border = if (toned != null) null else androidx.compose.foundation.BorderStroke(1.dp, cs.outlineVariant),
+        modifier = modifier.padding(end = 12.dp),
+    ) {
+        Row(
+            Modifier.padding(start = 8.dp, end = 10.dp, top = 4.dp, bottom = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(3.dp),
+        ) {
+            Icon(
+                painterResource(batteryIcon(tone, charging)),
+                contentDescription = if (charging) "Ring battery, charging" else "Ring battery",
+                tint = toned?.onContainer ?: cs.primary,
+                modifier = Modifier.size(16.dp),
+            )
+            Text(device?.batteryPct?.let { "$it%" } ?: "—", style = MaterialTheme.typography.labelLarge)
+        }
+    }
+}

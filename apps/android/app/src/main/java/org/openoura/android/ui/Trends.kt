@@ -37,22 +37,44 @@ import org.openoura.android.ui.theme.chartColors
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 import kotlin.math.abs
+import org.openoura.android.ui.components.SectionHeader
 import kotlin.math.pow
 import kotlin.math.roundToInt
 
+/** The Trends page's three groups, in the order they appear. */
+enum class TrendGroup(val title: String) {
+    SCORES("Scores"),
+    HABITS("Sleep and activity"),
+    BODY("Body signals"),
+}
+
 /**
  * One measure worth watching over weeks. Nightly ones are read off the night a day was
- * woken from, the same pairing the day cards use; steps are the day's own.
+ * woken from, the same pairing the day cards use; steps and the day's scores are its own.
+ *
+ * Declared in the order the page shows them (2026-11-20): the three scores first, since each
+ * already sums up its part of the day; then what you do — time asleep and steps, efficiency
+ * after them as the detail of a night; then the body's own signals, resting heart rate and
+ * HRV before the slower-moving breathing, temperature and blood oxygen.
  */
-enum class TrendMetric(val title: String, val unit: String, val decimals: Int, val bars: Boolean = false) {
-    HRV("HRV", "ms", 0),
-    RESTING_HR("Resting heart rate", "bpm", 0),
-    ASLEEP("Time asleep", "h", 1),
-    EFFICIENCY("Sleep efficiency", "%", 0),
-    SPO2("Blood oxygen", "%", 0),
-    SKIN_TEMP("Skin temperature", "°C", 1),
-    BREATHING("Breathing rate", "/min", 1),
-    STEPS("Steps", "", 0, bars = true),
+enum class TrendMetric(
+    val title: String,
+    val unit: String,
+    val decimals: Int,
+    val group: TrendGroup,
+    val bars: Boolean = false,
+) {
+    READINESS("Readiness", "", 0, TrendGroup.SCORES),
+    SLEEP_SCORE("Sleep score", "", 0, TrendGroup.SCORES),
+    ACTIVITY_SCORE("Activity score", "", 0, TrendGroup.SCORES),
+    ASLEEP("Time asleep", "h", 1, TrendGroup.HABITS),
+    STEPS("Steps", "", 0, TrendGroup.HABITS, bars = true),
+    EFFICIENCY("Sleep efficiency", "%", 0, TrendGroup.HABITS),
+    RESTING_HR("Resting heart rate", "bpm", 0, TrendGroup.BODY),
+    HRV("HRV", "ms", 0, TrendGroup.BODY),
+    BREATHING("Breathing rate", "/min", 1, TrendGroup.BODY),
+    SKIN_TEMP("Skin temperature", "°C", 1, TrendGroup.BODY),
+    SPO2("Blood oxygen", "%", 0, TrendGroup.BODY),
 }
 
 /** A value on a day, the day counted from the epoch so gaps are simple arithmetic. */
@@ -87,6 +109,9 @@ fun trendPoints(summary: Summary, metric: TrendMetric): List<TrendPoint> =
         val day = dayOf(ymd) ?: return@mapNotNull null
         val night = summary.nightForDay(ymd)
         val value = when (metric) {
+            TrendMetric.READINESS -> summary.readiness[ymd]?.score?.toDouble()
+            TrendMetric.SLEEP_SCORE -> night?.sleepScore?.score?.toDouble()
+            TrendMetric.ACTIVITY_SCORE -> summary.activityScores[ymd]?.score?.toDouble()
             TrendMetric.HRV -> night?.hrvMs
             TrendMetric.RESTING_HR -> night?.rhr
             // Time actually asleep where the night was scored; time in bed is the nearest
@@ -130,9 +155,11 @@ fun TrendMetric.describeChange(w: TrendWindow): String? {
     val before = "the ${w.days} days before"
     // Smaller than the precision it is shown in: calling that a change would be noise.
     if ((abs(change) * 10.0.pow(decimals)).roundToInt() == 0) return "Level with $before"
-    val amount = when (unit) {
-        "" -> shown
-        "%" -> "$shown%"
+    val amount = when {
+        group == TrendGroup.SCORES -> "$shown point${if (shown == "1") "" else "s"}"
+        this == TrendMetric.STEPS -> "$shown steps"
+        unit == "" -> shown
+        unit == "%" -> "$shown%"
         else -> "$shown $unit"
     }
     return "$amount ${if (change > 0) "higher" else "lower"} than $before"
@@ -168,8 +195,11 @@ fun TrendsScreen(
         if (end == null) {
             item { Notice("No days to chart yet.") }
         } else {
-            items(TrendMetric.entries, key = { it.name }) { metric ->
-                TrendCard(metric, trendWindow(series.getValue(metric), end, range))
+            TrendMetric.entries.groupBy { it.group }.forEach { (group, metrics) ->
+                item(key = "g-${group.name}") { SectionHeader(group.title, Modifier.padding(top = 4.dp)) }
+                items(metrics, key = { it.name }) { metric ->
+                    TrendCard(metric, trendWindow(series.getValue(metric), end, range))
+                }
             }
         }
     }
@@ -180,6 +210,10 @@ private fun TrendCard(metric: TrendMetric, w: TrendWindow) {
     val cs = MaterialTheme.colorScheme
     val colors = chartColors()
     val line = when (metric) {
+        // The scores in their topic colours, as on Today and History.
+        TrendMetric.READINESS -> cs.primary
+        TrendMetric.SLEEP_SCORE -> Topics.sleep.onContainer
+        TrendMetric.ACTIVITY_SCORE -> Topics.activity.onContainer
         TrendMetric.HRV -> colors.hrv
         TrendMetric.RESTING_HR -> colors.hr
         TrendMetric.EFFICIENCY -> colors.deep

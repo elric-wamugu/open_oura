@@ -12,7 +12,7 @@ import androidx.compose.ui.unit.dp
 import org.openoura.android.R
 import org.openoura.android.ble.SyncPhase
 import org.openoura.android.data.SummaryState
-import org.openoura.android.ui.DayCard
+import org.openoura.android.ui.ScoreBento
 import org.openoura.android.ui.DeviceHealthPanel
 import org.openoura.android.ui.StatusKind
 import org.openoura.android.ui.StatusLevel
@@ -49,8 +49,8 @@ private fun VitalTilePreview() = Frame {
 
 @PreviewLightDark
 @Composable
-private fun DayCardPreview() = Frame {
-    DayCard(PreviewFixtures.summary, PreviewFixtures.DAY, onOpenSleep = {}, onOpenActivity = {})
+private fun ScoreBentoPreview() = Frame {
+    ScoreBento(PreviewFixtures.summary, PreviewFixtures.DAY, onReadiness = {}, onSleep = {}, onActivity = {})
 }
 
 @PreviewLightDark
@@ -86,12 +86,9 @@ private fun TodayScreenPreview() = OpenOuraTheme {
         onImportDatabase = {},
         onOpenDay = { _, _ -> },
         onOpenReadiness = {},
-        onBrowseDays = {},
         onOpenRing = {},
-        cardioExpanded = true,
+        cardioExpanded = false,
         onToggleCardio = {},
-        lastHeartRate = null,
-        onMeasureHeartRate = {},
         onOpenHeartRate = {},
     )
 }

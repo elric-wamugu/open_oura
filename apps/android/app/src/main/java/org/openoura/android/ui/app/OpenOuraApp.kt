@@ -41,6 +41,9 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
+import org.openoura.android.ui.CardioPanel
+import org.openoura.android.ui.HistoryScale
+import org.openoura.android.ui.HistoryStory
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
@@ -102,7 +105,6 @@ import org.openoura.android.ui.nav.HeartRateRoute
 import org.openoura.android.ui.nav.ReadinessRoute
 import org.openoura.android.ui.ReadinessScreen
 import org.openoura.android.widget.WidgetUpdates
-import org.openoura.android.ui.DaysBrowser
 import org.openoura.android.ui.describeBackup
 import org.openoura.android.ui.TrendsScreen
 import org.openoura.android.ui.components.ChoiceOption
@@ -432,7 +434,10 @@ fun OpenOuraApp(
         if (uri != null) restoreFrom = uri
     }
     // History shows the days or the trends across them; both choices outlive a restart.
-    var historyTrends by remember { mutableStateOf(prefs.getBoolean("history_trends", false)) }
+    // 0 Day, 1 Week, 2 Month, 3 Trends. Someone who had left History on Trends finds it there.
+    var historyView by remember {
+        mutableIntStateOf(prefs.getInt("history_view", if (prefs.getBoolean("history_trends", false)) 3 else 0).coerceIn(0, 3))
+    }
     var trendRange by remember { mutableIntStateOf(prefs.getInt("trend_range", 30)) }
     // Which capability is being written to the ring. Held here rather than in the panel
     // because the work outlives the panel; its outcome is reported in a snackbar.
@@ -450,19 +455,11 @@ fun OpenOuraApp(
                 onImportDatabase = { pickDatabase.launch(arrayOf("*/*")) },
                 onOpenDay = { day, sleep -> navigator.push(DayReportRoute(day, sleep, Tab.TODAY)) },
                 onOpenReadiness = { day -> navigator.push(ReadinessRoute(day)) },
-                onBrowseDays = { navigator.select(Tab.HISTORY) },
                 onOpenRing = { navigator.select(Tab.RING) },
                 cardioExpanded = cardioOpen,
                 onToggleCardio = {
                     cardioOpen = !cardioOpen
                     prefs.edit { putBoolean("fold_cardio", cardioOpen) }
-                },
-                lastHeartRate = lastHeartRate,
-                onMeasureHeartRate = {
-                    // Straight into measuring: the card said what it does, and a second
-                    // "Measure" button on the next screen would only be a second tap.
-                    LiveHeartRate.start(app)
-                    navigator.push(HeartRateRoute)
                 },
                 onOpenHeartRate = { navigator.push(HeartRateRoute) },
             )
@@ -475,19 +472,25 @@ fun OpenOuraApp(
                 large = true,
             ) { padding ->
                 if (summary != null) {
-                    // The switch scrolls away with the list it heads, in either view.
-                    val views: @Composable () -> Unit = {
-                        ConnectedChoice(
-                            options = listOf(ChoiceOption("Days"), ChoiceOption("Trends")),
-                            selected = if (historyTrends) 1 else 0,
-                            onSelect = {
-                                historyTrends = it == 1
-                                prefs.edit { putBoolean("history_trends", historyTrends) }
-                            },
-                            modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
-                        )
+                    // The switch scrolls away with the list it heads, in every view. Day, Week and Month are the day story's scales;
+                    // Trends is the charts.
+                    val header: @Composable () -> Unit = {
+                        androidx.compose.foundation.layout.Column(
+                            Modifier.padding(bottom = 12.dp),
+                            verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(12.dp),
+                        ) {
+                            ConnectedChoice(
+                                options = listOf(ChoiceOption("Day"), ChoiceOption("Week"), ChoiceOption("Month"), ChoiceOption("Trends")),
+                                selected = historyView,
+                                onSelect = {
+                                    historyView = it
+                                    prefs.edit { putInt("history_view", it) }
+                                },
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                        }
                     }
-                    if (historyTrends) {
+                    if (historyView == 3) {
                         TrendsScreen(
                             summary = summary,
                             range = trendRange,
@@ -496,14 +499,15 @@ fun OpenOuraApp(
                                 prefs.edit { putInt("trend_range", it) }
                             },
                             modifier = Modifier.padding(padding),
-                            header = views,
+                            header = header,
                         )
                     } else {
-                        DaysBrowser(
+                        HistoryStory(
                             summary = summary,
+                            scale = HistoryScale.entries[historyView],
                             onOpenDay = { day, sleep -> navigator.push(DayReportRoute(day, sleep, Tab.HISTORY)) },
                             modifier = Modifier.padding(padding),
-                            header = views,
+                            header = header,
                         )
                     }
                 } else {

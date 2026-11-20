@@ -824,6 +824,32 @@ efficiency, restfulness, REM, deep, latency, timing), shown on Today's sleep car
   way.
 - **Android only.** The web and iOS receive `sleep_score` in the summary and show nothing.
 
+### Today as a bento, History as a day story (2026-11-20)
+
+Chosen from three Material 3 Expressive mockups (hero score, bento, day story).
+
+- **Today** (`ui/TodayBento.kt`): the screen's title is the day ("Friday" over "Nov 20")
+  and its action a small round battery pill (`BatteryPill`: the icon and the level, toned on
+  the battery band, no sync age — the Ring tab has that). Then the three scores as bento
+  tiles in their topic colours — Readiness tall on the left (teal, with its word and the
+  weakest contributor when it is under 60), Sleep (indigo, a pill) and Activity (amber)
+  stacked beside it — and two full-width tiles: last night (times and time asleep, then the
+  stage split with its figures, as on the sleep page's "Sleep architecture") and activity
+  (steps and distance, the 24-hour ridge). Vitals is Resting HR, which opens the heart-rate
+  page, and Blood oxygen; then the Cardiovascular panel. HRV feeds Readiness and efficiency
+  is on the sleep report. The day card, the "All N days" button, the HRV digest line and the
+  "Measure heart rate" card left Today.
+- **History** (`ui/HistoryStory.kt`): one switch, Day · Week · Month · Trends, then the
+  stops on a vertical line. A day shows its scores as labelled pills ("Readiness 73"), time
+  asleep and steps, and its naps; it opens the day report. A week (Monday to Sunday) or a
+  month shows the averages of the days inside it and how many there were.
+- **Trends**, in three groups, the overall picture first: **Scores** (Readiness, Sleep
+  score, Activity score, new to Trends), **Sleep and activity** (time asleep, steps, sleep
+  efficiency) and **Body signals** (resting heart rate, HRV, breathing rate, skin
+  temperature, blood oxygen). Score changes read in points, step changes in steps.
+- Topic colours (`Topics`): Readiness the brand's primary container, Sleep indigo and
+  Activity amber, with light-theme counterparts.
+
 ### Syncing more often: hourly, a sync log, the ring as a companion device (2026-11-20)
 
 The ring synced too rarely in the day. Three things changed:

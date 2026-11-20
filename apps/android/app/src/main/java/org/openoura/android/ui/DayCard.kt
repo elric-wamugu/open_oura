@@ -39,9 +39,9 @@ import org.openoura.android.ui.theme.dataColors
 import kotlin.math.min
 import kotlin.math.roundToInt
 
-// The combined day card from the web dashboard (`dayCard` in app.js) and the iOS
-// TodayCard: a Sleep part above an Activity part, each opening its full report. Here the
-// two parts are separate tappable surfaces joined into one segmented block.
+// Pieces the day card used to be made of, still shared: the day's title, the stage split
+// on the sleep page, and the 24-hour movement ridge. Today itself is the bento in
+// TodayBento.kt since 2026-11-20.
 
 private val WEEKDAYS = listOf("Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat")
 private val MONTHS = listOf(
@@ -59,104 +59,6 @@ fun dayTitle(ymd: String): String {
     val yy = if (m < 3) y - 1 else y
     val dow = (yy + yy / 4 - yy / 100 + yy / 400 + t[m - 1] + d) % 7
     return "${WEEKDAYS[dow]} · ${MONTHS[m - 1]} $d"
-}
-
-private fun kfmt(n: Double): String =
-    if (n >= 1000) "%.${if (n >= 10000) 0 else 1}fk".format(n / 1000) else n.roundToInt().toString()
-
-private fun num(v: Double?): String = when {
-    v == null -> "—"
-    v == v.roundToInt().toDouble() -> v.roundToInt().toString()
-    else -> (Math.round(v * 10.0) / 10.0).toString()
-}
-
-@Composable
-fun DayCard(
-    summary: Summary,
-    ymd: String,
-    onOpenSleep: () -> Unit,
-    onOpenActivity: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    val night = summary.nightForDay(ymd)
-    val count = if (night != null) 2 else 1
-    Column(modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(SegmentGap)) {
-        if (night != null) {
-            Segment(index = 0, count = count, onClick = onOpenSleep) { SleepPart(night) }
-        }
-        Segment(index = count - 1, count = count, onClick = onOpenActivity) {
-            ActivityPart(summary, ymd)
-        }
-    }
-}
-
-@Composable
-private fun Segment(index: Int, count: Int, onClick: () -> Unit, content: @Composable ColumnScope.() -> Unit) {
-    Surface(
-        onClick = onClick,
-        shape = segmentShape(index, count, outer = 28.dp),
-        color = MaterialTheme.colorScheme.surfaceContainer,
-        modifier = Modifier.fillMaxWidth(),
-    ) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp), content = content)
-    }
-}
-
-@Composable
-private fun SleepPart(n: NightRow) {
-    PartHead(
-        icon = R.drawable.ic_sym_bedtime,
-        title = "Sleep",
-        meta = "${n.start ?: "—"}–${n.end ?: "—"} · ${num(n.inBedH)} h in bed",
-        score = n.sleepScore?.score,
-    )
-    // The split, not the night as it unfolded: how much of each stage is what a glance at
-    // Today can take in, and the hour-by-hour picture is one tap away on the sleep page.
-    StageSplit(n)
-}
-
-@Composable
-private fun ActivityPart(s: Summary, ymd: String) {
-    val ds = s.activityDaily[ymd]
-    val stat = if (ds != null) {
-        "${kfmt(ds.steps ?: 0.0)} steps · ${(ds.activeKcal ?: 0.0).roundToInt()} kcal"
-    } else {
-        "no activity totals"
-    }
-    PartHead(icon = R.drawable.ic_sym_directions_walk, title = "Activity", meta = stat)
-    s.activityProfile[ymd]?.takeIf { it.size > 1 }?.let { prof ->
-        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            MovementRidge(prof, MaterialTheme.colorScheme.primary, MaterialTheme.colorScheme.outlineVariant)
-            RidgeAxis()
-        }
-    }
-}
-
-@Composable
-private fun PartHead(@DrawableRes icon: Int, title: String, meta: String, score: Int? = null) {
-    Row(
-        Modifier.fillMaxWidth(),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        ShapedIcon(icon)
-        Column(Modifier.weight(1f)) {
-            Text(title, style = MaterialTheme.typography.titleMediumEmphasized)
-            Text(meta, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-        // The night's Sleep Score, where the day card has room for one number.
-        score?.let {
-            Column(horizontalAlignment = Alignment.End) {
-                Text("$it", style = MaterialTheme.typography.titleLargeEmphasized)
-                Text("score", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-        }
-        Icon(
-            painterResource(R.drawable.ic_sym_chevron_right),
-            contentDescription = null,
-            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-    }
 }
 
 /**
@@ -242,7 +144,7 @@ fun MovementRidge(profile: List<Double>, accent: Color, grid: Color, height: Dp 
 
 /** 12-hour AM/PM ticks every 6 hours, matching the ridge's anchors. */
 @Composable
-private fun RidgeAxis() {
+internal fun RidgeAxis() {
     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
         listOf(0, 6, 12, 18, 24).forEach { h ->
             val m = ((h % 24) + 24) % 24

@@ -77,7 +77,7 @@ class TrendsTest {
         val up = trendWindow(series(0 to 52.0, 8 to 40.0, 9 to 40.0, 10 to 40.0), end, days = 7)
         assertEquals("12 ms higher than the 7 days before", TrendMetric.HRV.describeChange(up))
         val steps = trendWindow(series(0 to 6_000.0, 8 to 8_500.0, 9 to 8_500.0, 10 to 8_500.0), end, days = 7)
-        assertEquals("2,500 lower than the 7 days before", TrendMetric.STEPS.describeChange(steps))
+        assertEquals("2,500 steps lower than the 7 days before", TrendMetric.STEPS.describeChange(steps))
         val pct = trendWindow(series(0 to 81.0, 8 to 80.0, 9 to 80.0, 10 to 80.0), end, days = 7)
         assertEquals("1% higher than the 7 days before", TrendMetric.EFFICIENCY.describeChange(pct))
         // 0.04 h is under the one decimal it would be shown in.
@@ -126,6 +126,35 @@ class TrendsTest {
         val s = Summary(nights = listOf(row.copy(start = "23:30", end = "07:30"), night("2026-11-14")))
         assertEquals(listOf(13.625), trendPoints(s, TrendMetric.BREATHING).map { it.value })
         assertEquals("13.6", TrendMetric.BREATHING.format(13.625))
+    }
+
+    @Test
+    fun `scores lead, then sleep and activity, then the body's signals`() {
+        assertEquals(
+            listOf(
+                TrendMetric.READINESS, TrendMetric.SLEEP_SCORE, TrendMetric.ACTIVITY_SCORE,
+                TrendMetric.ASLEEP, TrendMetric.STEPS, TrendMetric.EFFICIENCY,
+                TrendMetric.RESTING_HR, TrendMetric.HRV, TrendMetric.BREATHING,
+                TrendMetric.SKIN_TEMP, TrendMetric.SPO2,
+            ),
+            TrendMetric.entries.toList(),
+        )
+    }
+
+    @Test
+    fun `the day's scores chart, and their changes read in points`() {
+        val s = Summary(
+            nights = listOf(night("2026-11-15").copy(sleepScore = org.openoura.android.data.SleepScore(64))),
+            readiness = mapOf("2026-11-15" to org.openoura.android.data.ReadinessScore(73)),
+            activityScores = mapOf("2026-11-15" to org.openoura.android.data.ActivityScore(49)),
+        )
+        assertEquals(listOf(73.0), trendPoints(s, TrendMetric.READINESS).map { it.value })
+        assertEquals(listOf(64.0), trendPoints(s, TrendMetric.SLEEP_SCORE).map { it.value })
+        assertEquals(listOf(49.0), trendPoints(s, TrendMetric.ACTIVITY_SCORE).map { it.value })
+        val w = org.openoura.android.ui.TrendWindow(emptyList(), 0, 7, mean = 70.0, previousMean = 66.0)
+        assertEquals("4 points higher than the 7 days before", TrendMetric.READINESS.describeChange(w))
+        val steps = org.openoura.android.ui.TrendWindow(emptyList(), 0, 7, mean = 3_900.0, previousMean = 7_757.0)
+        assertEquals("3,857 steps lower than the 7 days before", TrendMetric.STEPS.describeChange(steps))
     }
 
     @Test
