@@ -476,7 +476,7 @@ nightly need" but "a 7.5 h need". `app.js` hardcodes "an".
 
 Two Android features have no web or iOS counterpart, and are not omissions to close:
 
-- **Unattended sync** (`apps/android/.../sync/AutoSync.kt`): a 3-hour WorkManager floor plus
+- **Unattended sync** (`apps/android/.../sync/AutoSync.kt`): an hourly WorkManager floor (3-hour until 2026-11-20; the ring can be linked as a companion device so Android does not defer it, and a sync log on You → Syncing) plus
   a sync when the app is opened, with quiet hours derived from the user's own nightly
   `start`/`end` times. The desktop client has no equivalent need — it syncs when its owner
   runs `oura sync` or opens the dashboard, and a laptop is not carrying the ring around.

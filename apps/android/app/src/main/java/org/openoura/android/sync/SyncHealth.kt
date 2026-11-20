@@ -41,7 +41,7 @@ data class StaleAlert(val notify: StaleLevel?, val state: StaleLevel)
  * The ring keeps a rolling ~8.5 days and then overwrites the oldest. [AutoSync] is right
  * that skipping a night costs nothing, and that is exactly why nothing ever said anything:
  * a ring left in a drawer, a revoked Bluetooth permission or a rejected key all fail
- * quietly, every three hours, until the week is gone.
+ * quietly, every hour, until the week is gone.
  *
  * What is measured is the time since the last *complete* sync, which is when the phone was
  * last level with the ring. A drain that was cut short still saved the oldest of what was

@@ -58,6 +58,12 @@ enum class SyncTrigger {
 
     /** The refresh button on the home-screen widget: someone asked, by hand, right now. */
     WIDGET,
+
+    /**
+     * Android saw the ring come back into range ([RingPresenceService]), after the phone
+     * and the ring were apart. Held to quiet hours like the scheduled job.
+     */
+    PRESENCE,
 }
 
 enum class SyncDecision { SYNC, TOO_SOON, ASLEEP }
@@ -66,13 +72,14 @@ enum class SyncDecision { SYNC, TOO_SOON, ASLEEP }
 enum class SyncOutcome { DONE, FAILED, CANCELLED }
 
 /** What a finished run leaves behind: whether to rebuild the summary, and whether the
- *  3-hour interval has been spent. */
+ *  interval has been spent. */
 data class SyncAftermath(val recompute: Boolean, val consumeInterval: Boolean)
 
 /**
  * When to sync from the ring without being asked.
  *
- * Two triggers feed one policy: a 3-hour periodic worker, and opening the app.
+ * Two triggers feed one policy: an hourly periodic worker, and opening the app (plus the
+ * widget, battery follow-ups and the ring coming into range, each with its own floor).
  *
  * **Doze is the real activity detector, and it is free.** With the phone still, dark and
  * unplugged — which is to say, while its owner is asleep — the system defers jobs into
@@ -96,8 +103,12 @@ data class SyncAftermath(val recompute: Boolean, val consumeInterval: Boolean)
  */
 object AutoSync {
 
-    /** The floor between syncs, whatever wakes us. */
-    const val MIN_INTERVAL_SEC = 3L * 60 * 60
+    /**
+     * The floor between scheduled syncs. An hour since 2026-11-20 (it was three): a sync is a
+     * few seconds of radio for a ring that already spends 1.3–2.2%/h, and three hours —
+     * which Android's own deferral often stretched to five — left the day's figures stale.
+     */
+    const val MIN_INTERVAL_SEC = 60L * 60
 
     /** Below this many nights the sleep window is guesswork, so there are no quiet hours. */
     const val MIN_NIGHTS = 7
@@ -105,6 +116,7 @@ object AutoSync {
     private const val PREFS = "auto_sync"
     private const val KEY_LAST_ATTEMPT = "last_attempt_unix"
     private const val PERIODIC = "auto-sync"
+    private const val KEY_PERIOD_H = "periodic_hours"
     private const val ONE_SHOT = "auto-sync-now"
     private const val FOLLOW_UP = "auto-sync-follow-up"
 
@@ -147,7 +159,7 @@ object AutoSync {
     }
 
     /**
-     * The widget's refresh button is a person asking, so the 3-hour floor does not apply.
+     * The widget's refresh button is a person asking, so the hourly floor does not apply.
      * A minute is only there to swallow a double tap: a scan for a ring that is out of
      * reach takes 25 s, and two of those back to back help nobody.
      */
@@ -157,6 +169,9 @@ object AutoSync {
     fun minIntervalFor(trigger: SyncTrigger): Long = when (trigger) {
         SyncTrigger.FOLLOW_UP -> FOLLOW_UP_MIN_INTERVAL_SEC
         SyncTrigger.WIDGET -> WIDGET_MIN_INTERVAL_SEC
+        // The ring has been away and is back: worth a look sooner than the hour, though not
+        // every time it drops out of range for a minute in another room.
+        SyncTrigger.PRESENCE -> FOLLOW_UP_MIN_INTERVAL_SEC
         else -> MIN_INTERVAL_SEC
     }
 
@@ -165,7 +180,7 @@ object AutoSync {
      * null when the ordinary cadence will do.
      *
      * Not at critical: every sync pulls a nearly empty ring's voltage down, and with the 5%
-     * warning given there is nothing left to warn about. The 3-hour job still notices the
+     * warning given there is nothing left to warn about. The hourly job still notices the
      * ring going onto its charger, which restarts the 30-minute cadence.
      */
     fun followUpDelaySec(charging: Boolean, band: BatteryLevel?): Long? = when {
@@ -272,18 +287,22 @@ object AutoSync {
     }
 
     /**
-     * The 3-hour floor.
+     * The hourly job.
      *
      * KEEP, not UPDATE: re-enqueuing on every launch with UPDATE would restart the period
      * each time and a frequently-opened app would never reach its own interval.
      */
     fun schedulePeriodic(ctx: Context) {
-        val req = PeriodicWorkRequestBuilder<AutoSyncWorker>(3, TimeUnit.HOURS)
+        val req = PeriodicWorkRequestBuilder<AutoSyncWorker>(1, TimeUnit.HOURS)
             .setConstraints(Constraints.Builder().setRequiresBatteryNotLow(true).build())
             .setInputData(workDataOf(KEY_TRIGGER to SyncTrigger.PERIODIC.name))
             .build()
-        WorkManager.getInstance(ctx)
-            .enqueueUniquePeriodicWork(PERIODIC, ExistingPeriodicWorkPolicy.KEEP, req)
+        // UPDATE once, for phones still holding the 3-hour job: KEEP would leave it in place.
+        // After that KEEP again, for the reason above.
+        val prefs = ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+        val policy = if (prefs.getInt(KEY_PERIOD_H, 3) != 1) ExistingPeriodicWorkPolicy.UPDATE else ExistingPeriodicWorkPolicy.KEEP
+        WorkManager.getInstance(ctx).enqueueUniquePeriodicWork(PERIODIC, policy, req)
+        prefs.edit().putInt(KEY_PERIOD_H, 1).apply()
     }
 
     /**
@@ -353,15 +372,18 @@ class AutoSyncWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(c
         // A manual sync owns the radio; two drains on one link would fight.
         if (RingSyncService.isRunning) {
             Log.i(TAG, "$trigger: a manual sync is already running")
+            SyncLog.record(ctx, trigger.name, SyncLogResult.SKIPPED, "another sync was running")
             return Result.success()
         }
         // Same for a heart-rate measurement: it holds the link for half a minute.
         if (LiveHeartRate.isRunning) {
             Log.i(TAG, "$trigger: a heart-rate measurement is running")
+            SyncLog.record(ctx, trigger.name, SyncLogResult.SKIPPED, "measuring heart rate")
             return Result.success()
         }
         if (!RingKeyStore(ctx).hasKey) {
             Log.i(TAG, "$trigger: no ring key stored")
+            SyncLog.record(ctx, trigger.name, SyncLogResult.SKIPPED, "no ring key")
             return Result.success()
         }
 
@@ -375,6 +397,7 @@ class AutoSyncWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(c
             SyncDecision.SYNC -> Unit
             else -> {
                 Log.i(TAG, "$trigger: skipped ($decision)")
+                SyncLog.record(ctx, trigger.name, SyncLogResult.SKIPPED, SyncLog.skipReason(decision, floor))
                 // This worker is the one clock that keeps ticking while syncs fail, so it
                 // is where an overdue sync gets noticed — but not said in the small hours.
                 if (decision != SyncDecision.ASLEEP) SyncHealth.check(ctx, now)
@@ -403,6 +426,7 @@ class AutoSyncWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(c
             val after = AutoSync.aftermath(SyncOutcome.CANCELLED, drained)
             if (!after.consumeInterval) AutoSync.clearAttempt(ctx)
             Log.i(TAG, "$trigger: stopped after $drained events (retry=${!after.consumeInterval})")
+            SyncLog.record(ctx, trigger.name, SyncLogResult.STOPPED, "%,d events".format(drained))
             throw c
         }
 
@@ -414,6 +438,7 @@ class AutoSyncWorker(ctx: Context, params: WorkerParameters) : CoroutineWorker(c
             is SyncPhase.Done -> Log.i(TAG, "$trigger: ${phase.events} events, ${phase.inserted} new")
             else -> Log.w(TAG, "$trigger: ${(phase as? SyncPhase.Failed)?.message ?: phase}")
         }
+        SyncLog.record(ctx, trigger.name, SyncLog.resultOf(phase), SyncLog.detailOf(phase))
         if (after.recompute) {
             runCatching { repo.recompute() }
                 .onFailure { Log.e(TAG, "post-sync recompute failed", it) }

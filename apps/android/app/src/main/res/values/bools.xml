@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- RingPresenceService needs Android 13 (values-v33 turns it on). -->
+    <bool name="companion_presence">false</bool>
+</resources>

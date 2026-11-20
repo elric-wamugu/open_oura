@@ -100,7 +100,7 @@ class SyncFromWidget : ActionCallback {
             WidgetSyncPath.ALREADY_RUNNING -> if (LiveHeartRate.isRunning && WidgetSync.finish(context)) {
                 WidgetUpdates.refreshAll(context)
             }
-            WidgetSyncPath.FOREGROUND -> runCatching { RingSyncService.start(context) }.onFailure {
+            WidgetSyncPath.FOREGROUND -> runCatching { RingSyncService.start(context, SyncTrigger.WIDGET.name) }.onFailure {
                 // Android refused the start (it is its call to make): slower beats not at all.
                 Log.w(TAG, "widget sync: foreground start refused, using the background worker", it)
                 RingSyncService.acknowledgeRefusedStart()

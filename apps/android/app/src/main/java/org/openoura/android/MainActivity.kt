@@ -55,7 +55,7 @@ class MainActivity : ComponentActivity() {
      * all; verified on 2026-09-18 by bringing the existing task to the front and watching
      * the log stay empty, then force-stopping and seeing it fire at once.
      *
-     * [AutoSync.decide] still applies the 3-hour floor, so this costs an enqueue per
+     * [AutoSync.decide] still applies the hourly floor, so this costs an enqueue per
      * resume, not a sync.
      */
     override fun onResume() {
