@@ -76,6 +76,18 @@ object SleepInterpretation {
     internal fun article(need: String) = if (need.startsWith("8")) "an" else "a"
 
     /**
+     * Where a night's stages came from, in a line, or null when there are none to explain.
+     * Two sources can disagree on the same night — they agree on about two thirds of its
+     * 30-second epochs — so the page says which one it is showing.
+     */
+    fun stageSourceNote(source: String?): String? = when (source) {
+        "stager" -> "Stages worked out on this phone from your heart beats, movement and skin temperature."
+        "ring" -> "Stages as the ring recorded them. This phone works out its own as it catches up on past nights."
+        "model" -> "Stages from the sleep model."
+        else -> null
+    }
+
+    /**
      * The sleep-debt footnote, or null when there is not enough history to mean anything.
      *
      * `valid` is the brain's own judgement on that and is not second-guessed here.

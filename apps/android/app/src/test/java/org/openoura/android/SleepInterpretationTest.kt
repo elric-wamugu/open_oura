@@ -128,4 +128,18 @@ class SleepInterpretationTest {
         assertEquals(1440, nightWindow(null, null).spanMin)
         assertEquals(1440, nightWindow("ab:cd", "").spanMin)
     }
+
+    @Test
+    fun `the sleep page says where its stages came from`() {
+        assertEquals(
+            "Stages worked out on this phone from your heart beats, movement and skin temperature.",
+            SleepInterpretation.stageSourceNote("stager"),
+        )
+        assertEquals(
+            "Stages as the ring recorded them. This phone works out its own as it catches up on past nights.",
+            SleepInterpretation.stageSourceNote("ring"),
+        )
+        assertNull(SleepInterpretation.stageSourceNote("none"))
+        assertNull(SleepInterpretation.stageSourceNote(null))
+    }
 }

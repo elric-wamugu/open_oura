@@ -117,6 +117,7 @@ private fun ColumnScope.SleepReport(s: Summary, ymd: String) {
 
     SectionHeader("Sleep architecture", Modifier.padding(top = 4.dp))
     StageBar(n)
+    SleepInterpretation.stageSourceNote(n.stagesSource)?.let { Footnote(it) }
 
     n.metrics?.let { m ->
         SectionHeader("Sleep metrics", Modifier.padding(top = 4.dp))

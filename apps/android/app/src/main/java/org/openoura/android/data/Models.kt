@@ -89,6 +89,9 @@ data class NightRow(
     val stages: List<Int>? = null,
     /** Full-resolution 30 s stages; present model-free via the ring's own hypnogram. */
     @SerialName("stages_full") val stagesFull: List<Int>? = null,
+    /** Where the hypnogram came from: "model", "stager" (staged on this phone), "ring" (the
+     *  ring's own phases) or "none". */
+    @SerialName("stages_source") val stagesSource: String? = null,
     val metrics: SleepMetrics? = null,
     val autonomic: Autonomic? = null,
     val series: NightSeries? = null,
@@ -265,6 +268,9 @@ data class Summary(
     @SerialName("generated_at") val generatedAt: Double? = null,
     /** Where the core's recompute went, stage → ms. Diagnostic: logged, never rendered. */
     @SerialName("timings_ms") val timingsMs: Map<String, Double> = emptyMap(),
+    /** What the on-device sleep stager did in this recompute: nights reused from its cache,
+     *  staged now, and left for a later recompute. Diagnostic: logged, never rendered. */
+    val stager: StagerStats? = null,
     val error: String? = null,
 ) {
     /**
@@ -315,3 +321,6 @@ internal fun localYmd(unix: Double): String {
     val d = java.time.Instant.ofEpochSecond(unix.toLong()).atZone(java.time.ZoneId.systemDefault())
     return "%04d-%02d-%02d".format(d.year, d.monthValue, d.dayOfMonth)
 }
+
+@Serializable
+data class StagerStats(val reused: Int = 0, val staged: Int = 0, val pending: Int = 0)

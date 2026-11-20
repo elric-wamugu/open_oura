@@ -735,6 +735,43 @@ that reads the pulse live for 30 seconds.
   `Dispatchers.IO` for this; `LiveHeartRate` now has its own IO scope, which also means a
   rotation cannot cancel a measurement half-way and strand the ring in live mode.
 
+### Sleep stages worked out on the phone (2026-11-20)
+
+The app has no sleep model, so until now a night's hypnogram was the ring's own
+`sleep_phase_data`. Nights are now staged on the phone by the stager from upstream
+Th0rgal/open_oura#36 (`oura-analysis::sleepstaging`, see
+[staging-classifier.md](algorithms/staging-classifier.md)) from the night's beat intervals
+(`0x60`), motion (`0x72`) and skin temperature (`0x75`).
+
+- **Android only.** `oura-core::summary_json_staged` turns it on; `summary_json`, which iOS
+  calls, and the desktop dashboard are unchanged and still show the ring's own stages when
+  no model ran. In `build_summary_with` it is `SummaryOptions::stage_sleep`.
+- **Precedence:** a model's stages, then the stager's, then the ring's. Each night says which
+  in `stages_source` ("model", "stager", "ring", "none"), and the sleep page says it in a
+  line under "Sleep architecture". The stager's output is not smoothed again; it has its own
+  post-processing.
+- **Once a night.** Results go into the `sleep_stage_cache` table, keyed by the night's ring
+  times, the earliest capture time of its boot (ring times repeat across reboots), and the
+  model name. A night within three days of the newest data is checked against a fresh count
+  of its input events and staged again if it has gained some.
+- **Time budget.** A recompute spends at most `STAGE_BUDGET_MS` (10 s) on nights not yet in
+  the cache, newest first. On the Pixel 9a that staged 19 nights; the first recompute with
+  124 nights left most for later ones, which work through the rest while the ring's stages
+  stand in. A recompute with everything cached spends about 0.1 s on it.
+- **Reading a night's inputs** goes straight to the store (`decoded_events_in_window`) rather
+  than through the summary's main read, which no longer carries beat-interval JSON (it is
+  80 MB of it).
+- **Dating.** The stager's own clock uses the ring's `time_sync` events, which this database
+  has almost none of; none are passed, so it falls back to the summary's fitted clock for
+  every event.
+
+How it compares, on the same 124 nights from one Ring 3: the stager and the ring's own stages
+agree on 65% of 30-second epochs. The stager gives less deep sleep (12.7% of the night
+against 18.2%), more light (48.3% against 42.8%) and less REM (14.8% against 18.1%).
+Neither is ground truth. The stager's author reports 92.6% agreement with the official app's
+stages on 14 nights from one person; how the ring's own stages compare with the app is
+unknown, and so, for this user, is which of the two is closer.
+
 ---
 
 ## Material 3 Expressive UI — **DONE** (2026-10-12)
