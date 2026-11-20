@@ -145,13 +145,15 @@ fun CardioPanel(
             )
         }
 
+        PulseShapeSection(summary)
+
         val cv = summary.cardio
         val vascular = cv?.vascularAge
         if (vascular == null) {
             Fact("Vascular age", "needs Oura's CVA model")
             Text(
-                "Cardiovascular age needs Oura's CVA model, which isn't bundled. The raw PPG is " +
-                    "captured — scoring it requires that model.",
+                "Cardiovascular age needs Oura's CVA model, which isn't bundled. The pulse shape " +
+                    "above is this app's own reading of the same waveform.",
                 style = MaterialTheme.typography.bodySmall,
                 color = cs.onSurfaceVariant,
             )
@@ -168,6 +170,66 @@ fun CardioPanel(
             cv.segments?.let { Fact("Segments analysed", "$it") }
         }
     }
+}
+
+/** The pulse shape's latest night against the usual, in words. Pure, so tested. */
+object PulseShapeText {
+    /** Main nights with a value, newest first. */
+    fun nights(s: Summary): List<Pair<String, Double>> =
+        s.nights.filter { it.main }.mapNotNull { n -> n.pulseShape?.bOverA?.let { (s.wakeYmd(n) ?: "") to it } }
+
+    /** The median of the nights before the latest, when there are at least three. */
+    fun usual(values: List<Double>): Double? = values.drop(1).take(30).takeIf { it.size >= 3 }?.sorted()?.let {
+        if (it.size % 2 == 1) it[it.size / 2] else (it[it.size / 2 - 1] + it[it.size / 2]) / 2
+    }
+
+    /** "In line with your usual −0.70" / "Less negative than your usual −0.70". */
+    fun versus(latest: Double, usual: Double?): String? {
+        usual ?: return null
+        val d = latest - usual
+        val word = when {
+            kotlin.math.abs(d) < 0.03 -> "In line with"
+            d > 0 -> "Less negative than"
+            else -> "More negative than"
+        }
+        return "$word your usual ${"%.2f".format(usual).replace('-', '−')}"
+    }
+
+    fun format(v: Double): String = "%.2f".format(v).replace('-', '−')
+}
+
+/**
+ * The pulse-shape index from the ring's raw PPG — this app's own, model-free reading of the
+ * waveform Oura's CVA model uses. A trend, not an age: it is established on fingertip
+ * sensors, not on a ring.
+ */
+@Composable
+private fun PulseShapeSection(summary: Summary) {
+    val cs = MaterialTheme.colorScheme
+    val nights = PulseShapeText.nights(summary)
+    val latest = nights.firstOrNull()
+    if (latest == null) {
+        Fact("Pulse shape", "needs Cardio PPG")
+        Text(
+            "Turn on Cardio PPG on the Ring tab. The ring then records short pulse waveforms overnight, " +
+                "and this shows how their shape changes over months.",
+            style = MaterialTheme.typography.bodySmall,
+            color = cs.onSurfaceVariant,
+        )
+        return
+    }
+    Fact("Pulse shape (b/a)", PulseShapeText.format(latest.second))
+    val usual = PulseShapeText.usual(nights.map { it.second })
+    Text(
+        listOfNotNull(
+            PulseShapeText.versus(latest.second, usual)?.let { "$it, ${dayTitle(latest.first)}." },
+            "From the second derivative of each night's averaged pulse (b/a). It grows less negative " +
+                "as arteries stiffen with age, so watch it over months rather than night to night. " +
+                "Studied on fingertip sensors, not rings: a trend, not a vascular age.",
+        ).joinToString(" "),
+        style = MaterialTheme.typography.bodySmall,
+        color = cs.onSurfaceVariant,
+    )
 }
 
 @Composable

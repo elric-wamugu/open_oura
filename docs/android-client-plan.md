@@ -824,6 +824,31 @@ efficiency, restfulness, REM, deep, latency, timing), shown on Today's sleep car
   way.
 - **Android only.** The web and iOS receive `sleep_score` in the summary and show nothing.
 
+### Pulse shape from Cardio PPG (2026-11-21)
+
+With Cardio PPG on, the ring records ~30 s raw PPG bursts overnight (`cva_raw_ppg_data`,
+`0x81`). Oura reads them with its CVA model, which is not bundled; this reads them with an
+open, published measure instead: the **b/a ratio of the second-derivative pulse** (Takazawa
+1998), which grows less negative as arteries stiffen. `oura-summary`'s `ppg_shape.rs`:
+
+- Rebuilds each burst's waveform from the raw bodies (deltas off the last absolute sample,
+  carried across events; a new `Store::raw_events_in_window` reads them). The sample rate is
+  samples over the burst's span in ring time: about 52 Hz on this Gen3. The waveform's pulse
+  rate matched the ring's own heart rate (median ratio 1.03 over 288 bursts).
+- Removes the baseline, finds the beats, keeps those within 20% of the median length and
+  correlating above 0.9 with the median beat (at least six), averages them, and takes b/a
+  from the second derivative of that pulse. A night is the median of at least three usable
+  bursts. Cached per night beside the stages (`pulse-shape-v1`), keyed on its PPG count.
+- Checked against a Python prototype: identical on all 336 usable bursts of this user's
+  July–August history; 21 nights get a value, typically around −0.70 (−0.55 to −0.91), and it
+  does not follow heart rate (correlation −0.07).
+- **The stiffness index was dropped:** a reflected peak to time was found in only 42 of the
+  336 averaged pulses — at 52 Hz from the base of the finger it is mostly not there.
+
+Android shows it in the Cardiovascular panel (latest night against the median of the 30
+before) and as "Pulse shape (b/a)" under Body signals in Trends. It is a trend, not a
+vascular age: b/a is established on fingertip sensors, not rings.
+
 ### Today as a bento, History as a day story (2026-11-20)
 
 Chosen from three Material 3 Expressive mockups (hero score, bento, day story).

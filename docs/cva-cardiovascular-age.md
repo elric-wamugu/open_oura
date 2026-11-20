@@ -62,6 +62,13 @@ python tools/run_cva_model.py [DB] --sex M --age 30 --height 1.78 --weight 75 --
 On one night (10 valid 1500-sample segments from 18 measurements) with placeholder
 demographics: vascular age ≈ 18.8 y, PWV ≈ 4.5 m/s, quality 2 / raw 0.70.
 
+## Without the model
+
+`oura-summary` (`ppg_shape.rs`) reads the same bursts with an open measure, the
+second-derivative b/a ratio, nightly; see `docs/android-client-plan.md` ("Pulse shape from
+Cardio PPG"). On a Gen3 the bursts are ~30 s at ~52 Hz, not the ~10 s at ~140 Hz noted above
+for a Ring 5.
+
 ## Caveats
 - Absolute `daily_cva` is only meaningful with the user's real demographics.
 - We segment by a 2 s event-gap heuristic; the app groups by the protobuf

@@ -532,6 +532,28 @@ impl Store {
         Ok(out)
     }
 
+    /// The raw bodies of one tag's events in a window of one boot, `(ring ds, body)` in
+    /// arrival order. For streams whose decoding carries state from one event to the next —
+    /// the raw PPG (`0x81`) is deltas off the last absolute sample — so the per-event JSON,
+    /// decoded statelessly, cannot rebuild the waveform.
+    pub fn raw_events_in_window(
+        &self,
+        serial: &str,
+        tag: u8,
+        (ds_lo, ds_hi): (i64, i64),
+        (cu_lo, cu_hi): (i64, i64),
+    ) -> Result<Vec<(i64, Vec<u8>)>> {
+        let mut stmt = self.conn.prepare_cached(
+            "SELECT ring_timestamp, body FROM events \
+             WHERE serial = ?1 AND tag = ?2 AND ring_timestamp BETWEEN ?3 AND ?4 \
+             AND captured_unix BETWEEN ?5 AND ?6 ORDER BY id",
+        )?;
+        let rows = stmt.query_map(params![serial, tag as i64, ds_lo, ds_hi, cu_lo, cu_hi], |r| {
+            Ok((r.get::<_, i64>(0)?, r.get::<_, Vec<u8>>(1)?))
+        })?;
+        Ok(rows.collect::<std::result::Result<_, _>>()?)
+    }
+
     /// How many events [`Store::decoded_events_in_window`] would return, without reading
     /// them: a cheap way to tell whether a window has gained data since it was last read.
     pub fn count_events_in_window(
