@@ -461,6 +461,8 @@ nightly need" but "a 7.5 h need". `app.js` hardcodes "an".
   when no model ran. The stager is in the shared Rust, so either can turn it on with
   `SummaryOptions::stage_sleep`; see `docs/android-client-plan.md`.
 
+- **Today and History layouts** (2026-11-20): Android's Today is a bento of the three
+  scores and History a Day/Week/Month timeline; the web and iOS keep their own layouts.
 - **Detected nights** (`nights[].detected`, from `oura-summary`'s `bedtime.rs`): every
   client gets the night itself; only Android says it is not yet confirmed by the ring.
 - **Breathing rate** (`nights[].breathing_rate`, from `oura-summary`'s `staging.rs`):

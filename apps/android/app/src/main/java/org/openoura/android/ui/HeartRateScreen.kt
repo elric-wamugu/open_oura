@@ -41,44 +41,6 @@ import org.openoura.android.ble.LiveHeartRate
 import org.openoura.android.ui.theme.chartColors
 
 /**
- * The card on Today that starts a measurement, between Vitals and Cardiovascular: the
- * vitals are last night's, this is right now, and the cardiovascular panel is the long view.
- */
-@Composable
-fun HeartRateCard(last: HeartReading?, nowUnix: Long, onMeasure: () -> Unit, modifier: Modifier = Modifier) {
-    val cs = MaterialTheme.colorScheme
-    Surface(
-        onClick = onMeasure,
-        shape = MaterialTheme.shapes.extraLarge,
-        color = cs.surfaceContainer,
-        modifier = modifier.fillMaxWidth(),
-    ) {
-        Row(
-            Modifier.padding(horizontal = 18.dp, vertical = 16.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(14.dp),
-        ) {
-            Icon(
-                painterResource(R.drawable.ic_sym_favorite),
-                contentDescription = null,
-                tint = chartColors().hr,
-                modifier = Modifier.size(28.dp),
-            )
-            Column(Modifier.weight(1f)) {
-                Text("Measure heart rate", style = MaterialTheme.typography.titleMedium)
-                Text(
-                    last?.let { "Last: ${it.bpm} bpm, ${LiveHeartRate.ago(it.atUnix, nowUnix)}" }
-                        ?: "Takes ${LiveHeartRate.SECONDS} seconds with the ring on",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = cs.onSurfaceVariant,
-                )
-            }
-            Icon(painterResource(R.drawable.ic_sym_chevron_right), contentDescription = null, tint = cs.onSurfaceVariant)
-        }
-    }
-}
-
-/**
  * Measuring heart rate now.
  *
  * One screen for the whole of it — looking for the ring, the live figure, the result —
