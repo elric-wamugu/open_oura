@@ -1,5 +1,6 @@
 package org.openoura.android.ble
 
+import org.openoura.android.sync.SyncLog
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -78,6 +79,8 @@ class RingSyncService : Service() {
             return START_NOT_STICKY
         }
         running = true
+        // For the sync log: what asked. The Ring tab's "Sync now" unless a caller said.
+        val startedBy = intent?.getStringExtra(EXTRA_TRIGGER) ?: "MANUAL"
 
         scope.launch {
             // try/finally, because runRingSync now lets cancellation through: without it a
@@ -91,6 +94,7 @@ class RingSyncService : Service() {
                 _phase.value = result
                 SyncHealth.record(applicationContext, result)
                 SyncHealth.check(applicationContext)
+                SyncLog.record(applicationContext, startedBy, SyncLog.resultOf(result), SyncLog.detailOf(result))
 
                 if (result is SyncPhase.Done) {
                     // Only now is the database newer than the cached summary. recompute()
@@ -173,10 +177,15 @@ class RingSyncService : Service() {
 
         val isRunning: Boolean get() = running
 
-        fun start(ctx: Context) {
+        /** [trigger] names the sync in the log: a [SyncTrigger] name, or "MANUAL". */
+        fun start(ctx: Context, trigger: String = "MANUAL") {
             _phase.value = SyncPhase.Running("starting")
-            ctx.startForegroundService(Intent(ctx, RingSyncService::class.java))
+            ctx.startForegroundService(
+                Intent(ctx, RingSyncService::class.java).putExtra(EXTRA_TRIGGER, trigger),
+            )
         }
+
+        private const val EXTRA_TRIGGER = "trigger"
 
         /** [start] set the phase to running before Android refused the service: undo that. */
         fun acknowledgeRefusedStart() {

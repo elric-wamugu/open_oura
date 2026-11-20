@@ -50,6 +50,14 @@
     <uses-permission android:name="android.permission.health.WRITE_TOTAL_CALORIES_BURNED" />
 
     <!-- No BLE, no ring: this app has nothing to offer a device without it. -->
+    <!-- The ring as a companion device (sync/RingCompanion.kt): linked, the app is left out
+         of Doze and App Standby, may start its sync service from the background, and is
+         woken when the ring comes back into range. Nothing here is used until it is linked. -->
+    <uses-permission android:name="android.permission.REQUEST_COMPANION_RUN_IN_BACKGROUND" />
+    <uses-permission android:name="android.permission.REQUEST_COMPANION_START_FOREGROUND_SERVICES_FROM_BACKGROUND" />
+    <uses-permission android:name="android.permission.REQUEST_OBSERVE_COMPANION_DEVICE_PRESENCE" />
+    <uses-feature android:name="android.software.companion_device_setup" android:required="false" />
+
     <uses-feature android:name="android.hardware.bluetooth_le" android:required="true" />
 
     <application
@@ -93,6 +101,17 @@
                 <category android:name="android.intent.category.HEALTH_PERMISSIONS" />
             </intent-filter>
         </activity-alias>
+
+        <service
+            android:name=".sync.RingPresenceService"
+            android:enabled="@bool/companion_presence"
+            tools:targetApi="33"
+            android:exported="true"
+            android:permission="android.permission.BIND_COMPANION_DEVICE_SERVICE">
+            <intent-filter>
+                <action android:name="android.companion.CompanionDeviceService" />
+            </intent-filter>
+        </service>
 
         <service
             android:name=".ble.RingSyncService"

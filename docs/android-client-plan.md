@@ -824,6 +824,32 @@ efficiency, restfulness, REM, deep, latency, timing), shown on Today's sleep car
   way.
 - **Android only.** The web and iOS receive `sleep_score` in the summary and show nothing.
 
+### Syncing more often: hourly, a sync log, the ring as a companion device (2026-11-20)
+
+The ring synced too rarely in the day. Three things changed:
+
+- **Hourly.** The scheduled sync and the floor between automatic syncs went from three hours
+  to one (`AutoSync.MIN_INTERVAL_SEC`, the periodic job). The job is re-enqueued once with
+  `UPDATE` so phones holding the old 3-hour job move over; quiet hours still apply.
+- **A sync log** (You → Syncing, `sync/SyncLog.kt`): every attempt, newest first, with what
+  woke it (scheduled, app opened, widget, battery check, ring came near, sync now) and how
+  it ended — synced with its new events, failed with the message, stopped by Android, or
+  skipped and why (synced less than an hour ago, usual sleep hours, another sync running).
+  The last 200 entries, in one JSON file on the phone.
+- **The ring as a companion device** (`sync/RingCompanion.kt`, Android 13+). "Link the ring"
+  opens Android's own pairing window, filtered to the ring's advertised service. Once
+  linked, with `REQUEST_COMPANION_RUN_IN_BACKGROUND`, Android puts the app in the exempted
+  standby bucket and on the Doze allowlist — the reason an hourly job ran every four or
+  five hours — and `RingPresenceService` is woken when the ring comes back into range, which
+  asks for a sync held to a 20-minute floor and to quiet hours. The ring stops advertising
+  while a sync holds the link, so presence changes within 20 minutes of an attempt are
+  ignored rather than logged.
+
+Verified on the Pixel 9a (Android 17): linked through the system window, standby bucket 5
+(exempted), on the Doze allowlist, association present and observed; the first hourly job
+ran at once and drained 786 events. To watch: the ring advertises a resolvable private
+address; if presence stops arriving, the log will show no more "Ring in range" lines.
+
 ### Bedtime detection (2026-11-20)
 
 A night reaches the summary as the ring's `bedtime_period`. When a sync brings the night's

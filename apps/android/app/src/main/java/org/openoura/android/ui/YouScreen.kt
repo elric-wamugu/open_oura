@@ -59,6 +59,9 @@ fun YouScreen(
     ringKeyFingerprint: String?,
     onSaveProfile: (RingProfile) -> Unit,
     onRingKey: () -> Unit,
+    /** "Linked · 6 syncs today", and the sync log behind it. */
+    syncDetail: String,
+    onSyncLog: () -> Unit,
     onHealthConnect: () -> Unit,
     onBackup: () -> Unit,
     onImportDatabase: () -> Unit,
@@ -100,6 +103,12 @@ fun YouScreen(
                         detail = ringKeyFingerprint?.let { "#$it" } ?: "Not set — the ring won't sync without it",
                         code = ringKeyFingerprint != null,
                         onClick = onRingKey,
+                    ),
+                    LinkRow(
+                        icon = R.drawable.ic_sym_sync,
+                        title = "Syncing",
+                        detail = syncDetail,
+                        onClick = onSyncLog,
                     ),
                     LinkRow(
                         icon = R.drawable.ic_sym_health_and_safety,

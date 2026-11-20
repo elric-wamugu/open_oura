@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- RingPresenceService is Android 13+ (presence callbacks that carry the association). -->
+<resources>
+    <bool name="companion_presence">true</bool>
+</resources>

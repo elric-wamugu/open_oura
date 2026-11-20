@@ -27,6 +27,7 @@ import org.openoura.android.R
 
 @Serializable data object HealthConnectRoute : NavKey
 @Serializable data object BackupRoute : NavKey
+@Serializable data object SyncLogRoute : NavKey
 @Serializable data object HeartRateRoute : NavKey
 @Serializable data class ReadinessRoute(val ymd: String) : NavKey
 

@@ -118,6 +118,10 @@ import org.openoura.android.ui.components.ScreenScaffold
 import org.openoura.android.ui.dayTitle
 import org.openoura.android.ui.nav.DayReportRoute
 import org.openoura.android.ui.nav.BackupRoute
+import org.openoura.android.ui.nav.SyncLogRoute
+import org.openoura.android.ui.SyncLogScreen
+import org.openoura.android.sync.RingCompanion
+import org.openoura.android.sync.SyncLog
 import org.openoura.android.ui.nav.HealthConnectRoute
 import org.openoura.android.ui.nav.HistoryRoute
 import org.openoura.android.ui.nav.RingKeyRoute
@@ -175,6 +179,46 @@ fun OpenOuraApp(
     // SAF picker: the user grants access to one file, so the app needs no storage
     // permission. "*/*" because a .db has no registered MIME type and narrower filters
     // hide it in the picker.
+    // ── syncing: the log, and the ring as Android's companion device ──────────────────
+    var syncLog by remember { mutableStateOf(SyncLog.read(app)) }
+    var ringLinked by remember { mutableStateOf(if (RingCompanion.supported) RingCompanion.linked(app) else null) }
+    var syncMessage by remember { mutableStateOf<String?>(null) }
+    fun refreshSyncState() {
+        syncLog = SyncLog.read(app)
+        if (RingCompanion.supported) ringLinked = RingCompanion.linked(app)
+    }
+    LifecycleResumeEffect(Unit) {
+        refreshSyncState()
+        // An association survives app updates; observing presence is re-asserted on each
+        // start in case Android dropped it.
+        if (ringLinked == true && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) RingCompanion.observe(app)
+        onPauseOrDispose { }
+    }
+    val linkChooser = rememberLauncherForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) { result ->
+        // Success arrives through the association callback; only a back-out is told here.
+        if (result.resultCode != android.app.Activity.RESULT_OK) syncMessage = "The ring wasn't linked."
+    }
+    fun linkRing() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
+        syncMessage = null
+        RingCompanion.link(
+            app,
+            ContextCompat.getMainExecutor(app),
+            onChooser = { linkChooser.launch(androidx.activity.result.IntentSenderRequest.Builder(it).build()) },
+            onLinked = {
+                syncMessage = "Linked. Android will now let the app sync every hour."
+                refreshSyncState()
+            },
+            onFailed = { syncMessage = it },
+        )
+    }
+    fun unlinkRing() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU) return
+        RingCompanion.unlink(app)
+        syncMessage = "Unlinked. The hourly sync now runs when Android allows."
+        refreshSyncState()
+    }
+
     val pickDatabase = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         if (uri == null) return@rememberLauncherForActivityResult
         scope.launch {
@@ -539,6 +583,15 @@ fun OpenOuraApp(
                     scope.launch { busy = true; repo.recompute(); busy = false }
                 },
                 onRingKey = { navigator.push(RingKeyRoute) },
+                syncDetail = listOfNotNull(
+                    when (ringLinked) {
+                        true -> "Linked"
+                        false -> "Not linked"
+                        null -> null
+                    },
+                    SyncLog.todaySummary(syncLog),
+                ).joinToString(" · ").ifEmpty { "See when the ring last synced" },
+                onSyncLog = { navigator.push(SyncLogRoute) },
                 onHealthConnect = { navigator.push(HealthConnectRoute) },
                 onBackup = { navigator.push(BackupRoute) },
                 onImportDatabase = { pickDatabase.launch(arrayOf("*/*")) },
@@ -636,6 +689,20 @@ fun OpenOuraApp(
                     restingBpm = (state as? SummaryState.Ready)?.summary?.vitals?.rhr?.latest?.roundToInt(),
                     onStart = { LiveHeartRate.start(app) },
                     onStop = { LiveHeartRate.stop() },
+                    modifier = Modifier.padding(padding),
+                )
+            }
+        }
+        entry<SyncLogRoute> {
+            // Re-read on entry: syncs log from the background while the app is away.
+            LaunchedEffect(Unit) { refreshSyncState() }
+            ScreenScaffold(title = "Syncing", onBack = navigator::back) { padding ->
+                SyncLogScreen(
+                    log = syncLog,
+                    linked = ringLinked,
+                    message = syncMessage,
+                    onLink = ::linkRing,
+                    onUnlink = ::unlinkRing,
                     modifier = Modifier.padding(padding),
                 )
             }

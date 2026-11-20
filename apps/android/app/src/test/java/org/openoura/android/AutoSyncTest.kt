@@ -36,13 +36,13 @@ class AutoSyncTest {
     )
 
     @Test
-    fun `the three-hour floor holds for both triggers`() {
-        assertEquals(SyncDecision.TOO_SOON, decide(sinceLastSec = 2 * HOUR))
+    fun `the hourly floor holds for both triggers`() {
+        assertEquals(SyncDecision.TOO_SOON, decide(sinceLastSec = 50 * 60))
         assertEquals(
             SyncDecision.TOO_SOON,
-            decide(trigger = SyncTrigger.APP_OPEN, sinceLastSec = 2 * HOUR),
+            decide(trigger = SyncTrigger.APP_OPEN, sinceLastSec = 50 * 60),
         )
-        assertEquals(SyncDecision.SYNC, decide(sinceLastSec = 3 * HOUR))
+        assertEquals(SyncDecision.SYNC, decide(sinceLastSec = HOUR))
     }
 
     @Test
@@ -191,12 +191,25 @@ class AutoSyncTest {
         )
 
     @Test
-    fun `a follow-up has its own 20-minute floor, and the others keep three hours`() {
+    fun `a follow-up has its own 20-minute floor, and the others keep the hour`() {
         assertEquals(SyncDecision.TOO_SOON, followUp(sinceLastSec = 19 * 60))
         assertEquals(SyncDecision.SYNC, followUp(sinceLastSec = 25 * 60))
         assertEquals(SyncDecision.TOO_SOON, decide(sinceLastSec = 25 * 60))
-        assertEquals(3 * HOUR, AutoSync.minIntervalFor(SyncTrigger.PERIODIC))
-        assertEquals(3 * HOUR, AutoSync.minIntervalFor(SyncTrigger.APP_OPEN))
+        assertEquals(HOUR, AutoSync.minIntervalFor(SyncTrigger.PERIODIC))
+        assertEquals(HOUR, AutoSync.minIntervalFor(SyncTrigger.APP_OPEN))
+    }
+
+    @Test
+    fun `the ring coming back syncs after 20 minutes, but not in quiet hours`() {
+        val presence = { since: Long, minute: Int, window: SleepWindow? ->
+            AutoSync.decide(
+                SyncTrigger.PRESENCE, 1_000_000, 1_000_000 - since, minute, window,
+                AutoSync.minIntervalFor(SyncTrigger.PRESENCE),
+            )
+        }
+        assertEquals(SyncDecision.TOO_SOON, presence(10 * 60, 12 * 60, null))
+        assertEquals(SyncDecision.SYNC, presence(25 * 60, 12 * 60, null))
+        assertEquals(SyncDecision.ASLEEP, presence(2 * HOUR, 2 * 60, SleepWindow(23 * 60, 7 * 60)))
     }
 
     @Test
