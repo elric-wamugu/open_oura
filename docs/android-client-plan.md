@@ -824,6 +824,34 @@ efficiency, restfulness, REM, deep, latency, timing), shown on Today's sleep car
   way.
 - **Android only.** The web and iOS receive `sleep_score` in the summary and show nothing.
 
+### Bedtime detection (2026-11-20)
+
+A night reaches the summary as the ring's `bedtime_period`. When a sync brings the night's
+data without that period yet, Today used to have no last night until a later sync. Now
+`oura-summary` runs upstream's bedtime detector (`oura-analysis::ported::bedtime` and
+`bedtime_inputs`, Th0rgal/open_oura#32, with its reference vectors) over the newest boot's
+motion, temperature, state and resting-HR sessions since the last declared night, and adds
+what it finds that no declared night covers (`bedtime.rs`). Such a night is staged, scored
+and counted like any other, carries `"detected": true`, and the sleep report says the ring
+has not confirmed it. Once the ring's period arrives the detected one overlaps it and is
+dropped.
+
+- **Only declared periods of 90 minutes or more count**, the summary's own floor for a
+  night. The ring also declares 10–40 minute stretches of stillness. Given to the detector,
+  one this afternoon hid last night (it only looks after the latest period it is given),
+  and one at 00:26 hid the night that started there.
+- **How often it matters here:** on 114 of 119 nights the ring's period came in the same
+  sync as the night's data; on 5 it came 3 to 22 hours later.
+- **Replay** (each of the last 25 main sleeps, as if an hour after waking with its period
+  not yet declared): start and end within a few minutes of the ring's on most nights;
+  one daytime nap missed; a 43-hour ring period split into three.
+- **End to end**, with last night's period deleted from a copy of the database: detected
+  00:25–09:20 against the ring's 01:16–08:37, Sleep Score 52 against 64, Readiness 71
+  against 73. With the database as it is, nothing is detected and every figure is the same.
+- About 40–60 ms a recompute (34 ms on the Pixel 9a).
+
+Android only in the UI: the summary's `nights[].detected` reaches every client.
+
 ### Breathing rate (2026-11-20)
 
 The sleep report gains a **Breathing** section — the night's average breathing rate and

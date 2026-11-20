@@ -113,6 +113,7 @@ private fun ColumnScope.SleepReport(s: Summary, ymd: String) {
             "${n.start ?: "—"}–${n.end ?: "—"}" to "Bedtime",
         ),
     )
+    SleepInterpretation.detectedNote(n.detected)?.let { Footnote(it) }
 
     n.sleepScore?.takeIf { it.score != null }?.let { score ->
         SectionHeader("Sleep score", Modifier.padding(top = 4.dp))

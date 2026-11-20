@@ -12,6 +12,7 @@
 //! *render* it: web `dashboard/web/app.js`, iOS `apps/ios/OuraApp/OuraApp.swift`. See
 //! `docs/clients-web-and-ios.md`.
 
+mod bedtime;
 mod daily_scores;
 mod staging;
 
@@ -370,6 +371,8 @@ struct Night {
     // hypnogram stage.
     hrv_t: Vec<(i64, f64)>,
     hr_t: Vec<(i64, f64)>,
+    /// Found by the bedtime detector, not declared by the ring (`bedtime.rs`).
+    detected: bool,
 }
 
 /// A night's scan for the Sleep Score, kept until the chronotype is known: the scan, the
@@ -1339,6 +1342,7 @@ const JSON_EVENTS: &[&str] = &[
     "bedtime_period",
     "debug_data",
     "ehr_acm_intensity_event",
+    "feature_session",
     "green_ibi_quality_event",
     "hrv_event",
     "motion_event",
@@ -1346,6 +1350,7 @@ const JSON_EVENTS: &[&str] = &[
     "sleep_temp_event",
     "spo2_event",
     "spo2_r_pi_event",
+    "state_change",
     "temp_event",
     "wear_event",
 ];
@@ -1518,6 +1523,62 @@ pub fn build_summary_with(
             }
         }
     }
+    stages.mark("beds");
+    // Sleep the ring has not declared yet, from its motion and temperature (`bedtime.rs`).
+    // Only the newest boot is searched: an undeclared night is always the latest one.
+    let mut detected: std::collections::HashSet<(i64, usize)> = Default::default();
+    if let Some(ne) = (0..epochs.len()).max_by_key(|&i| epochs[i].anchor_unix) {
+        let confirmed: Vec<(i64, i64)> = beds
+            .iter()
+            .map(|&(s, e, ep)| {
+                let ms = |ds| (unix_in_epoch(ds, ep) * 1000.0).round() as i64;
+                (ms(s), ms(e))
+            })
+            .collect();
+        // The detector starts at the latest declared main sleep; reading from an hour
+        // before it keeps the JSON parsed to a day or two instead of four weeks.
+        let from_ms = confirmed
+            .iter()
+            .filter(|p| p.1 - p.0 >= 3 * 3_600_000)
+            .map(|p| p.0 - 3_600_000)
+            .max()
+            .unwrap_or(i64::MIN)
+            .max((anchor_unix - 28 * 86_400) * 1000);
+        let inputs: Vec<(i64, u8, String, i64)> = events
+            .iter()
+            .enumerate()
+            .filter(|(i, (ds, tag, _, _))| {
+                event_epochs[*i] == ne
+                    && bedtime::INPUT_TAGS.contains(tag)
+                    && unix_in_epoch(*ds, ne) * 1000.0 >= from_ms as f64
+            })
+            .map(|(_, e)| e.clone())
+            .collect();
+        let unix_ms = |ds: i64, _cu: i64| (unix_in_epoch(ds, ne) * 1000.0).round() as i64;
+        for (s_ms, e_ms) in bedtime::open_periods(&inputs, &unix_ms, &confirmed, tz as f64) {
+            // Back to ring time in that boot: the clock is monotonic in ds, so bisect.
+            let ds_at = |ms: i64| {
+                let target = ms as f64 / 1000.0;
+                let (mut lo, mut hi) = (
+                    epochs[ne].max_ds - 400 * 86_400 * 10,
+                    epochs[ne].max_ds + 10 * 86_400 * 10,
+                );
+                while hi - lo > 1 {
+                    let mid = lo + (hi - lo) / 2;
+                    if unix_in_epoch(mid, ne) < target {
+                        lo = mid
+                    } else {
+                        hi = mid
+                    }
+                }
+                hi
+            };
+            let (s, e) = (ds_at(s_ms), ds_at(e_ms));
+            detected.insert((s, ne));
+            beds.push((s, e, ne));
+        }
+    }
+    stages.mark("bedtime");
     beds.sort_by(|a, b| unix_in_epoch(a.0, a.2).total_cmp(&unix_in_epoch(b.0, b.2)));
 
     // The ring emits a `bedtime_period` for any stretch of stillness, so an evening spent
@@ -1540,6 +1601,7 @@ pub fn build_summary_with(
             start_ds: s,
             end_ds: e,
             epoch_idx,
+            detected: detected.contains(&(s, epoch_idx)),
             ..Default::default()
         })
         .collect();
@@ -1875,6 +1937,9 @@ pub fn build_summary_with(
             // built from main sleeps only; a client choosing "the latest night" for a
             // tile must skip the others the same way.
             "main": is_main[night_idx],
+            // Found on this device from motion and temperature because the ring has not
+            // declared the night yet; it is replaced by the ring's own once that arrives.
+            "detected": nt.detected,
             "hrv_ms": mean(&nt.rmssd).map(|x| x.round()),
             "rhr": nt.hr.iter().cloned().fold(f64::INFINITY, f64::min).is_finite().then(|| nt.hr.iter().cloned().fold(f64::INFINITY, f64::min).round()),
             "skin_temp": nightly_skin_temp(&nt.temp).map(|x| (x * 10.0).round() / 10.0),

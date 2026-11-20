@@ -461,6 +461,8 @@ nightly need" but "a 7.5 h need". `app.js` hardcodes "an".
   when no model ran. The stager is in the shared Rust, so either can turn it on with
   `SummaryOptions::stage_sleep`; see `docs/android-client-plan.md`.
 
+- **Detected nights** (`nights[].detected`, from `oura-summary`'s `bedtime.rs`): every
+  client gets the night itself; only Android says it is not yet confirmed by the ring.
 - **Breathing rate** (`nights[].breathing_rate`, from `oura-summary`'s `staging.rs`):
   Android only — a Breathing section in the sleep report and a Trends chart. Computed only
   where the on-device stager runs, so the web (with SleepNet models) has none.

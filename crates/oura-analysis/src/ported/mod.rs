@@ -11,6 +11,8 @@ pub mod actinfo;
 pub mod activity_day;
 pub mod activity_score;
 pub mod baseline;
+pub mod bedtime;
+pub mod bedtime_inputs;
 pub mod breathing_rate;
 pub mod daily;
 pub mod hrv;
