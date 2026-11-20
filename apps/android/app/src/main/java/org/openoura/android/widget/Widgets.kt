@@ -54,6 +54,7 @@ import androidx.glance.text.TextStyle
 import androidx.glance.unit.ColorProvider
 import org.openoura.android.MainActivity
 import org.openoura.android.R
+import org.openoura.android.ui.SleepInterpretation
 import org.openoura.android.data.Goals
 import org.openoura.android.data.WidgetBus
 import org.openoura.android.data.WidgetSnapshot
@@ -85,6 +86,7 @@ private val TextMuted = solid(Color(0xFFAAB1BB))
 private val TrackColor = Color(0xFF343944)
 private val Warn = solid(DarkData.warn.color)
 private val Danger = solid(BrandDark.error)
+private val Good = solid(BrandDark.primary)
 
 /** One colour for day and night alike. */
 private fun solid(c: Color): ColorProvider = ColorProvider(day = c, night = c)
@@ -278,6 +280,7 @@ class StageRingWidget : GlanceAppWidget() {
 @Composable
 private fun RingCard(
     syncing: Boolean,
+    statsHeight: Dp = STATS_HEIGHT,
     ring: @Composable (Dp) -> Unit,
     stats: @Composable ColumnScope.(compact: Boolean) -> Unit,
 ) {
@@ -286,7 +289,7 @@ private fun RingCard(
     // The ring takes the room there is, within what its bitmap stays sharp at. 24 dp is
     // the shell's padding, top and bottom.
     val room = when (layout) {
-        RingLayout.STATS_BELOW -> minOf(size.width - 24.dp, size.height - 24.dp - STATS_HEIGHT)
+        RingLayout.STATS_BELOW -> minOf(size.width - 24.dp, size.height - 24.dp - statsHeight)
         else -> minOf(size.width, size.height) - 24.dp
     }
     val ringSize = room.coerceIn(40.dp, 150.dp)
@@ -327,7 +330,9 @@ private fun RingCard(
 private fun RingCentre(icon: Int, ringSize: Dp, value: String?, unit: String, caption: String?) {
     val big = if (ringSize >= 100.dp) 26.sp else if (ringSize >= 72.dp) 20.sp else 14.sp
     Row(verticalAlignment = Alignment.CenterVertically) {
-        if (ringSize >= 72.dp) {
+        // The icon only where there is room beside a four-digit figure: in a ring of about
+        // 115 dp it pushed "4,600" into the arc.
+        if (ringSize >= 128.dp) {
             Glyph(icon, if (ringSize >= 100.dp) 18.dp else 14.dp)
             Spacer(GlanceModifier.width(4.dp))
         }
@@ -386,6 +391,7 @@ private fun Stat(
     unit: String = "",
     compact: Boolean = false,
     tint: ColorProvider = TextStrong,
+    unitTint: ColorProvider = TextMuted,
 ) {
     Row(GlanceModifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         Glyph(icon, if (compact) 14.dp else 16.dp)
@@ -398,7 +404,7 @@ private fun Stat(
         Text(value, style = TextStyle(color = tint, fontSize = if (compact) 15.sp else 18.sp, fontWeight = FontWeight.Bold))
         if (unit.isNotEmpty()) {
             Spacer(GlanceModifier.width(3.dp))
-            Text(unit, style = TextStyle(color = TextMuted, fontSize = 12.sp))
+            Text(unit, style = TextStyle(color = unitTint, fontSize = 12.sp))
         }
     }
 }
@@ -419,12 +425,16 @@ class ActivityWidgetReceiver : GlanceAppWidgetReceiver() {
     override val glanceAppWidget: GlanceAppWidget = StageRingWidget()
 }
 
-// ── today's steps: the same card, turned round ───────────────────────────────────────
+// ── today: steps as the ring, readiness beside it ────────────────────────────────────
 
 /**
- * The stage ring widget with its two halves swapped: the ring is today's steps towards the
- * daily target (set on the You tab), with the distance under the count, and the figures
- * beside it are last night — time asleep, sleep efficiency — and the ring's charge.
+ * Today at a glance. The ring is today's steps towards the daily target (set on the You
+ * tab). Beside it, the day's Readiness Score is the headline — it already folds in last
+ * night, the heart and the recent activity — with one line for time asleep. The ring's
+ * charge appears only when it is low, as a warning; otherwise it takes no room.
+ *
+ * Replaced the "Steps today" widget in place (same receiver, see [StepsWidgetReceiver]),
+ * which showed distance in the ring and asleep / efficiency / charge beside it.
  */
 class StepsWidget : GlanceAppWidget() {
     override val sizeMode = SizeMode.Exact
@@ -433,12 +443,15 @@ class StepsWidget : GlanceAppWidget() {
         provideContent {
             val version by WidgetBus.version.collectAsState()
             val s = remember(version) { WidgetStore.read(context) }
+            val target = remember(version) { Goals.stepTarget(context) }
             val ring = remember(version) {
-                progressRingBitmap(stepProgress(s.steps, Goals.stepTarget(context)), BrandDark.primary, TrackColor)
+                progressRingBitmap(stepProgress(s.steps, target), BrandDark.primary, TrackColor)
             }
             val syncing = remember(version) { WidgetSync.isSyncing(context) }
             RingCard(
                 syncing,
+                // Readiness's label and number, two rows, and room for the charge line.
+                statsHeight = if (chargeWarning(s.batteryPct, s.batteryStatus) != null) 128.dp else 108.dp,
                 ring = { size ->
                     Ring(ring, size, "Today's steps towards the daily target") {
                         RingCentre(
@@ -446,32 +459,63 @@ class StepsWidget : GlanceAppWidget() {
                             size,
                             s.steps?.let { stepsLabel(it) },
                             unit = "",
-                            caption = distanceCaption(s.distanceKm),
+                            caption = stepsCaption(s.steps, target),
                         )
                     }
                 },
-            ) { compact -> NightStats(s, compact) }
+            ) { compact -> TodayStats(s, compact) }
         }
     }
 }
 
-/** Asleep, Sleep efficiency, Ring charge — in that order. */
+/** A score's word in green from Good up, amber below — the bands of `scoreLabel`. */
+private fun scoreTint(score: Int?): ColorProvider = if (score != null && score >= 70) Good else Warn
+
+/** Readiness as the headline, then time asleep and the Sleep Score, then the charge warning when there is one. */
 @Composable
-private fun NightStats(s: WidgetSnapshot, compact: Boolean) {
-    val gap = if (compact) 2.dp else 6.dp
-    val hours = ringHours(s)
+private fun TodayStats(s: WidgetSnapshot, compact: Boolean) {
+    val r = s.readiness
+    Text("Readiness", style = TextStyle(color = TextMuted, fontSize = if (compact) 11.sp else 12.sp))
+    Row(verticalAlignment = Alignment.Vertical.Bottom) {
+        Text(
+            r?.toString() ?: "—",
+            style = TextStyle(color = TextStrong, fontSize = if (compact) 24.sp else 34.sp, fontWeight = FontWeight.Bold),
+        )
+        if (r != null) {
+            Spacer(GlanceModifier.width(6.dp))
+            Text(
+                SleepInterpretation.scoreLabel(r),
+                style = TextStyle(color = scoreTint(r), fontSize = if (compact) 12.sp else 13.sp),
+                modifier = GlanceModifier.padding(bottom = if (compact) 3.dp else 5.dp),
+            )
+        }
+    }
+    Spacer(GlanceModifier.height(if (compact) 2.dp else 6.dp))
     // An unscored night has only time in bed, and says so rather than passing it off.
     Stat(
         R.drawable.ic_sym_bedtime,
         if (s.asleepHours != null || s.sleepHours == null) "Asleep" else "In bed",
-        hours ?: "—",
-        unit = if (hours != null) "h" else "",
+        sleepDuration(s) ?: "—",
         compact = compact,
     )
-    Spacer(GlanceModifier.height(gap))
-    Stat(R.drawable.ic_sym_percent, "Sleep efficiency", s.efficiency?.let { "$it%" } ?: "—", compact = compact)
-    Spacer(GlanceModifier.height(gap))
-    ChargeStat(s, compact)
+    Spacer(GlanceModifier.height(if (compact) 2.dp else 6.dp))
+    val score = s.sleepScore
+    Stat(
+        R.drawable.ic_sym_bedtime,
+        "Sleep score",
+        score?.toString() ?: "—",
+        unit = score?.let { SleepInterpretation.scoreLabel(it) }.orEmpty(),
+        compact = compact,
+        unitTint = scoreTint(score),
+    )
+    chargeWarning(s.batteryPct, s.batteryStatus)?.let { warning ->
+        Spacer(GlanceModifier.height(if (compact) 2.dp else 6.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Glyph(R.drawable.ic_sym_battery_full, 14.dp, batteryTint(s.batteryStatus))
+            Spacer(GlanceModifier.width(4.dp))
+            Text(warning, style = TextStyle(color = batteryTint(s.batteryStatus), fontSize = 12.sp))
+        }
+    }
 }
 
 class StepsWidgetReceiver : GlanceAppWidgetReceiver() {
