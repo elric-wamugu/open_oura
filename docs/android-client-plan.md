@@ -293,6 +293,14 @@ replaced:
   `Goals` — and it is a preference, not a metric: `oura-summary` knows nothing of it and
   the web has no counterpart. The ring stops at full; a day past the target is a full ring
   and the count says the rest.
+- **Today** (the same `StepsWidget` and receiver, reworked 2026-11-20 so a placed widget
+  changes in place): the ring is still today's steps towards the target, now with "of
+  7,000" under the count and "Goal reached" once it is met. Beside it, **today's Readiness
+  Score** is the headline, with its word (Optimal / Good / Fair / Pay attention), then one
+  line of time asleep as hours and minutes and one of last night's Sleep Score with its
+  word. The ring's charge shows only when it is in a
+  low band, as a warning line; distance and sleep efficiency were dropped. The snapshot
+  gained `readiness` and `sleepScore`, read for the same day as Today's scores row.
 
 What shaped them:
 

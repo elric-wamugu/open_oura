@@ -1,7 +1,10 @@
 package org.openoura.android.widget
 
 import android.content.Context
-import androidx.glance.appwidget.updateAll
+import android.appwidget.AppWidgetManager
+import android.content.ComponentName
+import androidx.glance.appwidget.GlanceAppWidget
+import androidx.glance.appwidget.GlanceAppWidgetManager
 import androidx.work.Constraints
 import androidx.work.CoroutineWorker
 import androidx.work.ExistingPeriodicWorkPolicy
@@ -22,9 +25,28 @@ object WidgetUpdates {
 
     /** Repaint every placed widget from the current snapshot. Cheap: no core call. */
     suspend fun refreshAll(ctx: Context) {
-        runCatching { StageRingWidget().updateAll(ctx) }
-        runCatching { StepsWidget().updateAll(ctx) }
-        runCatching { BatteryWidget().updateAll(ctx) }
+        update(ctx, StageRingWidget(), ActivityWidgetReceiver::class.java)
+        update(ctx, StepsWidget(), StepsWidgetReceiver::class.java)
+        update(ctx, BatteryWidget(), BatteryWidgetReceiver::class.java)
+    }
+
+    /**
+     * Repaints the widgets placed from [receiver] — asking the system which those are, not
+     * Glance's `updateAll`.
+     *
+     * `updateAll` finds a widget's placements through a map Glance saves of which receiver
+     * belongs to which widget class, and it only ever adds to it. On a phone where
+     * `StepsWidgetReceiver` once served the stage ring, the map still lists it under
+     * `StageRingWidget` as well, so a refresh painted the steps widget twice, once with each
+     * design, and whichever finished last stayed on screen (seen 2026-11-20).
+     */
+    private suspend fun update(ctx: Context, widget: GlanceAppWidget, receiver: Class<*>) {
+        runCatching {
+            val glance = GlanceAppWidgetManager(ctx)
+            AppWidgetManager.getInstance(ctx)
+                .getAppWidgetIds(ComponentName(ctx, receiver))
+                .forEach { widget.update(ctx, glance.getGlanceIdBy(it)) }
+        }
     }
 
     private const val PERIODIC = "widget-refresh"

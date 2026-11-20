@@ -61,5 +61,22 @@ fun distanceLabel(km: Double?): String = when {
 fun stepProgress(steps: Int?, target: Int): Float =
     if (steps == null || target <= 0) 0f else (steps.toFloat() / target).coerceIn(0f, 1f)
 
-/** Under the step count: the distance walked, with its unit. */
-fun distanceCaption(km: Double?): String? = km?.let { "${distanceLabel(it)} km" }
+/** Under the step count: how far there is to go, or that the target is met. */
+fun stepsCaption(steps: Int?, target: Int): String? = when {
+    steps == null -> null
+    target > 0 && steps >= target -> "Goal reached"
+    target > 0 -> "of ${"%,d".format(target)}"
+    else -> null
+}
+
+/** The ring's charge as a warning line, only when it is in one of the brain's low bands. */
+fun chargeWarning(pct: Int?, status: String?): String? = when (status) {
+    "low", "very_low", "critical" -> pct?.let { "Ring at $it%, charge it" } ?: "Ring charge low"
+    else -> null
+}
+
+/** "7h 12m" for the hours asleep (or in bed, for an unscored night). */
+fun sleepDuration(s: WidgetSnapshot): String? = (s.asleepHours ?: s.sleepHours)?.let {
+    val min = Math.round(it * 60).toInt()
+    "${min / 60}h ${"%02d".format(min % 60)}m"
+}

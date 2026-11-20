@@ -47,6 +47,10 @@ data class WidgetSnapshot(
     val batteryPct: Int? = null,
     /** The brain's band, so the widget colours the level like the app does. */
     val batteryStatus: String? = null,
+    /** Today's Readiness Score, 0..100; null until the night you woke from is scored. */
+    val readiness: Int? = null,
+    /** Last night's Sleep Score, 0..100, for the same night as [asleepHours]. */
+    val sleepScore: Int? = null,
 )
 
 /**
@@ -111,6 +115,9 @@ object WidgetStore {
             peakHr = daily?.peakHr?.roundToInt(),
             batteryPct = s.device?.batteryPct,
             batteryStatus = s.device?.batteryStatus,
+            // Keyed the way Today's scores row reads it: the day the night was woken on.
+            readiness = today?.let { s.readiness[it]?.score },
+            sleepScore = night?.sleepScore?.score,
         )
     }
 }

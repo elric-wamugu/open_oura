@@ -13,7 +13,9 @@ import org.openoura.android.widget.RingStage
 import org.openoura.android.widget.WidgetSync
 import org.openoura.android.widget.WidgetSyncPath
 import org.openoura.android.widget.widgetSyncPath
-import org.openoura.android.widget.distanceCaption
+import org.openoura.android.widget.chargeWarning
+import org.openoura.android.widget.sleepDuration
+import org.openoura.android.widget.stepsCaption
 import org.openoura.android.widget.distanceLabel
 import org.openoura.android.widget.stepProgress
 import org.openoura.android.widget.ringCaption
@@ -110,8 +112,29 @@ class RingGeometryTest {
         assertEquals(1f, stepProgress(9_800, 7_000), 0.0001f)
         assertEquals(0f, stepProgress(null, 7_000), 0.0001f)
         assertEquals(0f, stepProgress(100, 0), 0.0001f)
-        assertEquals("5.3 km", distanceCaption(5.27))
-        assertNull(distanceCaption(null))
+    }
+
+    @Test
+    fun `under the step count, how far is left or that the goal is met`() {
+        assertEquals("of 7,000", stepsCaption(4_820, 7_000))
+        assertEquals("Goal reached", stepsCaption(7_000, 7_000))
+        assertNull(stepsCaption(null, 7_000))
+        assertNull(stepsCaption(100, 0))
+    }
+
+    @Test
+    fun `the charge shows only when it is low`() {
+        assertNull(chargeWarning(64, "ok"))
+        assertNull(chargeWarning(null, null))
+        assertEquals("Ring at 14%, charge it", chargeWarning(14, "low"))
+        assertEquals("Ring charge low", chargeWarning(null, "critical"))
+    }
+
+    @Test
+    fun `time asleep reads as hours and minutes`() {
+        assertEquals("7h 12m", sleepDuration(WidgetSnapshot(sleepHours = 8.0, asleepHours = 7.2)))
+        assertEquals("8h 05m", sleepDuration(WidgetSnapshot(sleepHours = 8.0833)))
+        assertNull(sleepDuration(WidgetSnapshot()))
     }
 
     @Test
