@@ -44,6 +44,28 @@ pub fn summary_json(db_path: String, tz_offset: i64) -> String {
     }
 }
 
+/// [`summary_json`], with nights the models did not stage staged on this device by the
+/// sleep stager — see `oura-summary`'s `staging.rs`. At most `stage_budget_ms` is spent
+/// staging new nights per call; staged nights are cached in the database, so later calls
+/// are fast and pick up where an earlier one ran out of time.
+///
+/// A separate function, not a flag on [`summary_json`], so that clients which have not
+/// chosen this (iOS) keep their behaviour without a change to their code.
+#[uniffi::export]
+pub fn summary_json_staged(db_path: String, tz_offset: i64, stage_budget_ms: u64) -> String {
+    match oura_summary::build_summary_with(
+        std::path::Path::new(&db_path),
+        tz_offset,
+        &oura_summary::NoModelRunner,
+        &oura_summary::SummaryOptions {
+            stage_sleep: Some(std::time::Duration::from_millis(stage_budget_ms)),
+        },
+    ) {
+        Ok(v) => v.to_string(),
+        Err(e) => json!({ "error": e.to_string() }).to_string(),
+    }
+}
+
 /// The client implements this to follow a backup or a restore: events handled so far, out
 /// of how many.
 #[uniffi::export(callback_interface)]

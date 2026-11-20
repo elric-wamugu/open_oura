@@ -17,7 +17,18 @@ fn main() -> anyhow::Result<()> {
     // The real thing, model-free as the phone runs it: the stages build_summary times
     // itself, slowest first. This is the same `timings_ms` the Android app logs.
     let t = Instant::now();
-    let summary = oura_summary::build_summary(db, tz, &oura_summary::NoModelRunner)?;
+    // OURA_STAGE_BUDGET_MS=<ms> runs the on-device sleep stager as the Android app does,
+    // spending at most that long on nights not already in the cache.
+    let opts = oura_summary::SummaryOptions {
+        stage_sleep: std::env::var("OURA_STAGE_BUDGET_MS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .map(std::time::Duration::from_millis),
+    };
+    let summary = oura_summary::build_summary_with(db, tz, &oura_summary::NoModelRunner, &opts)?;
+    if !summary["stager"].is_null() {
+        println!("stager {}", summary["stager"]);
+    }
     let wall = t.elapsed();
     let mut stages: Vec<(String, f64)> = summary["timings_ms"]
         .as_object()

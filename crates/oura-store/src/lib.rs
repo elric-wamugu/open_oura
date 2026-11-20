@@ -4,4 +4,4 @@ pub mod error;
 pub mod storage;
 
 pub use error::{Error, Result};
-pub use storage::{RawEvent, Store};
+pub use storage::{RawEvent, StageCacheKey, Store};

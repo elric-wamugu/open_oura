@@ -12,6 +12,8 @@
 //! *render* it: web `dashboard/web/app.js`, iOS `apps/ios/OuraApp/OuraApp.swift`. See
 //! `docs/clients-web-and-ios.md`.
 
+mod staging;
+
 use std::path::{Path, PathBuf};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
@@ -1132,7 +1134,26 @@ const JSON_EVENTS: &[&str] = &[
     "temp_event",
 ];
 
+/// Choices a client makes about how much work a recompute does.
+#[derive(Debug, Clone, Default)]
+pub struct SummaryOptions {
+    /// Stage nights the models did not stage with the on-device sleep stager
+    /// (`staging.rs`), spending at most this long staging new ones per recompute. `None`
+    /// keeps the ring's own hypnogram for those nights, as before. Only the Android app
+    /// turns it on.
+    pub stage_sleep: Option<std::time::Duration>,
+}
+
 pub fn build_summary(db: &Path, tz: i64, runner: &dyn ModelRunner) -> Result<Value> {
+    build_summary_with(db, tz, runner, &SummaryOptions::default())
+}
+
+pub fn build_summary_with(
+    db: &Path,
+    tz: i64,
+    runner: &dyn ModelRunner,
+    opts: &SummaryOptions,
+) -> Result<Value> {
     let mut stages = Stages::new();
     let db_abs = std::fs::canonicalize(db).unwrap_or_else(|_| {
         std::env::current_dir()
@@ -1190,6 +1211,9 @@ pub fn build_summary(db: &Path, tz: i64, runner: &dyn ModelRunner) -> Result<Val
         min_ds: i64,
         max_ds: i64,
         anchor_unix: i64,
+        /// Earliest and latest capture time of the boot's events. Boots follow each other
+        /// in capture order, so these ranges never overlap; ring times can.
+        capture: (i64, i64),
         /// (ds, offset) steps, ascending by ds. `offset` is seconds such that
         /// `unix = offset + ds/10` for every ds at or below that step's ds.
         offsets: Vec<(i64, f64)>,
@@ -1209,6 +1233,7 @@ pub fn build_summary(db: &Path, tz: i64, runner: &dyn ModelRunner) -> Result<Val
         if let Some(i) = epochs.len().checked_sub(1) {
             if ds >= epochs[i].max_ds - EPOCH_RESET_SLACK_DS {
                 event_epochs[event_idx] = i;
+                epochs[i].capture.1 = cu;
                 if ds >= epochs[i].max_ds {
                     epochs[i].max_ds = ds;
                     epochs[i].anchor_unix = cu; // newest event → its capture time
@@ -1222,6 +1247,7 @@ pub fn build_summary(db: &Path, tz: i64, runner: &dyn ModelRunner) -> Result<Val
             min_ds: ds,
             max_ds: ds,
             anchor_unix: cu,
+            capture: (cu, cu),
             offsets: Vec::new(),
         });
     }
@@ -1476,6 +1502,61 @@ pub fn build_summary(db: &Path, tz: i64, runner: &dyn ModelRunner) -> Result<Val
         })
         .collect();
     let is_main = main_sleeps(&wake_days);
+
+    // Nights the models did not stage, staged on this device when the client asks for it.
+    // Newest first, so a tight budget spends itself on the nights people look at.
+    let night_key = |nt: &Night| format!("{}:{}", nt.epoch_idx, nt.start_ds);
+    let has_model_stages = |nt: &Night| {
+        hyps.get(&night_key(nt))
+            .or_else(|| hyps.get(&nt.start_ds.to_string()))
+            .and_then(|h| h["stages"].as_array())
+            .is_some_and(|a| !a.is_empty())
+    };
+    let mut device_stages: Vec<Option<Vec<i64>>> = vec![None; nights.len()];
+    let mut stager_stats: Option<staging::Stats> = None;
+    if let (Some(budget), Some(serial)) = (opts.stage_sleep, dev.as_ref().map(|d| d.0.clone())) {
+        let todo: Vec<usize> = (0..nights.len())
+            .rev()
+            .filter(|&i| !has_model_stages(&nights[i]))
+            .collect();
+        let windows: Vec<staging::Window> = todo
+            .iter()
+            .map(|&i| {
+                let nt = &nights[i];
+                staging::Window {
+                    start_ds: nt.start_ds,
+                    end_ds: nt.end_ds,
+                    capture: epochs[nt.epoch_idx].capture,
+                    start_unix: unix_in_epoch(nt.start_ds, nt.epoch_idx),
+                    end_unix: unix_in_epoch(nt.end_ds, nt.epoch_idx),
+                }
+            })
+            .collect();
+        let newest_capture = epochs.iter().map(|e| e.capture.1).max().unwrap_or(0);
+        let scalars = oura_analysis::ported::sleepstaging::events::profile_scalars(
+            demo.age,
+            demo.height_m,
+            demo.weight_kg,
+            demo.sex,
+        );
+        let (results, st) = staging::stage_nights(
+            &store,
+            &serial,
+            &windows,
+            &|w, ds| unix_in_epoch(ds, nights[todo[w]].epoch_idx),
+            scalars,
+            newest_capture,
+            budget,
+        );
+        for (k, r) in results.into_iter().enumerate() {
+            if let staging::Staged::Stages(codes) = r {
+                device_stages[todo[k]] = Some(codes);
+            }
+        }
+        stager_stats = Some(st);
+    }
+    stages.mark("stager");
+
     let mut nights_json = Vec::new();
     let mut asleep_by_night: Vec<i32> = Vec::new(); // oldest-first, for sleep debt
     for (night_idx, nt) in nights.iter().enumerate() {
@@ -1483,15 +1564,24 @@ pub fn build_summary(db: &Path, tz: i64, runner: &dyn ModelRunner) -> Result<Val
         let hyp = hyps
             .get(&sleep_key)
             .or_else(|| hyps.get(&nt.start_ds.to_string()));
-        let raw_stages: Vec<i64> = hyp
+        let model_stages: Option<Vec<i64>> = hyp
             .and_then(|h| h["stages"].as_array())
             .map(|s| s.iter().filter_map(|x| x.as_i64()).collect::<Vec<i64>>())
-            .filter(|v| !v.is_empty())
-            // No SleepNet output → fall back to the ring's own on-device hypnogram.
-            .unwrap_or_else(|| stages_from_phase_data(&phase_events, nt.epoch_idx, nt.end_ds));
-        // smooth once (≈2.5 min window) — used for the displayed hypnogram AND the
-        // derived metrics, so the two always agree.
-        let full_stages = smooth_stages(&raw_stages, 5);
+            .filter(|v| !v.is_empty());
+        // Where the hypnogram comes from, best first: a model, the on-device stager, the
+        // ring's own `sleep_phase_data`.
+        let (stages_source, full_stages): (&str, Vec<i64>) = if let Some(m) = model_stages {
+            // smooth once (≈2.5 min window) — used for the displayed hypnogram AND the
+            // derived metrics, so the two always agree.
+            ("model", smooth_stages(&m, 5))
+        } else if let Some(d) = device_stages[night_idx].take() {
+            // Already post-processed by the stager; smoothing it again would only blur it.
+            ("stager", d)
+        } else {
+            let ring = stages_from_phase_data(&phase_events, nt.epoch_idx, nt.end_ds);
+            (if ring.is_empty() { "none" } else { "ring" }, smooth_stages(&ring, 5))
+        };
+        let hyp = hyp.filter(|_| stages_source == "model");
         let stage_cells = (!full_stages.is_empty()).then(|| downsample_codes(&full_stages, 120));
         let in_bed_s = (nt.end_ds - nt.start_ds) as f64 / 10.0;
         let (metrics, asleep_s) = sleep_metrics(&full_stages, in_bed_s);
@@ -1564,6 +1654,9 @@ pub fn build_summary(db: &Path, tz: i64, runner: &dyn ModelRunner) -> Result<Val
             // full-resolution hypnogram + aligned raw signals for the detail page's
             // stacked polysomnograph (empty arrays stay out of the way when absent).
             "stages_full": (!full_stages.is_empty()).then_some(full_stages),
+            // "model", "stager" (staged on this device), "ring" (the ring's own phases)
+            // or "none".
+            "stages_source": stages_source,
             "series": {
                 "hr": series(&nt.hr, 0),
                 "hrv": series(&nt.rmssd, 0),
@@ -2103,6 +2196,11 @@ pub fn build_summary(db: &Path, tz: i64, runner: &dyn ModelRunner) -> Result<Val
 
     Ok(json!({
         "generated_at": now,
+        "stager": stager_stats.map(|st| json!({
+            "reused": st.reused,
+            "staged": st.staged,
+            "pending": st.pending,
+        })),
         "timings_ms": stages.finish(),
         "tz": tz,
         "digest": digest,

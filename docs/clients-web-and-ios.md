@@ -454,6 +454,13 @@ nightly need" but "a 7.5 h need". `app.js` hardcodes "an".
   in the shared brain (second-highest window maximum). Both reach the web and iOS through
   the summary without any change to their code; only Android was checked.
 
+- **Sleep stages worked out on the phone** (Android, `oura-summary`'s `staging.rs` behind
+  `summary_json_staged`): nights without a model hypnogram are staged by the on-device
+  stager instead of showing the ring's own `sleep_phase_data`, and each night carries
+  `stages_source`. **Android only**: the web dashboard and iOS still show the ring's stages
+  when no model ran. The stager is in the shared Rust, so either can turn it on with
+  `SummaryOptions::stage_sleep`; see `docs/android-client-plan.md`.
+
 Two Android features have no web or iOS counterpart, and are not omissions to close:
 
 - **Unattended sync** (`apps/android/.../sync/AutoSync.kt`): a 3-hour WorkManager floor plus

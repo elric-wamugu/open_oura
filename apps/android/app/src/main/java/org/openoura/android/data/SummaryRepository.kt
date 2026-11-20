@@ -9,9 +9,18 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import java.io.File
-import uniffi.oura_core.summaryJson
+import uniffi.oura_core.summaryJsonStaged
 
 private const val TAG = "OpenOura"
+
+/**
+ * How long one recompute may spend staging nights with the on-device sleep stager
+ * (`oura-summary`'s `staging.rs`). Staged nights are kept in the database, so this
+ * only bounds the nights not yet staged: the newest goes first, and a history is
+ * worked through over later recomputes, the ring's own hypnogram standing in until
+ * then.
+ */
+internal const val STAGE_BUDGET_MS = 10_000L
 
 /**
  * Whether a cached summary can still be trusted, given when everything happened.
@@ -77,6 +86,7 @@ sealed interface SummaryState {
 class SummaryRepository private constructor(private val ctx: Context) {
 
     companion object {
+
         @Volatile
         private var instance: SummaryRepository? = null
 
@@ -168,11 +178,14 @@ class SummaryRepository private constructor(private val ctx: Context) {
         val result = withContext(Dispatchers.Default) {
             runCatching {
                 val started = System.nanoTime()
-                val raw = summaryJson(dbFile.absolutePath, tzOffsetHours())
+                val raw = summaryJsonStaged(dbFile.absolutePath, tzOffsetHours(), STAGE_BUDGET_MS.toULong())
                 val coreMs = (System.nanoTime() - started) / 1_000_000
                 val parsed = json.decodeFromString<Summary>(raw)
                 val parseMs = (System.nanoTime() - started) / 1_000_000 - coreMs
                 Log.i(TAG, describeRecompute(raw.length / 1024, coreMs, parseMs, parsed.timingsMs))
+                parsed.stager?.let {
+                    Log.i(TAG, "sleep stager: ${it.staged} staged, ${it.reused} from cache, ${it.pending} waiting")
+                }
                 // Only cache what parsed cleanly, so a bad write can't poison cold start.
                 synchronized(cacheLock) {
                     cacheFile.writeText(raw)

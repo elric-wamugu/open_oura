@@ -50,6 +50,23 @@ CREATE TABLE IF NOT EXISTS readings (
     captured_unix INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_readings_serial_kind ON readings(serial, kind);
+
+-- Sleep stages computed on this device from the night's beats, motion and temperature,
+-- kept so that the slow part runs once a night. Derived, like decoded_json: never backed
+-- up, and safe to delete. `capture_lo` is the earliest capture time of the night's boot,
+-- which tells two boots' nights apart when their ring times coincide; `inputs` is how many
+-- events the night had when staged, so a night that gains data is staged again.
+CREATE TABLE IF NOT EXISTS sleep_stage_cache (
+    serial        TEXT NOT NULL,
+    start_ds      INTEGER NOT NULL,
+    end_ds        INTEGER NOT NULL,
+    capture_lo    INTEGER NOT NULL,
+    model         TEXT NOT NULL,
+    inputs        INTEGER NOT NULL,
+    stages        TEXT NOT NULL,
+    computed_unix INTEGER NOT NULL,
+    PRIMARY KEY (serial, start_ds, end_ds, capture_lo, model)
+);
 "#;
 
 fn now_unix() -> i64 {
@@ -90,6 +107,18 @@ fn read_decoded(
     }
     .collect::<std::result::Result<Vec<_>, _>>()?;
     Ok(rows)
+}
+
+/// Which staged night a [`Store::stage_cache_get`] / [`Store::stage_cache_put`] is about.
+#[derive(Debug, Clone, PartialEq)]
+pub struct StageCacheKey {
+    pub serial: String,
+    pub start_ds: i64,
+    pub end_ds: i64,
+    pub capture_lo: i64,
+    /// Which stager produced it; a new model or pipeline gets a new name, so its nights are
+    /// staged afresh instead of mixing with the old ones.
+    pub model: String,
 }
 
 /// One event as the ring delivered it, with when it was captured. Everything else a row
@@ -463,6 +492,101 @@ impl Store {
             }
         }
         read_decoded(&self.conn, &sql, 0, last_id, serial)
+    }
+
+    /// Decoded events of the given tags whose ring time lies in `[ds_lo, ds_hi]` and which
+    /// were captured in `[cu_lo, cu_hi]`, as `(ring_timestamp, tag, decoded_json,
+    /// captured_unix)` in id order.
+    ///
+    /// For reading one night's worth of a heavy stream (the sleep stager's beats, motion and
+    /// temperature) without loading the whole history's JSON. The UNIQUE index begins
+    /// `(serial, tag, ring_timestamp)`, so each tag is a range scan. Ring time restarts at
+    /// every reboot, so rows from another boot can share the ds range; the capture range is
+    /// what tells them apart.
+    pub fn decoded_events_in_window(
+        &self,
+        serial: &str,
+        tags: &[u8],
+        (ds_lo, ds_hi): (i64, i64),
+        (cu_lo, cu_hi): (i64, i64),
+    ) -> Result<Vec<DecodedRow>> {
+        let mut stmt = self.conn.prepare_cached(
+            "SELECT ring_timestamp, tag, decoded_json, captured_unix FROM events \
+             WHERE serial = ?1 AND tag = ?2 AND ring_timestamp BETWEEN ?3 AND ?4 \
+             AND captured_unix BETWEEN ?5 AND ?6 AND decoded_json IS NOT NULL ORDER BY id",
+        )?;
+        let mut out = Vec::new();
+        for &tag in tags {
+            let rows = stmt.query_map(params![serial, tag as i64, ds_lo, ds_hi, cu_lo, cu_hi], |r| {
+                Ok((
+                    r.get::<_, i64>(0)?,
+                    r.get::<_, i64>(1)? as u8,
+                    r.get::<_, String>(2)?,
+                    r.get::<_, i64>(3)?,
+                ))
+            })?;
+            for row in rows {
+                out.push(row?);
+            }
+        }
+        Ok(out)
+    }
+
+    /// How many events [`Store::decoded_events_in_window`] would return, without reading
+    /// them: a cheap way to tell whether a window has gained data since it was last read.
+    pub fn count_events_in_window(
+        &self,
+        serial: &str,
+        tags: &[u8],
+        (ds_lo, ds_hi): (i64, i64),
+        (cu_lo, cu_hi): (i64, i64),
+    ) -> Result<i64> {
+        let mut stmt = self.conn.prepare_cached(
+            "SELECT COUNT(*) FROM events WHERE serial = ?1 AND tag = ?2 \
+             AND ring_timestamp BETWEEN ?3 AND ?4 AND captured_unix BETWEEN ?5 AND ?6 \
+             AND decoded_json IS NOT NULL",
+        )?;
+        let mut n = 0;
+        for &tag in tags {
+            n += stmt.query_row(params![serial, tag as i64, ds_lo, ds_hi, cu_lo, cu_hi], |r| {
+                r.get::<_, i64>(0)
+            })?;
+        }
+        Ok(n)
+    }
+
+    /// A night staged earlier, if the cache has one for this window and model:
+    /// `(input event count when staged, stage codes as JSON)`.
+    pub fn stage_cache_get(&self, key: &StageCacheKey) -> Result<Option<(i64, String)>> {
+        Ok(self
+            .conn
+            .query_row(
+                "SELECT inputs, stages FROM sleep_stage_cache WHERE serial = ?1 AND start_ds = ?2 \
+                 AND end_ds = ?3 AND capture_lo = ?4 AND model = ?5",
+                params![key.serial, key.start_ds, key.end_ds, key.capture_lo, key.model],
+                |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)),
+            )
+            .optional()?)
+    }
+
+    /// Keep a staged night. Replaces an earlier entry for the same window and model.
+    pub fn stage_cache_put(&self, key: &StageCacheKey, inputs: i64, stages_json: &str) -> Result<()> {
+        self.conn.execute(
+            "INSERT OR REPLACE INTO sleep_stage_cache \
+             (serial, start_ds, end_ds, capture_lo, model, inputs, stages, computed_unix) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            params![
+                key.serial,
+                key.start_ds,
+                key.end_ds,
+                key.capture_lo,
+                key.model,
+                inputs,
+                stages_json,
+                now_unix()
+            ],
+        )?;
+        Ok(())
     }
 
     /// Run `f` inside one read transaction, so everything it reads is a single consistent
