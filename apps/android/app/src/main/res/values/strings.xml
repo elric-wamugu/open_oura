@@ -4,6 +4,8 @@
     <string name="widget_ring_desc">Sleep stages as a ring, with steps, distance and ring charge</string>
     <string name="widget_battery_label">Ring battery</string>
     <string name="widget_battery_desc">How much charge the ring has left</string>
+    <string name="widget_scores_label">Today\'s scores</string>
+    <string name="widget_scores_desc">Readiness, sleep score and steps as three rings, with time asleep and distance</string>
     <string name="widget_syncing">Syncing with the ring</string>
     <string name="widget_steps_label">Today</string>
     <string name="widget_steps_desc">Steps towards your daily target as a ring, with today\'s readiness and last night\'s sleep</string>

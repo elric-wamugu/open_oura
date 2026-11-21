@@ -450,8 +450,8 @@ class StepsWidget : GlanceAppWidget() {
             val syncing = remember(version) { WidgetSync.isSyncing(context) }
             RingCard(
                 syncing,
-                // Readiness's label and number, two rows, and room for the charge line.
-                statsHeight = if (chargeWarning(s.batteryPct, s.batteryStatus) != null) 128.dp else 108.dp,
+                // Stacked under the ring: three rows, and room for the charge line.
+                statsHeight = if (chargeWarning(s.batteryPct, s.batteryStatus) != null) STATS_HEIGHT + 22.dp else STATS_HEIGHT,
                 ring = { size ->
                     Ring(ring, size, "Today's steps towards the daily target") {
                         RingCentre(
@@ -471,23 +471,33 @@ class StepsWidget : GlanceAppWidget() {
 /** A score's word in green from Good up, amber below — the bands of `scoreLabel`. */
 private fun scoreTint(score: Int?): ColorProvider = if (score != null && score >= 70) Good else Warn
 
-/** Readiness as the headline, then time asleep and the Sleep Score, then the charge warning when there is one. */
+/** Readiness as the headline (a row like the rest when [compact]), then time asleep and the Sleep Score, then the charge warning when there is one. */
 @Composable
 private fun TodayStats(s: WidgetSnapshot, compact: Boolean) {
     val r = s.readiness
-    Text("Readiness", style = TextStyle(color = TextMuted, fontSize = if (compact) 11.sp else 12.sp))
-    Row(verticalAlignment = Alignment.Vertical.Bottom) {
-        Text(
+    if (compact) {
+        // Stacked under the ring there is no room for a headline: Readiness joins the
+        // rows below it, so the ring keeps its size (2026-11-21, at the user's request).
+        Stat(
+            R.drawable.ic_sym_health_and_safety,
+            "Readiness",
             r?.toString() ?: "—",
-            style = TextStyle(color = TextStrong, fontSize = if (compact) 24.sp else 34.sp, fontWeight = FontWeight.Bold),
+            unit = r?.let { SleepInterpretation.scoreLabel(it) }.orEmpty(),
+            compact = true,
+            unitTint = scoreTint(r),
         )
-        if (r != null) {
-            Spacer(GlanceModifier.width(6.dp))
-            Text(
-                SleepInterpretation.scoreLabel(r),
-                style = TextStyle(color = scoreTint(r), fontSize = if (compact) 12.sp else 13.sp),
-                modifier = GlanceModifier.padding(bottom = if (compact) 3.dp else 5.dp),
-            )
+    } else {
+        Text("Readiness", style = TextStyle(color = TextMuted, fontSize = 12.sp))
+        Row(verticalAlignment = Alignment.Vertical.Bottom) {
+            Text(r?.toString() ?: "—", style = TextStyle(color = TextStrong, fontSize = 34.sp, fontWeight = FontWeight.Bold))
+            if (r != null) {
+                Spacer(GlanceModifier.width(6.dp))
+                Text(
+                    SleepInterpretation.scoreLabel(r),
+                    style = TextStyle(color = scoreTint(r), fontSize = 13.sp),
+                    modifier = GlanceModifier.padding(bottom = 5.dp),
+                )
+            }
         }
     }
     Spacer(GlanceModifier.height(if (compact) 2.dp else 6.dp))
@@ -520,6 +530,139 @@ private fun TodayStats(s: WidgetSnapshot, compact: Boolean) {
 
 class StepsWidgetReceiver : GlanceAppWidgetReceiver() {
     override val glanceAppWidget: GlanceAppWidget = StepsWidget()
+}
+
+// ── today: the three scores as rings ─────────────────────────────────────────────
+
+/** The topics' colours on the dark card: Readiness teal, Sleep indigo, steps amber, as in the app. */
+private val ReadinessArc = BrandDark.primary
+private val SleepArc = Color(0xFF9AA5FF)
+private val StepsArc = Color(0xFFFFC46B)
+
+/**
+ * Today's three figures side by side, each a ring in its topic's colour: Readiness, the
+ * Sleep Score and steps towards the daily target. Under them (or beside them, when wide)
+ * time asleep and distance; the charge only when it is low.
+ *
+ * Added 2026-11-21 next to [StepsWidget], not in its place: the user keeps both to choose
+ * from in the widget picker.
+ */
+class ScoresWidget : GlanceAppWidget() {
+    override val sizeMode = SizeMode.Exact
+
+    override suspend fun provideGlance(context: Context, id: GlanceId) {
+        provideContent {
+            val version by WidgetBus.version.collectAsState()
+            val s = remember(version) { WidgetStore.read(context) }
+            val target = remember(version) { Goals.stepTarget(context) }
+            val rings = remember(version) {
+                listOf(
+                    progressRingBitmap((s.readiness ?: 0) / 100f, ReadinessArc, TrackColor),
+                    progressRingBitmap((s.sleepScore ?: 0) / 100f, SleepArc, TrackColor),
+                    progressRingBitmap(stepProgress(s.steps, target), StepsArc, TrackColor),
+                )
+            }
+            val syncing = remember(version) { WidgetSync.isSyncing(context) }
+            ScoresContent(s, rings, syncing)
+        }
+    }
+}
+
+@Composable
+private fun ScoresContent(s: WidgetSnapshot, rings: List<Bitmap>, syncing: Boolean) {
+    val size = LocalSize.current
+    val layout = trioLayout(size.width.value, size.height.value)
+    val warning = chargeWarning(s.batteryPct, s.batteryStatus)
+    // Rings alone in a narrow cell take the whole width — their names are wider than the
+    // rings, so the Steps ring ran under the button (2026-11-21). The tap still opens the app.
+    val refresh = minOf(size.width, size.height) >= REFRESH_MIN_SIZE &&
+        !(layout == TrioLayout.RINGS_ONLY && size.width < 260.dp)
+    // What the rings may take: the width shared three ways, and the height left once the
+    // header, the captions and (when stacked) the rows are taken out.
+    val captions = 18.dp
+    val ringSize = when (layout) {
+        TrioLayout.ROWS_BELOW -> minOf(
+            (size.width - 24.dp - 24.dp) / 3,
+            size.height - 24.dp - 26.dp - captions - 12.dp - 48.dp - (if (warning != null) 22.dp else 0.dp),
+        )
+        // The rows keep 150 dp, enough for "Distance" and "8h 29m" on one line each.
+        TrioLayout.ROWS_BESIDE -> minOf((size.width - 24.dp - 24.dp - 16.dp - 150.dp - 20.dp) / 3, size.height - 24.dp - captions)
+        // With the refresh button, the row keeps clear of its corner.
+        TrioLayout.RINGS_ONLY -> minOf((size.width - 24.dp - 24.dp - (if (refresh) 28.dp else 0.dp)) / 3, size.height - 24.dp - captions)
+    }.coerceIn(32.dp, 96.dp)
+    // Small rings sit closer: "Readiness" under them already spaces them out.
+    val gap = if (ringSize < 60.dp) 6.dp else 12.dp
+    val trio: @Composable () -> Unit = {
+        Row(verticalAlignment = Alignment.Vertical.Top) {
+            ScoreRing(rings[0], ringSize, s.readiness?.toString(), "Readiness", "Readiness score")
+            Spacer(GlanceModifier.width(gap))
+            ScoreRing(rings[1], ringSize, s.sleepScore?.toString(), "Sleep", "Sleep score")
+            Spacer(GlanceModifier.width(gap))
+            ScoreRing(rings[2], ringSize, s.steps?.let { stepsShort(it) }, "Steps", "Steps today")
+        }
+    }
+    val rows: @Composable ColumnScope.() -> Unit = {
+        Stat(
+            R.drawable.ic_sym_bedtime,
+            if (s.asleepHours != null || s.sleepHours == null) "Asleep" else "In bed",
+            sleepDuration(s) ?: "—",
+            compact = true,
+        )
+        Spacer(GlanceModifier.height(4.dp))
+        Stat(R.drawable.ic_sym_straighten, "Distance", distanceLabel(s.distanceKm), unit = if (s.distanceKm != null) "km" else "", compact = true)
+        warning?.let {
+            Spacer(GlanceModifier.height(4.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Glyph(R.drawable.ic_sym_battery_full, 14.dp, batteryTint(s.batteryStatus))
+                Spacer(GlanceModifier.width(4.dp))
+                Text(it, style = TextStyle(color = batteryTint(s.batteryStatus), fontSize = 12.sp))
+            }
+        }
+    }
+    Shell(corner = if (refresh) ({ RefreshButton(syncing) }) else null) {
+        when (layout) {
+            TrioLayout.ROWS_BELOW -> Column(GlanceModifier.fillMaxSize()) {
+                // A header line, so the refresh button in the corner has a row of its own
+                // and does not sit on the Steps ring.
+                Text("Today", style = TextStyle(color = TextMuted, fontSize = 12.sp), modifier = GlanceModifier.padding(top = 4.dp))
+                // The rings and rows together, centred in what is left: pushed apart, they
+                // left a hole in the middle of a square cell.
+                Column(GlanceModifier.fillMaxWidth().defaultWeight(), verticalAlignment = Alignment.Vertical.CenterVertically) {
+                    Row(GlanceModifier.fillMaxWidth(), horizontalAlignment = Alignment.Horizontal.CenterHorizontally) { trio() }
+                    Spacer(GlanceModifier.height(14.dp))
+                    rows()
+                }
+            }
+            TrioLayout.ROWS_BESIDE -> Row(GlanceModifier.fillMaxSize(), verticalAlignment = Alignment.Vertical.CenterVertically) {
+                trio()
+                Spacer(GlanceModifier.width(16.dp))
+                Column(GlanceModifier.defaultWeight()) { rows() }
+                Spacer(GlanceModifier.width(20.dp))
+            }
+            TrioLayout.RINGS_ONLY -> Row(
+                GlanceModifier.fillMaxSize().padding(end = if (refresh) 28.dp else 0.dp),
+                horizontalAlignment = Alignment.Horizontal.CenterHorizontally,
+                verticalAlignment = Alignment.Vertical.CenterVertically,
+            ) { trio() }
+        }
+    }
+}
+
+/** One of the three: a ring with its figure in the middle and its name underneath. */
+@Composable
+private fun ScoreRing(ring: Bitmap, size: Dp, value: String?, label: String, spoken: String) {
+    Column(horizontalAlignment = Alignment.Horizontal.CenterHorizontally) {
+        Ring(ring, size, value?.let { "$spoken $it" } ?: "$spoken not available yet") {
+            val big = if (size >= 72.dp) 20.sp else if (size >= 52.dp) 16.sp else 13.sp
+            Text(value ?: "—", style = TextStyle(color = TextStrong, fontSize = big, fontWeight = FontWeight.Bold))
+        }
+        Spacer(GlanceModifier.height(4.dp))
+        Text(label, style = TextStyle(color = TextMuted, fontSize = 11.sp))
+    }
+}
+
+class ScoresWidgetReceiver : GlanceAppWidgetReceiver() {
+    override val glanceAppWidget: GlanceAppWidget = ScoresWidget()
 }
 
 // ── the ring's battery (small) ───────────────────────────────────────────────────────

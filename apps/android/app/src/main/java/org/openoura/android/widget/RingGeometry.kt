@@ -80,3 +80,29 @@ fun sleepDuration(s: WidgetSnapshot): String? = (s.asleepHours ?: s.sleepHours)?
     val min = Math.round(it * 60).toInt()
     "${min / 60}h ${"%02d".format(min % 60)}m"
 }
+
+/** Steps short enough for the middle of a small ring: "300", "4.9k", "12k". */
+fun stepsShort(steps: Int?): String = when {
+    steps == null -> "—"
+    steps < 1000 -> steps.toString()
+    steps < 10_000 -> "%.1fk".format(steps / 1000.0)
+    else -> "${steps / 1000}k"
+}
+
+/** How the score-trio widget arranges itself in the space it was given. */
+enum class TrioLayout {
+    /** The three rings alone, in a cell too short for anything under them. */
+    RINGS_ONLY,
+    /** The rings, then time asleep and distance under them. */
+    ROWS_BELOW,
+    /** Wide and short: the rings, with the two rows to their right. */
+    ROWS_BESIDE,
+}
+
+// Below first whenever it is tall enough: beside, the rows only get what the rings leave,
+// and at 325 dp wide that was too little — "Asleep" broke over two lines (2026-11-21).
+fun trioLayout(widthDp: Float, heightDp: Float): TrioLayout = when {
+    heightDp >= 170f -> TrioLayout.ROWS_BELOW
+    widthDp >= 360f && heightDp >= 90f -> TrioLayout.ROWS_BESIDE
+    else -> TrioLayout.RINGS_ONLY
+}
