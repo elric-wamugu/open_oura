@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Steps in amber as the widget picker shows them: seven tenths of the target. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="124dp" android:height="124dp"
+    android:viewportWidth="124" android:viewportHeight="124">
+    <path android:pathData="M62,16A46,46 0 1 1 61.99,16" android:strokeColor="#343944" android:strokeWidth="12" />
+    <path android:pathData="M62.00,16.00A46,46 0 1 1 18.25,76.21" android:strokeColor="#FFC46B" android:strokeWidth="12" android:strokeLineCap="round" />
+</vector>

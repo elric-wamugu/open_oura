@@ -1,0 +1,73 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Static mock shown in the widget picker for the score trio (ScoresWidget in Widgets.kt):
+     "Today", three rings for Readiness, Sleep and steps, then Asleep and Distance, on the
+     fixed dark card with the refresh button in the corner. -->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@drawable/widget_bg"
+    tools:ignore="HardcodedText,UseAppTint">
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:orientation="vertical"
+        android:padding="12dp">
+        <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="4dp"
+            android:text="Today" android:textColor="@color/widget_text_muted" android:textSize="12sp" />
+        <LinearLayout android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1"
+            android:orientation="vertical" android:gravity="center_vertical">
+        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:layout_marginBottom="10dp" android:orientation="horizontal" android:baselineAligned="false">
+            <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1"
+                android:orientation="vertical" android:gravity="center_horizontal">
+                <FrameLayout android:layout_width="56dp" android:layout_height="56dp">
+                    <ImageView android:layout_width="match_parent" android:layout_height="match_parent"
+                        android:src="@drawable/widget_preview_readiness" android:importantForAccessibility="no" />
+                    <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_gravity="center"
+                        android:text="84" android:textColor="@color/widget_text" android:textSize="16sp" android:textStyle="bold" />
+                </FrameLayout>
+                <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="4dp"
+                    android:text="Readiness" android:textColor="@color/widget_text_muted" android:textSize="11sp" />
+            </LinearLayout>
+            <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1"
+                android:orientation="vertical" android:gravity="center_horizontal">
+                <FrameLayout android:layout_width="56dp" android:layout_height="56dp">
+                    <ImageView android:layout_width="match_parent" android:layout_height="match_parent"
+                        android:src="@drawable/widget_preview_sleep" android:importantForAccessibility="no" />
+                    <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_gravity="center"
+                        android:text="88" android:textColor="@color/widget_text" android:textSize="16sp" android:textStyle="bold" />
+                </FrameLayout>
+                <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="4dp"
+                    android:text="Sleep" android:textColor="@color/widget_text_muted" android:textSize="11sp" />
+            </LinearLayout>
+            <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1"
+                android:orientation="vertical" android:gravity="center_horizontal">
+                <FrameLayout android:layout_width="56dp" android:layout_height="56dp">
+                    <ImageView android:layout_width="match_parent" android:layout_height="match_parent"
+                        android:src="@drawable/widget_preview_trio_steps" android:importantForAccessibility="no" />
+                    <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_gravity="center"
+                        android:text="4.9k" android:textColor="@color/widget_text" android:textSize="16sp" android:textStyle="bold" />
+                </FrameLayout>
+                <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:layout_marginTop="4dp"
+                    android:text="Steps" android:textColor="@color/widget_text_muted" android:textSize="11sp" />
+            </LinearLayout>
+        </LinearLayout>
+        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginTop="4dp">
+            <ImageView android:layout_width="14dp" android:layout_height="14dp" android:src="@drawable/ic_sym_bedtime" android:tint="@color/widget_text_muted" android:importantForAccessibility="no" />
+            <TextView android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1"
+                android:layout_marginStart="6dp" android:text="Asleep" android:textColor="@color/widget_text_muted" android:textSize="12sp" />
+            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="7h 36m" android:textColor="@color/widget_text" android:textSize="15sp" android:textStyle="bold" />
+        </LinearLayout>
+        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:orientation="horizontal" android:gravity="center_vertical" android:layout_marginTop="4dp">
+            <ImageView android:layout_width="14dp" android:layout_height="14dp" android:src="@drawable/ic_sym_straighten" android:tint="@color/widget_text_muted" android:importantForAccessibility="no" />
+            <TextView android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1"
+                android:layout_marginStart="6dp" android:text="Distance" android:textColor="@color/widget_text_muted" android:textSize="12sp" />
+            <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="3.7 km" android:textColor="@color/widget_text" android:textSize="15sp" android:textStyle="bold" />
+        </LinearLayout>
+        </LinearLayout>
+    </LinearLayout>
+    <ImageView android:layout_width="18dp" android:layout_height="18dp" android:src="@drawable/ic_sym_sync" android:tint="@color/widget_text_muted" android:importantForAccessibility="no" android:layout_gravity="top|end" android:layout_margin="12dp" />
+</FrameLayout>

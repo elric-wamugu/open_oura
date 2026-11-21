@@ -6,4 +6,6 @@
     <color name="widget_surface">#1C1F26</color>
     <color name="widget_text">#F1F3F5</color>
     <color name="widget_text_muted">#AAB1BB</color>
+    <!-- A score word from Good up: BrandDark.primary, the widgets' `Good`. -->
+    <color name="widget_good">#6BD8CB</color>
 </resources>

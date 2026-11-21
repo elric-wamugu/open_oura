@@ -301,6 +301,14 @@ replaced:
   word. The ring's charge shows only when it is in a
   low band, as a warning line; distance and sleep efficiency were dropped. The snapshot
   gained `readiness` and `sleepScore`, read for the same day as Today's scores row.
+  Stacked under the ring (a square cell), Readiness is a row like the other two rather
+  than a headline, so the ring keeps its size (2026-11-21).
+- **Today's scores** (`ScoresWidget`, added 2026-11-21 beside Today, not in its place, so
+  both can be picked): Readiness, the Sleep Score and steps towards the target as three
+  rings in the app's topic colours (teal, indigo, amber), then time asleep and distance;
+  the charge only when low. Rows under the rings whenever the cell is ≥ 170 dp tall,
+  beside them when ≥ 360 dp wide and shorter, the rings alone otherwise — and there, in a
+  cell under 260 dp wide, without the refresh button, which the Steps ring ran under.
 
 What shaped them:
 
@@ -310,6 +318,8 @@ What shaped them:
   size that was matched, not the space granted, and a ring sized from it came out a
   fraction of its cell. The layout is chosen from the real size: figures beside the ring
   when wide (≥ 230 dp), under it when tall (≥ 190 dp), ring alone otherwise.
+- **Picker previews are RemoteViews too.** Only the views RemoteViews allows: a `Space`
+  in the first `preview_scores.xml` made the picker show "Couldn't load widget".
 - **The receiver kept its old name.** The launcher ties a placed widget to its receiver's
   class, so the stage ring is served by `ActivityWidgetReceiver` — the old "Today" widget
   — and one already on a home screen changes in place. The Vitals and Last night

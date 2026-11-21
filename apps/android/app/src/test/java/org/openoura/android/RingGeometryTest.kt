@@ -8,6 +8,9 @@ import androidx.compose.ui.unit.dp
 import org.openoura.android.data.Goals
 import org.openoura.android.data.WidgetSnapshot
 import org.openoura.android.widget.RingLayout
+import org.openoura.android.widget.TrioLayout
+import org.openoura.android.widget.stepsShort
+import org.openoura.android.widget.trioLayout
 import org.openoura.android.widget.ringLayout
 import org.openoura.android.widget.RingStage
 import org.openoura.android.widget.WidgetSync
@@ -145,5 +148,19 @@ class RingGeometryTest {
         assertNull(Goals.parseSteps("250000"))
         assertNull(Goals.parseSteps(""))
         assertNull(Goals.parseSteps("lots"))
+    }
+
+    @Test fun `steps shorten for a small ring`() {
+        assertEquals("—", stepsShort(null))
+        assertEquals("300", stepsShort(300))
+        assertEquals("4.9k", stepsShort(4_920))
+        assertEquals("12k", stepsShort(12_480))
+    }
+
+    @Test fun `the trio stacks its rows when square, puts them beside when wide, drops them when short`() {
+        assertEquals(TrioLayout.ROWS_BELOW, trioLayout(211f, 249f))
+        assertEquals(TrioLayout.ROWS_BELOW, trioLayout(325f, 248f))
+        assertEquals(TrioLayout.ROWS_BESIDE, trioLayout(400f, 120f))
+        assertEquals(TrioLayout.RINGS_ONLY, trioLayout(211f, 110f))
     }
 }
