@@ -196,6 +196,38 @@ object PulseShapeText {
     }
 
     fun format(v: Double): String = "%.2f".format(v).replace('-', '−')
+
+    /** A gap longer than this between recorded nights breaks the chart's line. */
+    const val BREAK_DAYS = 14
+
+    /**
+     * The newest [limit] nights as chart points, oldest first, one slot per recorded night.
+     * Cardio PPG is often on for a few weeks at a time, so a calendar axis would be mostly
+     * empty; nights sit side by side instead, and a break longer than [BREAK_DAYS] leaves an
+     * empty slot so the line is not drawn across months nobody measured.
+     */
+    fun chartPoints(nights: List<Pair<String, Double>>, limit: Int = 30): List<TrendPoint> {
+        val recent = nights.take(limit).reversed()
+        var slot = 0L
+        var previous: Long? = null
+        return recent.map { (ymd, v) ->
+            val day = runCatching { java.time.LocalDate.parse(ymd).toEpochDay() }.getOrNull()
+            if (previous != null && day != null && day - previous!! > BREAK_DAYS) slot++
+            if (day != null) previous = day
+            TrendPoint(slot++, v)
+        }
+    }
+
+    /** "Jul 8 – Nov 21" for the charted nights (newest first in [nights]). */
+    fun span(nights: List<Pair<String, Double>>, limit: Int = 30): String? {
+        val shown = nights.take(limit)
+        if (shown.size < 2) return null
+        val fmt = java.time.format.DateTimeFormatter.ofPattern("MMM d", java.util.Locale.ENGLISH)
+        fun d(ymd: String) = runCatching { java.time.LocalDate.parse(ymd).format(fmt) }.getOrNull()
+        val from = d(shown.last().first) ?: return null
+        val to = d(shown.first().first) ?: return null
+        return "$from – $to"
+    }
 }
 
 /**
@@ -228,6 +260,38 @@ private fun PulseShapeSection(summary: Summary) {
                 "Studied on fingertip sensors, not rings: a trend, not a vascular age.",
         ).joinToString(" "),
         style = MaterialTheme.typography.bodySmall,
+        color = cs.onSurfaceVariant,
+    )
+    val points = PulseShapeText.chartPoints(nights, SPARK_NIGHTS)
+    if (points.size < 2) return
+    val colors = chartColors()
+    val window = TrendWindow(
+        points = points,
+        endDay = points.last().day,
+        days = (points.last().day + 1).toInt(),
+        mean = usual,
+        previousMean = null,
+    )
+    Surface(shape = MaterialTheme.shapes.large, color = cs.surfaceContainerHigh) {
+        Canvas(
+            Modifier
+                .fillMaxWidth()
+                .height(84.dp)
+                .padding(12.dp)
+                .semantics {
+                    contentDescription = "Pulse shape over the last ${points.size} recorded nights, from " +
+                        "${PulseShapeText.format(points.minOf { it.value })} to " +
+                        "${PulseShapeText.format(points.maxOf { it.value })}."
+                },
+        ) { drawTrend(window, bars = false, line = colors.hrv, grid = colors.grid, minPad = 0.02, maxGap = 1) }
+    }
+    Text(
+        listOfNotNull(
+            "Last ${points.size} recorded nights",
+            PulseShapeText.span(nights, SPARK_NIGHTS),
+            usual?.let { "dashed line: your usual ${PulseShapeText.format(it)}" },
+        ).joinToString(" · "),
+        style = MaterialTheme.typography.labelSmall,
         color = cs.onSurfaceVariant,
     )
 }

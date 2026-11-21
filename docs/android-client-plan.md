@@ -861,6 +861,14 @@ Android shows it in the Cardiovascular panel (latest night against the median of
 before) and as "Pulse shape (b/a)" under Body signals in Trends. It is a trend, not a
 vascular age: b/a is established on fingertip sensors, not rings.
 
+The panel also charts the last 30 recorded nights (added 2026-11-21), one slot per night rather
+than per calendar day, because Cardio PPG tends to be on for a few weeks at a time and a date axis
+would be mostly empty. A break of more than 14 days leaves an empty slot and breaks the line, so
+months without data aren't drawn over. The dashed line is the usual (median) value. The shared
+`drawTrend` gained `minPad` and `maxGap`. Its old 0.5 minimum padding squashed a ratio that
+ranges about 0.3, so Trends now passes 0.02 for two-decimal metrics. Android only; the web has no
+pulse-shape view.
+
 ### Today as a bento, History as a day story (2026-11-20)
 
 Chosen from three Material 3 Expressive mockups (hero score, bento, day story).

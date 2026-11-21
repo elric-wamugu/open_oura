@@ -262,7 +262,7 @@ private fun TrendCard(metric: TrendMetric, w: TrendWindow) {
                     .height(96.dp)
                     .padding(top = 4.dp)
                     .semantics { contentDescription = spoken },
-            ) { drawTrend(w, metric.bars, line, colors.grid) }
+            ) { drawTrend(w, metric.bars, line, colors.grid, minPad = if (metric.decimals >= 2) 0.02 else 0.5) }
             val fmt = remember { DateTimeFormatter.ofPattern("MMM d") }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 Text(
@@ -299,6 +299,10 @@ internal fun androidx.compose.ui.graphics.drawscope.DrawScope.drawTrend(
     bars: Boolean,
     line: Color,
     grid: Color,
+    /** The least a line's range is padded by: 0.5 suits whole units, too much for a ratio like b/a. */
+    minPad: Double = 0.5,
+    /** Join points at most this many slots apart; null for the window's own default. */
+    maxGap: Int? = null,
 ) {
     val pts = w.points
     if (pts.isEmpty()) return
@@ -309,7 +313,7 @@ internal fun androidx.compose.ui.graphics.drawscope.DrawScope.drawTrend(
     val (yMin, yMax) = if (bars) {
         0.0 to hi.coerceAtLeast(1.0)
     } else {
-        val pad = ((hi - lo) * 0.15).coerceAtLeast(abs(hi) * 0.01).coerceAtLeast(0.5)
+        val pad = ((hi - lo) * 0.15).coerceAtLeast(abs(hi) * 0.01).coerceAtLeast(minPad)
         (lo - pad) to (hi + pad)
     }
     val slot = size.width / w.days
@@ -340,12 +344,12 @@ internal fun androidx.compose.ui.graphics.drawscope.DrawScope.drawTrend(
         return
     }
 
-    val maxGap = (w.days / 10).coerceAtLeast(3)
+    val joinWithin = maxGap ?: (w.days / 10).coerceAtLeast(3)
     val path = Path()
     var previous: TrendPoint? = null
     pts.forEach { p ->
         val last = previous
-        if (last == null || p.day - last.day > maxGap) path.moveTo(x(p.day), y(p.value)) else path.lineTo(x(p.day), y(p.value))
+        if (last == null || p.day - last.day > joinWithin) path.moveTo(x(p.day), y(p.value)) else path.lineTo(x(p.day), y(p.value))
         previous = p
     }
     drawPath(path, line, style = Stroke(width = 2.5.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round))

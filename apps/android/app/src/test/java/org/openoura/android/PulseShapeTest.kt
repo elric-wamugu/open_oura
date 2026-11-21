@@ -42,4 +42,17 @@ class PulseShapeTest {
         val w = TrendWindow(emptyList(), 0, 30, mean = -0.66, previousMean = -0.70)
         assertEquals("0.04 less negative than the 30 days before", TrendMetric.PULSE_SHAPE.describeChange(w))
     }
+
+    @Test
+    fun `the chart sits nights side by side and leaves a slot at long breaks`() {
+        // Newest first, as PulseShapeText.nights gives them.
+        val nights = listOf("2026-11-21" to -0.68, "2026-08-11" to -0.62, "2026-08-09" to -0.75, "2026-07-24" to -0.64)
+        val pts = PulseShapeText.chartPoints(nights)
+        assertEquals(listOf(-0.64, -0.75, -0.62, -0.68), pts.map { it.value })
+        // Jul 24 → Aug 9 is 16 days and Aug 11 → Nov 21 is months: both skip a slot.
+        assertEquals(listOf(0L, 2L, 3L, 5L), pts.map { it.day })
+        assertEquals(listOf(-0.62, -0.68), PulseShapeText.chartPoints(nights, limit = 2).map { it.value })
+        assertEquals("Jul 24 – Nov 21", PulseShapeText.span(nights))
+        assertNull(PulseShapeText.span(nights.take(1)))
+    }
 }
