@@ -285,6 +285,8 @@ replaced:
   night) and the night's sleep efficiency under it. Then, in this order: **Steps, Distance
   (km), Ring charge**. HRV and resting heart rate are not shown, by choice.
 - **Ring battery** (`BatteryWidget`): the charge as an arc, coloured on the brain's band.
+  **Removed 2026-11-21** at the user's request. The charge is still shown in the app's
+  battery pill, and the Today widgets warn when it is low.
 - **Steps today** (`StepsWidget`, added the same day): the stage ring widget with its two
   halves swapped. The ring is today's steps towards a **daily step target**, with the
   distance under the count; the figures are **Asleep, Sleep efficiency, Ring charge**. It

@@ -1,8 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<!-- The battery ring as the widget picker shows it: about four fifths full. -->
-<vector xmlns:android="http://schemas.android.com/apk/res/android"
-    android:width="124dp" android:height="124dp"
-    android:viewportWidth="124" android:viewportHeight="124">
-    <path android:pathData="M62,16A46,46 0 1 1 61.99,16" android:strokeColor="#33808080" android:strokeWidth="12" />
-    <path android:pathData="M62.00,16.00A46,46 0 1 1 18.25,47.79" android:strokeColor="#0D9488" android:strokeWidth="12" android:strokeLineCap="round" />
-</vector>

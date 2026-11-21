@@ -28,7 +28,6 @@ object WidgetUpdates {
         update(ctx, StageRingWidget(), ActivityWidgetReceiver::class.java)
         update(ctx, StepsWidget(), StepsWidgetReceiver::class.java)
         update(ctx, ScoresWidget(), ScoresWidgetReceiver::class.java)
-        update(ctx, BatteryWidget(), BatteryWidgetReceiver::class.java)
     }
 
     /**
