@@ -203,7 +203,7 @@ private fun Stop(stop: HistoryStop, first: Boolean, last: Boolean, onOpenDay: (S
                 Text(stop.title, style = MaterialTheme.typography.titleMediumEmphasized)
                 val note = when {
                     stop.day == null -> "${stop.days} day${if (stop.days == 1) "" else "s"}"
-                    stop.naps.isNotEmpty() -> "+ nap ${stop.naps.joinToString(", ")}"
+                    stop.naps.isNotEmpty() -> "also slept ${stop.naps.joinToString(", ")}"
                     else -> null
                 }
                 note?.let { Text(it, style = MaterialTheme.typography.labelMedium, color = cs.onSurfaceVariant) }

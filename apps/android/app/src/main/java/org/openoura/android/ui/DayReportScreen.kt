@@ -131,9 +131,9 @@ private fun ColumnScope.SleepReport(s: Summary, ymd: String, onOpenNap: (NightRo
             SectionHeader("Also slept this day", Modifier.padding(top = 4.dp))
             NapList(naps, onOpenNap)
             Footnote(
-                "Naps aren't counted in the Sleep score, readiness or sleep debt. Rests under " +
-                    "90 minutes aren't listed: they can't be staged, and the ring logs sitting " +
-                    "still the same way.",
+                "Only the day's main sleep counts toward the Sleep score, readiness and sleep " +
+                    "debt. Rests under 90 minutes aren't listed: they can't be staged, and the " +
+                    "ring logs sitting still the same way.",
             )
         }
     }
@@ -155,7 +155,7 @@ fun NapReportScreen(summary: Summary, id: String, modifier: Modifier = Modifier)
         val n = summary.nightById(id)
         if (n == null) {
             // A recompute can replace the period (the ring declaring a detected one, say).
-            Notice("This nap is no longer in the summary.")
+            Notice("This sleep is no longer in the summary.")
             return@Column
         }
         SleepBody(summary, n, nap = true)
@@ -181,7 +181,7 @@ private fun NapList(naps: List<NightRow>, onOpenNap: (NightRow) -> Unit) {
                     }
                 },
                 trailingContent = { Icon(painterResource(R.drawable.ic_sym_chevron_right), contentDescription = null) },
-                content = { Text(NapText.title(n)) },
+                content = { Text(NapText.times(n)) },
             )
         }
     }
@@ -189,8 +189,14 @@ private fun NapList(naps: List<NightRow>, onOpenNap: (NightRow) -> Unit) {
 
 /** A nap's words, shared by the day report's list and Today's tile. Pure, so tested. */
 object NapText {
-    /** "Nap · 14:05–15:50". */
-    fun title(n: NightRow): String = "Nap · ${n.start ?: "—"}–${n.end ?: "—"}"
+    // No "Nap": the summary only knows this is not the day's longest sleep. A real one on
+    // the phone ran 19:54–23:23, which reads as the first half of a split night as easily.
+
+    /** "14:05–15:50", for the day report's row under "Also slept this day". */
+    fun times(n: NightRow): String = "${n.start ?: "—"}–${n.end ?: "—"}"
+
+    /** "Also slept · 14:05–15:50", for Today's tile, which has no heading to lean on. */
+    fun title(n: NightRow): String = "Also slept · ${times(n)}"
 
     /** "1h 09m asleep of 1h 45m in bed", or the time in bed alone without stages. */
     fun line(n: NightRow): String {
@@ -244,8 +250,8 @@ private fun ColumnScope.SleepBody(
         // The summary scores every period, but the score's timing part judges a period's
         // midpoint against a night-time ideal, so an afternoon nap would always lose on it.
         Notice(
-            "No Sleep score for a nap. The score judges when you slept against your usual " +
-                "night, so a nap would always score low on timing. Naps don't count toward " +
+            "No Sleep score here. The score describes a day's main sleep, and its timing " +
+                "part judges it against your usual night. This sleep doesn't count toward " +
                 "readiness or sleep debt either.",
         )
     } else {

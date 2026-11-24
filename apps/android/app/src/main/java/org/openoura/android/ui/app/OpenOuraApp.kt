@@ -663,7 +663,7 @@ fun OpenOuraApp(
         }
         entry<NapRoute> { key ->
             val summary = (state as? SummaryState.Ready)?.summary
-            ScreenScaffold(title = "Nap · ${dayTitle(key.ymd)}", onBack = navigator::back) { padding ->
+            ScreenScaffold(title = "Also slept · ${dayTitle(key.ymd)}", onBack = navigator::back) { padding ->
                 if (summary != null) NapReportScreen(summary, key.id, Modifier.padding(padding))
             }
         }
