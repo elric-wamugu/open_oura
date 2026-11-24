@@ -9,6 +9,10 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import java.io.File
+import java.util.concurrent.atomic.AtomicInteger
+import uniffi.oura_core.clearEffortLabel
+import uniffi.oura_core.relabelSummaryJson
+import uniffi.oura_core.setEffortLabel
 import uniffi.oura_core.summaryJsonStaged
 
 private const val TAG = "OpenOura"
@@ -177,8 +181,9 @@ class SummaryRepository private constructor(private val ctx: Context) {
 
         val result = withContext(Dispatchers.Default) {
             runCatching {
+                val edits = labelEdits.get()
                 val started = System.nanoTime()
-                val raw = summaryJsonStaged(dbFile.absolutePath, tzOffsetHours(), STAGE_BUDGET_MS.toULong())
+                var raw = summaryJsonStaged(dbFile.absolutePath, tzOffsetHours(), STAGE_BUDGET_MS.toULong())
                 val coreMs = (System.nanoTime() - started) / 1_000_000
                 val parsed = json.decodeFromString<Summary>(raw)
                 val parseMs = (System.nanoTime() - started) / 1_000_000 - coreMs
@@ -188,10 +193,16 @@ class SummaryRepository private constructor(private val ctx: Context) {
                 }
                 // Only cache what parsed cleanly, so a bad write can't poison cold start.
                 synchronized(cacheLock) {
+                    // A label set while this ran may have missed the core's read of them;
+                    // put it on before this replaces the cache [labelEffort] patched.
+                    val final = if (labelEdits.get() == edits) parsed else {
+                        raw = relabelSummaryJson(dbFile.absolutePath, raw)
+                        json.decodeFromString<Summary>(raw)
+                    }
                     cacheFile.writeText(raw)
-                    parsedCache = cacheFile.lastModified() to parsed
+                    parsedCache = cacheFile.lastModified() to final
+                    final
                 }
-                parsed
             }
         }
 
@@ -205,8 +216,10 @@ class SummaryRepository private constructor(private val ctx: Context) {
                     WidgetStore.write(ctx, WidgetStore.from(s))
                     org.openoura.android.widget.WidgetUpdates.refreshAll(ctx)
                 }
+                // A label set after this recompute cached its result patched the cache since;
+                // show that, not the copy from before it.
                 _state.value = if (err != null) SummaryState.Failed(err)
-                else SummaryState.Ready(s, stale = false)
+                else SummaryState.Ready(synchronized(cacheLock) { parsedCache?.second } ?: s, stale = false)
             },
             onFailure = { e ->
                 Log.e(TAG, "summary refresh failed", e)
@@ -216,6 +229,59 @@ class SummaryRepository private constructor(private val ctx: Context) {
             },
         )
     }
+
+    /** Bumped by every label change, so a recompute running alongside one can tell. */
+    private val labelEdits = AtomicInteger()
+
+    /**
+     * Put the person's own label on an effort session, or take it off with a null [kind].
+     *
+     * The label goes into `oura.db` (so it is backed up and restored with the history), then
+     * onto the summary already showing through the core's own matching — no recompute,
+     * which on a phone would be a ten-second wait to see one word change. Returns null on
+     * success, or what went wrong.
+     */
+    suspend fun labelEffort(ring: EffortRing, kind: String?, note: String?): String? {
+        if (!hasDatabase) return "No database on this device yet."
+        val lo = ring.capture.getOrNull(0) ?: return "This session has no ring time."
+        val hi = ring.capture.getOrNull(1) ?: lo
+        return withContext(Dispatchers.IO) {
+            runCatching {
+                val db = dbFile.absolutePath
+                val out = if (kind == null) {
+                    clearEffortLabel(db, ring.serial, lo, hi, ring.startDs, ring.endDs)
+                } else {
+                    setEffortLabel(db, ring.serial, lo, hi, ring.startDs, ring.endDs, kind, note)
+                }
+                coreError(out)?.let { return@runCatching it }
+                labelEdits.incrementAndGet()
+                val relabelled = synchronized(cacheLock) {
+                    if (!cacheFile.exists()) return@synchronized null
+                    val raw = relabelSummaryJson(db, cacheFile.readText())
+                    val parsed = json.decodeFromString<Summary>(raw)
+                    if (parsed.error != null) return@synchronized null
+                    cacheFile.writeText(raw)
+                    parsedCache = cacheFile.lastModified() to parsed
+                    parsed
+                }
+                relabelled?.let { s ->
+                    val stale = (_state.value as? SummaryState.Ready)?.stale ?: false
+                    _state.value = SummaryState.Ready(s, stale)
+                }
+                null
+            }.getOrElse {
+                Log.e(TAG, "labelling an effort session failed", it)
+                it.message ?: it.toString()
+            }
+        }
+    }
+
+    /** The `error` a core call returned in-band, if it did. */
+    private fun coreError(out: String): String? =
+        runCatching { json.parseToJsonElement(out) }.getOrNull()
+            ?.let { it as? kotlinx.serialization.json.JsonObject }
+            ?.get("error")
+            ?.let { (it as? kotlinx.serialization.json.JsonPrimitive)?.content }
 
     /**
      * The last computed snapshot, straight off disk and without touching [state].

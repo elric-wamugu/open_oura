@@ -227,9 +227,10 @@ data class Battery(
 /**
  * A stretch the ring recorded an exercise-HR trace for.
  *
- * Deliberately unlabelled: naming a session ("running") is what Oura's AAD model does, and
- * that model isn't bundled. This only knows the ring was recording effort, so it must never
- * be rendered as a named workout.
+ * Never labelled by guesswork: naming a session ("running") is what Oura's AAD model does,
+ * and that model isn't bundled. This only knows the ring was recording effort, so it must
+ * never be rendered as a named workout — unless the person named it themselves, which is
+ * [userLabel], and then it is shown as theirs.
  *
  * `hrPeak` is absent whenever it wouldn't exceed `hrMean` — see effort_sessions() in
  * oura-summary for why that can legitimately happen during movement.
@@ -244,6 +245,32 @@ data class EffortSession(
     @SerialName("intensity_mean") val intensityMean: Double? = null,
     @SerialName("intensity_peak") val intensityPeak: Double? = null,
     val traces: Int = 0,
+    /** The session in ring time — what a label is keyed by. Absent from older summaries. */
+    val ring: EffortRing? = null,
+    /** What the person said this was, or null if they haven't said. */
+    @SerialName("user_label") val userLabel: UserLabel? = null,
+)
+
+/**
+ * An effort session named by ring time rather than wall clock: the ring, its boot (by
+ * capture-time range) and the ds span. Wall-clock times move when the ds → unix fit is
+ * corrected; these do not, so a label set against them stays on its session.
+ */
+@Serializable
+data class EffortRing(
+    val serial: String,
+    /** The boot's earliest and latest capture time, unix seconds. */
+    val capture: List<Long>,
+    @SerialName("start_ds") val startDs: Long,
+    @SerialName("end_ds") val endDs: Long,
+)
+
+/** A label the person put on an effort session: an activity kind and an optional note. */
+@Serializable
+data class UserLabel(
+    val kind: String,
+    val note: String? = null,
+    @SerialName("updated_unix") val updatedUnix: Long = 0,
 )
 
 /** Accumulated sleep debt against a nightly need, computed in Rust. */

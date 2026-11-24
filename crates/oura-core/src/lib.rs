@@ -124,7 +124,7 @@ pub fn backup_to_fd(
 /// Merge the backup read from an open file descriptor into the database, creating it if
 /// there is none. All or nothing: a wrong passphrase or a damaged file changes nothing.
 ///
-/// Returns `{ events, events_added, readings_added, files_written, created_unix }`, or
+/// Returns `{ events, events_added, readings_added, labels_added, files_written, created_unix }`, or
 /// `{ error, code }` where `code` is `wrong_passphrase`, `not_a_backup`, `newer_format`,
 /// `damaged` or `failed`.
 #[cfg(unix)]
@@ -146,11 +146,102 @@ pub fn restore_from_fd(
             "events": s.events,
             "events_added": s.events_added,
             "readings_added": s.readings_added,
+            "labels_added": s.labels_added,
             "files_written": s.files_written,
             "created_unix": s.created_unix,
         })
         .to_string(),
         Err(e) => backup_error(e),
+    }
+}
+
+/// Label one ring-detected effort session with what the person says it was.
+///
+/// The session is named by its `ring` object in the summary's `effort[]`: `serial`, the
+/// boot's `capture` range (`capture_lo`, `capture_hi`), and `start_ds`/`end_ds`. `kind` is a
+/// short activity name ("dance", "walk", "run", "cycling", "strength", "other"); `note` is
+/// optional free text. Replaces any label the session already had. Returns `{}`, or
+/// `{ error }`.
+#[allow(clippy::too_many_arguments)]
+#[uniffi::export]
+pub fn set_effort_label(
+    db_path: String,
+    serial: String,
+    capture_lo: i64,
+    capture_hi: i64,
+    start_ds: i64,
+    end_ds: i64,
+    kind: String,
+    note: Option<String>,
+) -> String {
+    let kind = kind.trim().to_lowercase();
+    if kind.is_empty() || kind.chars().count() > 40 {
+        return json!({ "error": "an activity name is 1 to 40 characters" }).to_string();
+    }
+    let note = note
+        .map(|n| n.trim().chars().take(200).collect::<String>())
+        .filter(|n| !n.is_empty());
+    let label = oura_store::EffortLabel {
+        serial,
+        capture_lo,
+        start_ds,
+        end_ds,
+        kind,
+        note,
+        updated_unix: std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs() as i64)
+            .unwrap_or(0),
+    };
+    let run = || -> Result<(), String> {
+        let store = Store::open(std::path::Path::new(&db_path)).map_err(|e| e.to_string())?;
+        store
+            .set_effort_label(&label, (capture_lo, capture_hi))
+            .map_err(|e| e.to_string())
+    };
+    match run() {
+        Ok(()) => "{}".to_string(),
+        Err(e) => json!({ "error": e }).to_string(),
+    }
+}
+
+/// Remove the person's label from one effort session, named as for [`set_effort_label`].
+/// Returns `{ removed }`, or `{ error }`.
+#[uniffi::export]
+pub fn clear_effort_label(
+    db_path: String,
+    serial: String,
+    capture_lo: i64,
+    capture_hi: i64,
+    start_ds: i64,
+    end_ds: i64,
+) -> String {
+    let run = || -> Result<usize, String> {
+        let store = Store::open(std::path::Path::new(&db_path)).map_err(|e| e.to_string())?;
+        store
+            .clear_effort_label(&serial, (capture_lo, capture_hi), start_ds, end_ds)
+            .map_err(|e| e.to_string())
+    };
+    match run() {
+        Ok(n) => json!({ "removed": n }).to_string(),
+        Err(e) => json!({ "error": e }).to_string(),
+    }
+}
+
+/// Re-apply the database's effort labels to a summary already built by [`summary_json`],
+/// so a client can show a new label at once instead of waiting out a recompute. Returns
+/// the summary JSON with `effort[].user_label` brought up to date, or `{ error }`.
+#[uniffi::export]
+pub fn relabel_summary_json(db_path: String, summary: String) -> String {
+    let run = || -> Result<String, String> {
+        let mut v: serde_json::Value = serde_json::from_str(&summary).map_err(|e| e.to_string())?;
+        oura_summary::relabel_summary(std::path::Path::new(&db_path), &mut v)
+            .map_err(|e| e.to_string())?;
+        Ok(v.to_string())
+    };
+    match run() {
+        Ok(s) => s,
+        Err(e) => json!({ "error": e }).to_string(),
     }
 }
 
