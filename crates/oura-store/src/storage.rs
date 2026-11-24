@@ -67,6 +67,23 @@ CREATE TABLE IF NOT EXISTS sleep_stage_cache (
     computed_unix INTEGER NOT NULL,
     PRIMARY KEY (serial, start_ds, end_ds, capture_lo, model)
 );
+
+-- What the person says a ring-detected effort session was ("dance", "walk", ...). Not
+-- derived: it is theirs, so unlike the stage cache it is backed up and restored. Keyed by
+-- ring time rather than wall clock, because a session's wall-clock start moves whenever
+-- the ds -> unix fit is corrected, while its boot and ds range do not. `capture_lo` names
+-- the boot the same way `sleep_stage_cache` does; a label belongs to whichever session in
+-- that boot its ds range overlaps (see `oura-summary`'s `attach_user_labels`).
+CREATE TABLE IF NOT EXISTS effort_labels (
+    serial        TEXT NOT NULL,
+    capture_lo    INTEGER NOT NULL,
+    start_ds      INTEGER NOT NULL,
+    end_ds        INTEGER NOT NULL,
+    kind          TEXT NOT NULL,
+    note          TEXT,
+    updated_unix  INTEGER NOT NULL,
+    PRIMARY KEY (serial, capture_lo, start_ds, end_ds)
+);
 "#;
 
 fn now_unix() -> i64 {
@@ -119,6 +136,25 @@ pub struct StageCacheKey {
     /// Which stager produced it; a new model or pipeline gets a new name, so its nights are
     /// staged afresh instead of mixing with the old ones.
     pub model: String,
+}
+
+/// A person's own label for a ring-detected effort session, keyed by ring time.
+///
+/// `capture_lo` is the earliest capture time of the session's boot when it was labelled,
+/// and `start_ds..=end_ds` the session's ring-time span then. Both can drift a little as
+/// more of the boot is synced, which is why matching is by overlap, not equality.
+#[derive(Debug, Clone, PartialEq)]
+pub struct EffortLabel {
+    pub serial: String,
+    pub capture_lo: i64,
+    pub start_ds: i64,
+    pub end_ds: i64,
+    /// A short lowercase activity name: "dance", "walk", "run", "cycling", "strength",
+    /// "other". An open set, so a client can offer more without a schema change.
+    pub kind: String,
+    /// Free text the person added, if any.
+    pub note: Option<String>,
+    pub updated_unix: i64,
 }
 
 /// One event as the ring delivered it, with when it was captured. Everything else a row
@@ -517,14 +553,17 @@ impl Store {
         )?;
         let mut out = Vec::new();
         for &tag in tags {
-            let rows = stmt.query_map(params![serial, tag as i64, ds_lo, ds_hi, cu_lo, cu_hi], |r| {
-                Ok((
-                    r.get::<_, i64>(0)?,
-                    r.get::<_, i64>(1)? as u8,
-                    r.get::<_, String>(2)?,
-                    r.get::<_, i64>(3)?,
-                ))
-            })?;
+            let rows = stmt.query_map(
+                params![serial, tag as i64, ds_lo, ds_hi, cu_lo, cu_hi],
+                |r| {
+                    Ok((
+                        r.get::<_, i64>(0)?,
+                        r.get::<_, i64>(1)? as u8,
+                        r.get::<_, String>(2)?,
+                        r.get::<_, i64>(3)?,
+                    ))
+                },
+            )?;
             for row in rows {
                 out.push(row?);
             }
@@ -548,9 +587,10 @@ impl Store {
              WHERE serial = ?1 AND tag = ?2 AND ring_timestamp BETWEEN ?3 AND ?4 \
              AND captured_unix BETWEEN ?5 AND ?6 ORDER BY id",
         )?;
-        let rows = stmt.query_map(params![serial, tag as i64, ds_lo, ds_hi, cu_lo, cu_hi], |r| {
-            Ok((r.get::<_, i64>(0)?, r.get::<_, Vec<u8>>(1)?))
-        })?;
+        let rows = stmt.query_map(
+            params![serial, tag as i64, ds_lo, ds_hi, cu_lo, cu_hi],
+            |r| Ok((r.get::<_, i64>(0)?, r.get::<_, Vec<u8>>(1)?)),
+        )?;
         Ok(rows.collect::<std::result::Result<_, _>>()?)
     }
 
@@ -570,9 +610,10 @@ impl Store {
         )?;
         let mut n = 0;
         for &tag in tags {
-            n += stmt.query_row(params![serial, tag as i64, ds_lo, ds_hi, cu_lo, cu_hi], |r| {
-                r.get::<_, i64>(0)
-            })?;
+            n += stmt.query_row(
+                params![serial, tag as i64, ds_lo, ds_hi, cu_lo, cu_hi],
+                |r| r.get::<_, i64>(0),
+            )?;
         }
         Ok(n)
     }
@@ -585,14 +626,25 @@ impl Store {
             .query_row(
                 "SELECT inputs, stages FROM sleep_stage_cache WHERE serial = ?1 AND start_ds = ?2 \
                  AND end_ds = ?3 AND capture_lo = ?4 AND model = ?5",
-                params![key.serial, key.start_ds, key.end_ds, key.capture_lo, key.model],
+                params![
+                    key.serial,
+                    key.start_ds,
+                    key.end_ds,
+                    key.capture_lo,
+                    key.model
+                ],
                 |r| Ok((r.get::<_, i64>(0)?, r.get::<_, String>(1)?)),
             )
             .optional()?)
     }
 
     /// Keep a staged night. Replaces an earlier entry for the same window and model.
-    pub fn stage_cache_put(&self, key: &StageCacheKey, inputs: i64, stages_json: &str) -> Result<()> {
+    pub fn stage_cache_put(
+        &self,
+        key: &StageCacheKey,
+        inputs: i64,
+        stages_json: &str,
+    ) -> Result<()> {
         self.conn.execute(
             "INSERT OR REPLACE INTO sleep_stage_cache \
              (serial, start_ds, end_ds, capture_lo, model, inputs, stages, computed_unix) \
@@ -609,6 +661,102 @@ impl Store {
             ],
         )?;
         Ok(())
+    }
+
+    /// Every effort-session label, oldest first.
+    pub fn effort_labels(&self) -> Result<Vec<EffortLabel>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT serial, capture_lo, start_ds, end_ds, kind, note, updated_unix \
+             FROM effort_labels ORDER BY updated_unix, rowid",
+        )?;
+        let rows = stmt
+            .query_map([], |r| {
+                Ok(EffortLabel {
+                    serial: r.get(0)?,
+                    capture_lo: r.get(1)?,
+                    start_ds: r.get(2)?,
+                    end_ds: r.get(3)?,
+                    kind: r.get(4)?,
+                    note: r.get(5)?,
+                    updated_unix: r.get(6)?,
+                })
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
+    /// Label one effort session, replacing whatever label it had.
+    ///
+    /// `boot_capture` is the capture-time range of the session's boot. Any label already
+    /// on that boot whose ds range overlaps this one is the same session under an older
+    /// span, so it is replaced rather than left to compete.
+    pub fn set_effort_label(&self, label: &EffortLabel, boot_capture: (i64, i64)) -> Result<()> {
+        self.transaction(|s| {
+            s.delete_overlapping_labels(&label.serial, boot_capture, label.start_ds, label.end_ds)?;
+            s.conn.execute(
+                "INSERT OR REPLACE INTO effort_labels \
+                 (serial, capture_lo, start_ds, end_ds, kind, note, updated_unix) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                params![
+                    label.serial,
+                    label.capture_lo,
+                    label.start_ds,
+                    label.end_ds,
+                    label.kind,
+                    label.note,
+                    label.updated_unix
+                ],
+            )?;
+            Ok(())
+        })
+    }
+
+    /// Remove the label from one effort session. Returns how many labels went.
+    pub fn clear_effort_label(
+        &self,
+        serial: &str,
+        boot_capture: (i64, i64),
+        start_ds: i64,
+        end_ds: i64,
+    ) -> Result<usize> {
+        self.delete_overlapping_labels(serial, boot_capture, start_ds, end_ds)
+    }
+
+    fn delete_overlapping_labels(
+        &self,
+        serial: &str,
+        boot_capture: (i64, i64),
+        start_ds: i64,
+        end_ds: i64,
+    ) -> Result<usize> {
+        Ok(self.conn.execute(
+            "DELETE FROM effort_labels WHERE serial = ?1 \
+             AND capture_lo BETWEEN ?2 AND ?3 AND start_ds < ?5 AND end_ds > ?4",
+            params![serial, boot_capture.0, boot_capture.1, start_ds, end_ds],
+        )?)
+    }
+
+    /// Take a label from elsewhere (a backup) unless this database holds the same one
+    /// already, or a newer edit of it. Returns true if it was written.
+    pub fn merge_effort_label(&self, label: &EffortLabel) -> Result<bool> {
+        let changed = self.conn.execute(
+            "INSERT INTO effort_labels \
+             (serial, capture_lo, start_ds, end_ds, kind, note, updated_unix) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7) \
+             ON CONFLICT(serial, capture_lo, start_ds, end_ds) DO UPDATE SET \
+               kind = excluded.kind, note = excluded.note, updated_unix = excluded.updated_unix \
+             WHERE excluded.updated_unix > effort_labels.updated_unix",
+            params![
+                label.serial,
+                label.capture_lo,
+                label.start_ds,
+                label.end_ds,
+                label.kind,
+                label.note,
+                label.updated_unix
+            ],
+        )?;
+        Ok(changed > 0)
     }
 
     /// Run `f` inside one read transaction, so everything it reads is a single consistent
@@ -847,6 +995,60 @@ impl Store {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn label(capture_lo: i64, start_ds: i64, end_ds: i64, kind: &str, at: i64) -> EffortLabel {
+        EffortLabel {
+            serial: "S1".into(),
+            capture_lo,
+            start_ds,
+            end_ds,
+            kind: kind.into(),
+            note: None,
+            updated_unix: at,
+        }
+    }
+
+    #[test]
+    fn relabelling_a_session_replaces_its_label_and_leaves_others_alone() {
+        let s = Store::open_in_memory().unwrap();
+        let boot = (1_000, 9_000);
+        s.set_effort_label(&label(1_000, 100, 200, "walk", 1), boot)
+            .unwrap();
+        s.set_effort_label(&label(1_000, 500, 600, "run", 1), boot)
+            .unwrap();
+        // Same session, its span grown by a later sync: replaces "walk", not "run".
+        s.set_effort_label(&label(1_000, 90, 250, "dance", 2), boot)
+            .unwrap();
+        let kinds: Vec<_> = s
+            .effort_labels()
+            .unwrap()
+            .into_iter()
+            .map(|l| l.kind)
+            .collect();
+        assert_eq!(kinds, ["run", "dance"]);
+        // Another boot sharing the ring times is a different session.
+        s.set_effort_label(&label(20_000, 100, 200, "cycling", 3), (20_000, 30_000))
+            .unwrap();
+        assert_eq!(s.effort_labels().unwrap().len(), 3);
+        assert_eq!(s.clear_effort_label("S1", boot, 150, 160).unwrap(), 1);
+        let kinds: Vec<_> = s
+            .effort_labels()
+            .unwrap()
+            .into_iter()
+            .map(|l| l.kind)
+            .collect();
+        assert_eq!(kinds, ["run", "cycling"]);
+    }
+
+    #[test]
+    fn merging_keeps_the_newer_edit() {
+        let s = Store::open_in_memory().unwrap();
+        assert!(s.merge_effort_label(&label(1, 10, 20, "walk", 5)).unwrap());
+        assert!(!s.merge_effort_label(&label(1, 10, 20, "run", 4)).unwrap());
+        assert!(!s.merge_effort_label(&label(1, 10, 20, "walk", 5)).unwrap());
+        assert!(s.merge_effort_label(&label(1, 10, 20, "dance", 6)).unwrap());
+        assert_eq!(s.effort_labels().unwrap()[0].kind, "dance");
+    }
 
     #[test]
     fn the_sliced_read_returns_what_one_scan_does() {

@@ -1252,30 +1252,51 @@ fn battery_points(mut points: Vec<(f64, i64, i64)>) -> Vec<(f64, i64, i64)> {
 ///
 /// This is deliberately NOT Oura's `automatic_activity_detection`. That model labels a
 /// session ("running", "walking"); this only knows the ring was recording effort, so the
-/// output carries no label and must not be presented as one. It exists because AAD needs the
-/// torch models, which aren't bundled — leaving the sessions list permanently empty.
+/// output carries no label of its own and must not be presented as one. It exists because AAD
+/// needs the torch models, which aren't bundled — leaving the sessions list permanently empty.
+/// The one label a session can carry is `user_label`, the person's own, attached afterwards
+/// by [`attach_user_labels`].
 ///
-/// `traces` and `intensity` are `(unix, value)`; `hr` is the quality-gated beat series.
-fn effort_sessions(traces: &mut [f64], hr: &[(f64, f64)], intensity: &[(f64, f64)]) -> Vec<Value> {
+/// `traces` are `(unix, boot index, ds)`; `intensity` is `(unix, value)`; `hr` is the
+/// quality-gated beat series. `boots` is each boot's capture-time range, by index, and with
+/// `serial` names the session in ring time (`ring`), which is what a label is keyed by.
+fn effort_sessions(
+    traces: &mut [(f64, usize, i64)],
+    hr: &[(f64, f64)],
+    intensity: &[(f64, f64)],
+    serial: &str,
+    boots: &[(i64, i64)],
+) -> Vec<Value> {
     // A gap longer than this ends a session. Ten minutes keeps a walk with a pause at the
     // lights in one piece without welding the morning and the evening together.
     const SESSION_GAP_S: f64 = 600.0;
     // Shorter than this is a stray trace, not something worth calling a session.
     const MIN_SESSION_S: f64 = 300.0;
 
-    traces.sort_by(f64::total_cmp);
+    traces.sort_by(|x, y| x.0.total_cmp(&y.0));
     let mut out = Vec::new();
     let mut i = 0usize;
     while i < traces.len() {
         let mut j = i;
-        while j + 1 < traces.len() && traces[j + 1] - traces[j] <= SESSION_GAP_S {
+        while j + 1 < traces.len() && traces[j + 1].0 - traces[j].0 <= SESSION_GAP_S {
             j += 1;
         }
-        let (a, b, n) = (traces[i], traces[j], j - i + 1);
+        let (a, b, n) = (traces[i].0, traces[j].0, j - i + 1);
+        let run = &traces[i..=j];
         i = j + 1;
         if b - a < MIN_SESSION_S {
             continue;
         }
+        // The session in ring time: its boot, and the ds span of its traces in that boot. A
+        // reboot mid-session is rare enough that the first boot speaks for it.
+        let boot = run[0].1;
+        let (lo_ds, hi_ds) = run
+            .iter()
+            .filter(|t| t.1 == boot)
+            .fold((i64::MAX, i64::MIN), |(lo, hi), t| {
+                (lo.min(t.2), hi.max(t.2))
+            });
+        let capture = boots.get(boot).copied().unwrap_or((0, 0));
         // Both series arrive sorted by time, so a session's samples are one contiguous
         // run found by bisection. Filtering every beat on record for each session made
         // this cost sessions × beats.
@@ -1302,9 +1323,70 @@ fn effort_sessions(traces: &mut [f64], hr: &[(f64, f64)], intensity: &[(f64, f64
             "intensity_mean": mean(&ints).map(|v| v.round()),
             "intensity_peak": int_peak.is_finite().then(|| int_peak.round()),
             "traces": n,
+            "ring": {
+                "serial": serial,
+                "capture": [capture.0, capture.1],
+                "start_ds": lo_ds,
+                "end_ds": hi_ds,
+            },
+            "user_label": Value::Null,
         }));
     }
     out
+}
+
+/// Attach the person's own labels to effort sessions, as `user_label`.
+///
+/// A label is keyed by ring time (see `oura_store::EffortLabel`) and belongs to a session
+/// when it is the same ring, it was made in the same boot — its `capture_lo` falls inside
+/// the boot's capture range, which boots never share — and its ds span overlaps the
+/// session's. Ring time, not wall clock: correcting the ds → unix fit moves a session's
+/// start, and must not drop or move its label. Overlap, not equality: a later sync can
+/// lengthen a session, or split one, and the label should follow what it was put on.
+///
+/// Where several labels overlap one session (two sessions that later merged), the one
+/// sharing most of it wins, then the newest. Works on the summary's JSON so that a client
+/// can re-apply labels to a summary it already has without a full recompute.
+pub fn attach_user_labels(effort: &mut [Value], labels: &[oura_store::EffortLabel]) {
+    for e in effort {
+        let r = &e["ring"];
+        let (Some(serial), Some(lo), Some(hi), Some(start), Some(end)) = (
+            r["serial"].as_str(),
+            r["capture"][0].as_i64(),
+            r["capture"][1].as_i64(),
+            r["start_ds"].as_i64(),
+            r["end_ds"].as_i64(),
+        ) else {
+            continue;
+        };
+        let best = labels
+            .iter()
+            .filter(|l| l.serial == serial && (lo..=hi).contains(&l.capture_lo))
+            .map(|l| (l.end_ds.min(end) - l.start_ds.max(start), l))
+            .filter(|(overlap, _)| *overlap > 0)
+            .max_by_key(|(overlap, l)| (*overlap, l.updated_unix));
+        e["user_label"] = match best {
+            Some((_, l)) => {
+                json!({ "kind": l.kind, "note": l.note, "updated_unix": l.updated_unix })
+            }
+            None => Value::Null,
+        };
+    }
+}
+
+/// Re-apply the labels in the database at `db` to an already-built summary, in place.
+///
+/// What a client calls right after labelling a session: the result is what a full
+/// [`build_summary`] would give for `effort[]`, at the cost of one small query.
+pub fn relabel_summary(db: &Path, summary: &mut Value) -> Result<()> {
+    let labels = Store::open(db)
+        .context("opening DB")?
+        .effort_labels()
+        .context("reading effort labels")?;
+    if let Some(effort) = summary["effort"].as_array_mut() {
+        attach_user_labels(effort, &labels);
+    }
+    Ok(())
 }
 
 /// Assemble the full dashboard summary as a JSON value. The torch models are
@@ -2307,12 +2389,12 @@ pub fn build_summary_with(
     // Effort sessions from the exercise-HR trace. The same quality-gated beats that feed
     // peak_hr are reused, flattened onto one timeline.
     let effort = {
-        let mut traces: Vec<f64> = Vec::new();
+        let mut traces: Vec<(f64, usize, i64)> = Vec::new();
         let mut intensity: Vec<(f64, f64)> = Vec::new();
         for (event_idx, (ds, tag, jstr, _)) in events.iter().enumerate() {
             let t = || unix_in_epoch(*ds, event_epochs[event_idx]);
             match name_of(*tag) {
-                "ehr_trace_event" => traces.push(t()),
+                "ehr_trace_event" => traces.push((t(), event_epochs[event_idx], *ds)),
                 "ehr_acm_intensity_event" => {
                     if let Ok(v) = serde_json::from_str::<Value>(jstr) {
                         if let Some(a) = v["intensity"].as_array() {
@@ -2332,7 +2414,13 @@ pub fn build_summary_with(
             hr_by_day.values().flatten().map(|&(t, v)| (t, v)).collect();
         hr_flat.sort_by(|a, b| a.0.total_cmp(&b.0));
         intensity.sort_by(|a, b| a.0.total_cmp(&b.0));
-        effort_sessions(&mut traces, &hr_flat, &intensity)
+        let serial = dev.as_ref().map(|d| d.0.as_str()).unwrap_or("");
+        let boots: Vec<(i64, i64)> = epochs.iter().map(|e| e.capture).collect();
+        let mut sessions = effort_sessions(&mut traces, &hr_flat, &intensity, serial, &boots);
+        // A missing or unreadable table leaves the sessions unlabelled, never the summary
+        // unbuilt: the labels are an overlay on it.
+        attach_user_labels(&mut sessions, &store.effort_labels().unwrap_or_default());
+        sessions
     };
 
     let peak_hr: std::collections::BTreeMap<String, f64> = hr_by_day
@@ -2674,7 +2762,8 @@ pub fn build_summary_with(
         "activity_profile": activity_profile,
         "activity_steps": activity_steps,
         "battery": { "series": battery_series, "cycles": battery_cycles },
-        // Ring-detected effort. Unlabelled by design — see effort_sessions().
+        // Ring-detected effort. Never labelled by guesswork — see effort_sessions(); the
+        // only label is the person's own `user_label`.
         "effort": effort,
         "activity_daily": activity_daily,
         "vitals": { "hrv": trend(&hrv_stat), "rhr": trend(&rhr_stat) },
@@ -2684,11 +2773,136 @@ pub fn build_summary_with(
 #[cfg(test)]
 mod tests {
     use super::{
-        battery_band, battery_charge_state, battery_history, battery_points, battery_rested_pct,
-        fit_ds_offsets, unix_from_offsets, ChargeState, Stages, BATTERY_CRITICAL_PCT,
-        BATTERY_LOW_PCT, BATTERY_VERY_LOW_PCT,
+        attach_user_labels, battery_band, battery_charge_state, battery_history, battery_points,
+        battery_rested_pct, effort_sessions, fit_ds_offsets, unix_from_offsets, ChargeState,
+        Stages, BATTERY_CRITICAL_PCT, BATTERY_LOW_PCT, BATTERY_VERY_LOW_PCT,
     };
+    use oura_store::EffortLabel;
     use serde_json::json;
+
+    fn label(capture_lo: i64, start_ds: i64, end_ds: i64, kind: &str, at: i64) -> EffortLabel {
+        EffortLabel {
+            serial: "RING".into(),
+            capture_lo,
+            start_ds,
+            end_ds,
+            kind: kind.into(),
+            note: None,
+            updated_unix: at,
+        }
+    }
+
+    /// One trace a minute for `mins` minutes from `unix`, at ds counting from `ds`.
+    fn traces(unix: f64, boot: usize, ds: i64, mins: i64) -> Vec<(f64, usize, i64)> {
+        (0..mins)
+            .map(|m| (unix + 60.0 * m as f64, boot, ds + 600 * m))
+            .collect()
+    }
+
+    #[test]
+    fn effort_sessions_name_themselves_in_ring_time() {
+        // Two boots; a session in each, the second boot's ds starting near zero again.
+        let mut t = traces(1_000_000.0, 0, 50_000, 20);
+        t.extend(traces(1_100_000.0, 1, 3_000, 10));
+        let boots = [(900_000, 1_050_000), (1_060_000, 1_200_000)];
+        let out = effort_sessions(&mut t, &[], &[], "RING", &boots);
+        assert_eq!(out.len(), 2);
+        assert_eq!(
+            out[0]["ring"],
+            json!({ "serial": "RING", "capture": [900_000, 1_050_000],
+                    "start_ds": 50_000, "end_ds": 50_000 + 600 * 19 })
+        );
+        assert_eq!(out[1]["ring"]["capture"], json!([1_060_000, 1_200_000]));
+        assert_eq!(out[1]["ring"]["start_ds"], 3_000);
+        assert!(out[0]["user_label"].is_null());
+    }
+
+    #[test]
+    fn user_labels_follow_ring_time_not_wall_clock() {
+        let boots = [(900_000, 1_050_000), (1_060_000, 1_200_000)];
+        let mut t = traces(1_000_000.0, 0, 50_000, 20);
+        t.extend(traces(1_100_000.0, 1, 50_000, 20)); // same ds span, the other boot
+        let labels = [label(900_000, 51_000, 55_000, "dance", 1)];
+        let mut out = effort_sessions(&mut t.clone(), &[], &[], "RING", &boots);
+        attach_user_labels(&mut out, &labels);
+        assert_eq!(out[0]["user_label"]["kind"], "dance");
+        assert!(
+            out[1]["user_label"].is_null(),
+            "another boot's ds must not match"
+        );
+
+        // The offset fit is corrected and every wall-clock time moves by three hours. The
+        // session's ring time does not, so neither does its label.
+        let shifted: Vec<_> = t
+            .iter()
+            .map(|&(u, b, d)| (u + 3.0 * 3600.0, b, d))
+            .collect();
+        let mut again = effort_sessions(&mut shifted.clone(), &[], &[], "RING", &boots);
+        attach_user_labels(&mut again, &labels);
+        assert_ne!(again[0]["start"], out[0]["start"]);
+        assert_eq!(again[0]["user_label"]["kind"], "dance");
+    }
+
+    #[test]
+    fn user_label_matching_needs_overlap_and_prefers_the_closest_fit() {
+        let boots = [(900_000, 1_050_000)];
+        let session = || {
+            effort_sessions(
+                &mut traces(1_000_000.0, 0, 10_000, 20),
+                &[],
+                &[],
+                "RING",
+                &boots,
+            )
+        };
+        let kind = |labels: &[EffortLabel]| {
+            let mut out = session();
+            attach_user_labels(&mut out, labels);
+            out[0]["user_label"]["kind"].as_str().map(str::to_string)
+        };
+        // Session spans ds 10_000..=21_400.
+        assert_eq!(
+            kind(&[label(900_000, 21_400, 30_000, "walk", 1)]),
+            None,
+            "touching is not overlapping"
+        );
+        assert_eq!(kind(&[label(900_000, 0, 9_999, "walk", 1)]), None);
+        // The boot's earliest capture moved after labelling (more of it synced): still the boot.
+        assert_eq!(
+            kind(&[label(950_000, 12_000, 13_000, "walk", 1)]).as_deref(),
+            Some("walk")
+        );
+        assert_eq!(kind(&[label(899_999, 12_000, 13_000, "walk", 1)]), None);
+        let mut other_ring = label(900_000, 12_000, 13_000, "walk", 1);
+        other_ring.serial = "OTHER".into();
+        assert_eq!(kind(&[other_ring]), None);
+        // Two sessions that later merged: the label covering more of it wins, then the newer.
+        assert_eq!(
+            kind(&[
+                label(900_000, 10_000, 12_000, "run", 9),
+                label(900_000, 12_000, 21_000, "dance", 1)
+            ])
+            .as_deref(),
+            Some("dance")
+        );
+        assert_eq!(
+            kind(&[
+                label(900_000, 10_000, 15_000, "run", 1),
+                label(900_000, 10_000, 15_000, "dance", 2)
+            ])
+            .as_deref(),
+            Some("dance")
+        );
+        // A note travels with the kind.
+        let mut noted = label(900_000, 12_000, 13_000, "other", 1);
+        noted.note = Some("bouldering".into());
+        let mut out = session();
+        attach_user_labels(&mut out, &[noted]);
+        assert_eq!(
+            out[0]["user_label"],
+            json!({ "kind": "other", "note": "bouldering", "updated_unix": 1 })
+        );
+    }
 
     #[test]
     fn stage_timings_cover_the_whole_run() {
