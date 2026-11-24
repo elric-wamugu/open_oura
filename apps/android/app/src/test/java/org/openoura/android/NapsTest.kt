@@ -52,12 +52,12 @@ class NapsTest {
         assertEquals("Also slept · 14:05–15:50", NapText.title(nap))
         // 1h 45m from the instants, not the 1h 48m that the rounded 1.8 h would give.
         assertEquals("1h 09m asleep of 1h 45m in bed", NapText.line(nap))
-        assertEquals("1h 09m asleep · not in your score", NapText.tileLine(nap))
+        assertEquals("1h 09m asleep", NapText.tileLine(nap))
     }
 
     @Test
     fun `a nap without stages says so rather than guessing`() {
         assertEquals("1h 36m in bed · not staged", NapText.line(evening))
-        assertEquals("1.6 h in bed · not in your score", NapText.tileLine(evening))
+        assertEquals("1.6 h in bed", NapText.tileLine(evening))
     }
 }

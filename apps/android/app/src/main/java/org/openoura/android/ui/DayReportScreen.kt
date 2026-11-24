@@ -128,7 +128,6 @@ private fun ColumnScope.SleepReport(s: Summary, ymd: String, onOpenNap: (NightRo
     SleepBody(s, n, nap = false) {
         val naps = s.napsForDay(ymd)
         if (naps.isNotEmpty()) {
-            SectionHeader("Also slept this day", Modifier.padding(top = 4.dp))
             NapList(naps, onOpenNap)
             Footnote(
                 "Only the day's main sleep counts toward the Sleep score, readiness and sleep " +
@@ -192,7 +191,7 @@ object NapText {
     // No "Nap": the summary only knows this is not the day's longest sleep. A real one on
     // the phone ran 19:54–23:23, which reads as the first half of a split night as easily.
 
-    /** "14:05–15:50", for the day report's row under "Also slept this day". */
+    /** "14:05–15:50", for the day report's row under the night's headline figures. */
     fun times(n: NightRow): String = "${n.start ?: "—"}–${n.end ?: "—"}"
 
     /** "Also slept · 14:05–15:50", for Today's tile, which has no heading to lean on. */
@@ -212,12 +211,11 @@ object NapText {
         }
     }
 
-    /** Today's shorter line: "1h 09m asleep · not in your score". */
-    fun tileLine(n: NightRow): String {
-        val amount = n.metrics?.asleepMin?.let { "${BentoText.hoursMinutes(it)} asleep" }
+    /** Today's shorter line: "1h 09m asleep", or the time in bed without stages. */
+    fun tileLine(n: NightRow): String =
+        n.metrics?.asleepMin?.let { "${BentoText.hoursMinutes(it)} asleep" }
             ?: n.inBedH?.let { "%.1f h in bed".format(it) }
-        return listOfNotNull(amount, "not in your score").joinToString(" · ")
-    }
+            ?: "Not staged"
 }
 
 /**
