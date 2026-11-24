@@ -93,6 +93,7 @@ import org.openoura.android.data.SummaryState
 import org.openoura.android.health.ExportResult
 import org.openoura.android.health.HealthExport
 import org.openoura.android.ui.DayReportScreen
+import org.openoura.android.ui.NapReportScreen
 import org.openoura.android.data.BackupResult
 import org.openoura.android.data.Backups
 import org.openoura.android.data.DatabaseCare
@@ -119,6 +120,7 @@ import org.openoura.android.ui.YouScreen
 import org.openoura.android.ui.components.ScreenScaffold
 import org.openoura.android.ui.dayTitle
 import org.openoura.android.ui.nav.DayReportRoute
+import org.openoura.android.ui.nav.NapRoute
 import org.openoura.android.ui.nav.BackupRoute
 import org.openoura.android.ui.nav.SyncLogRoute
 import org.openoura.android.ui.SyncLogScreen
@@ -454,6 +456,7 @@ fun OpenOuraApp(
                 onRetrySummary = { scope.launch { busy = true; repo.recompute(); busy = false } },
                 onImportDatabase = { pickDatabase.launch(arrayOf("*/*")) },
                 onOpenDay = { day, sleep -> navigator.push(DayReportRoute(day, sleep, Tab.TODAY)) },
+                onOpenNap = { day, id -> navigator.push(NapRoute(day, id, Tab.TODAY)) },
                 onOpenReadiness = { day -> navigator.push(ReadinessRoute(day)) },
                 onOpenRing = { navigator.select(Tab.RING) },
                 cardioExpanded = cardioOpen,
@@ -652,9 +655,16 @@ fun OpenOuraApp(
                                     ?: messages.show(if (kind == null) "Label removed" else "Label saved")
                             }
                         },
+                        onOpenNap = { nap -> navigator.push(NapRoute(key.ymd, nap.id, key.origin)) },
                         modifier = Modifier.padding(padding),
                     )
                 }
+            }
+        }
+        entry<NapRoute> { key ->
+            val summary = (state as? SummaryState.Ready)?.summary
+            ScreenScaffold(title = "Nap · ${dayTitle(key.ymd)}", onBack = navigator::back) { padding ->
+                if (summary != null) NapReportScreen(summary, key.id, Modifier.padding(padding))
             }
         }
         entry<ReadinessRoute> { key ->

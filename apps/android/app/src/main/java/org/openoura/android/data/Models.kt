@@ -360,6 +360,24 @@ data class Summary(
     fun nightForDay(day: String): NightRow? =
         nights.filter { wakeYmd(it) == day }.maxByOrNull { it.inBedH ?: 0.0 }
             ?: nights.firstOrNull { it.ymd == null && (it.date ?: "").endsWith(day.takeLast(5)) }
+
+    /**
+     * The other sleep periods woken from on `day` — naps and long rests — earliest first.
+     *
+     * Everything [nightForDay] does not pick, so the two never disagree about which period
+     * is the night. Only periods the summary kept are here: it drops anything under 90
+     * minutes, which can't be staged and is usually stillness rather than sleep.
+     */
+    fun napsForDay(day: String): List<NightRow> {
+        val night = nightForDay(day) ?: return emptyList()
+        val naps = nights.filter { it !== night && wakeYmd(it) == day }
+        // The instant when every period has one (it orders a nap that began the evening
+        // before correctly); the clock string for a summary from before `start_unix`.
+        return if (naps.all { it.startUnix != null }) naps.sortedBy { it.startUnix } else naps.sortedBy { it.start }
+    }
+
+    /** The period with this [NightRow.id], for a page that opens one by its key. */
+    fun nightById(id: String): NightRow? = nights.firstOrNull { it.id == id }
 }
 
 /** Civil-calendar day increment, no TimeZone involved — the dates are already local. */

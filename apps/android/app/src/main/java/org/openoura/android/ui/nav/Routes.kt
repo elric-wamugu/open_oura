@@ -23,6 +23,12 @@ import org.openoura.android.R
  */
 @Serializable data class DayReportRoute(val ymd: String, val sleep: Boolean, val origin: Tab) : NavKey
 
+/**
+ * A nap or other second sleep period of [ymd], keyed by its [org.openoura.android.data.NightRow.id].
+ * [origin] keeps the Today and History copies distinct, as for [DayReportRoute].
+ */
+@Serializable data class NapRoute(val ymd: String, val id: String, val origin: Tab) : NavKey
+
 @Serializable data object RingKeyRoute : NavKey
 
 @Serializable data object HealthConnectRoute : NavKey

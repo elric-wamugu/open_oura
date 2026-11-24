@@ -85,7 +85,7 @@ object HistoryStops {
 
     private fun dayStop(s: Summary, d: String, date: LocalDate, today: LocalDate?): HistoryStop {
         val night = s.nightForDay(d)
-        val naps = s.nights.filter { !it.main && s.wakeYmd(it) == d }.mapNotNull { it.start }.sorted()
+        val naps = s.napsForDay(d).mapNotNull { it.start }
         return HistoryStop(
             key = d,
             title = date.format(DateTimeFormatter.ofPattern("EEE · MMM d")),
