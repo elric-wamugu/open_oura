@@ -921,8 +921,16 @@ const SYNC_GAP_S: i64 = 120;
 /// `T` — which bounds the offset from above at `T − D/10`, inflated by however far behind
 /// that drain finished. The true offset only grows (the counter loses time, never gains
 /// it), so the tightest consistent fit is the running minimum taken from the newest ds
-/// backwards. See the call site for why the old single-anchor model was wrong.
+/// backwards.
+///
+/// Where two consecutive observations disagree, the counter lost that time somewhere
+/// between them, and the bounds alone cannot say where. The step is placed at the longest
+/// silence in ring time inside that interval, because a counter loses time while the ring
+/// is in a low-power state that also stops it logging. See the call site for both.
 fn fit_ds_offsets(rows: &mut [(i64, i64)]) -> Vec<(i64, f64)> {
+    let mut logged: Vec<i64> = rows.iter().map(|&(_, ds)| ds).collect();
+    logged.sort_unstable();
+    logged.dedup();
     rows.sort_unstable();
     let mut obs: Vec<(i64, f64)> = Vec::new();
     let mut last_cu = i64::MIN;
@@ -951,11 +959,29 @@ fn fit_ds_offsets(rows: &mut [(i64, i64)]) -> Vec<(i64, f64)> {
         run = run.min(o.1);
         o.1 = run;
     }
+    // Move each rise in offset from just after the earlier sync's newest event to the
+    // longest gap between logged events before the later one. Ties go to the earliest
+    // gap. Extending the earlier step's ds is enough: no event lies inside a gap.
+    for k in 1..obs.len() {
+        if obs[k].1 <= obs[k - 1].1 {
+            continue;
+        }
+        let (lo, hi) = (obs[k - 1].0, obs[k].0);
+        let between =
+            &logged[logged.partition_point(|&d| d < lo)..logged.partition_point(|&d| d <= hi)];
+        let mut best = (0i64, lo);
+        for w in between.windows(2) {
+            if w[1] - w[0] > best.0 {
+                best = (w[1] - w[0], w[0]);
+            }
+        }
+        obs[k - 1].0 = best.1;
+    }
     obs
 }
 
-/// Map a ring counter to wall-clock through fitted offset steps: use the tightest bound
-/// from the earliest sync that had already observed this ds.
+/// Map a ring counter to wall-clock through fitted offset steps: use the first step at
+/// or above this ds.
 fn unix_from_offsets(offsets: &[(i64, f64)], ds: i64) -> Option<f64> {
     if offsets.is_empty() {
         return None;
@@ -1429,6 +1455,20 @@ pub fn build_summary_with(
     // supplies a tighter bound and the inflated one is discarded. And an event's time
     // depends only on syncs that had already observed its ds, so adding today's sync
     // cannot move last week's night.
+    //
+    // Bounds say *how much* time the counter lost between two syncs, not *where*. The
+    // first version stepped straight after the earlier sync's newest event, which assumed
+    // the loss happened the moment the phone disconnected. On 2026-11-19 that tore a walk
+    // in two. The 15:59 sync was tight: the ring's own log of the phone's 17:29
+    // reconnect lands within a second of it under that offset. The ring then hit low
+    // battery and hibernated, and its counter ran at under a third of real speed until it
+    // went on the charger. By the 23:08 sync it had lost 3 h 19 min. Stepping at 15:59
+    // moved everything logged after it, including the rest of that walk, the reconnect and
+    // the hibernation, 3 h 19 min late. Hibernation is when the counter loses time, and it
+    // is also when the ring barely logs (one event per ten minutes of ring time, against
+    // seconds while worn), so the step goes in the longest gap between logged events
+    // between the two syncs. A small drift has no single place to go, but it is small
+    // either way.
     struct Epoch {
         min_ds: i64,
         max_ds: i64,
@@ -2990,6 +3030,38 @@ mod tests {
             prev = u;
         }
     }
+
+    #[test]
+    fn time_lost_between_syncs_goes_into_the_rings_quiet_stretch() {
+        // The 2026-11-19 shape. A tight sync at t=1000 drains up to ds 10_000. The ring keeps
+        // logging every 10 ds (one a second) until ds 20_000, then hibernates: it logs
+        // once per 6000 ds and its counter falls behind. It wakes at ds 40_000, logs
+        // densely again, and the next tight sync at t=5000 drains up to ds 41_000, so 900 s
+        // were lost. Each sync's drain is one capture second per event, like the real one.
+        let mut rows = session(1000 - 39, 10_000, 40);
+        let after: Vec<i64> = (10_010..=20_000)
+            .step_by(10)
+            .chain((26_000..40_000).step_by(6000))
+            .chain((40_000..=41_000).step_by(10))
+            .collect();
+        let t0 = 5000 - after.len() as i64 + 1;
+        rows.extend(after.iter().enumerate().map(|(i, &ds)| (t0 + i as i64, ds)));
+        let offs = fit_ds_offsets(&mut rows);
+        let at = |ds| unix_from_offsets(&offs, ds).unwrap();
+
+        // Both syncs stay exact.
+        assert!((at(10_000) - 1000.0).abs() < 1e-6);
+        assert!((at(41_000) - 5000.0).abs() < 1e-6);
+        // Ring-contiguous events either side of the first sync stay contiguous: the walk
+        // that was going on when the phone disconnected does not jump 15 minutes.
+        assert!((at(10_010) - at(10_000) - 1.0).abs() < 1e-6, "{offs:?}");
+        assert!((at(20_000) - at(10_000) - 1000.0).abs() < 1e-6, "{offs:?}");
+        // The whole 900 s goes into the first hibernation gap, and everything after it,
+        // including the dense wake-up stretch, keeps the later sync's offset.
+        assert!((at(26_000) - at(20_000) - 1500.0).abs() < 1e-6, "{offs:?}");
+        assert!((at(40_010) - at(40_000) - 1.0).abs() < 1e-6, "{offs:?}");
+    }
+
     #[test]
     fn a_days_main_sleep_is_the_longest_woken_from_that_day() {
         // (wake day, hours in bed), oldest first: a night, then a nap the same day, then
