@@ -5,6 +5,7 @@ import org.openoura.android.data.DailyStat
 import org.openoura.android.data.Device
 import org.openoura.android.data.Insight
 import org.openoura.android.data.NightRow
+import org.openoura.android.data.SleepMetrics
 import org.openoura.android.data.Stream
 import org.openoura.android.data.Summary
 import org.openoura.android.data.Trend
@@ -47,6 +48,22 @@ internal object PreviewFixtures {
         stages = stages,
     )
 
+    /** An afternoon nap long enough for the summary to keep (90 minutes or more). */
+    val nap = NightRow(
+        ymd = DAY,
+        start = "14:05",
+        end = "15:50",
+        inBedH = 1.8,
+        main = false,
+        deepPct = 14.0,
+        lightPct = 51.0,
+        remPct = 0.0,
+        wakePct = 35.0,
+        efficiency = 66.0,
+        stages = listOf(4, 4, 2, 2, 1, 1, 2, 2, 4, 2, 4),
+        metrics = SleepMetrics(asleepMin = 69.0),
+    )
+
     /** 96 × 15-minute MET buckets: quiet night, a walk mid-morning, an evening session. */
     private val profile: List<Double> = List(96) { i ->
         val h = i / 4.0
@@ -74,7 +91,7 @@ internal object PreviewFixtures {
     val summary = Summary(
         digest = "HRV +9%, resting HR −8 bpm. Recovering well.",
         device = device,
-        nights = listOf(night),
+        nights = listOf(nap, night),
         vitals = Vitals(
             hrv = Trend(latest = 40.0, baseline = 36.6, deltaPct = 9.3),
             rhr = Trend(latest = 59.0, baseline = 66.6, deltaPct = -11.4),

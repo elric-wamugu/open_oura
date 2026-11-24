@@ -85,7 +85,7 @@ object HistoryStops {
 
     private fun dayStop(s: Summary, d: String, date: LocalDate, today: LocalDate?): HistoryStop {
         val night = s.nightForDay(d)
-        val naps = s.nights.filter { !it.main && s.wakeYmd(it) == d }.mapNotNull { it.start }.sorted()
+        val naps = s.napsForDay(d).mapNotNull { it.start }
         return HistoryStop(
             key = d,
             title = date.format(DateTimeFormatter.ofPattern("EEE · MMM d")),
@@ -203,7 +203,7 @@ private fun Stop(stop: HistoryStop, first: Boolean, last: Boolean, onOpenDay: (S
                 Text(stop.title, style = MaterialTheme.typography.titleMediumEmphasized)
                 val note = when {
                     stop.day == null -> "${stop.days} day${if (stop.days == 1) "" else "s"}"
-                    stop.naps.isNotEmpty() -> "+ nap ${stop.naps.joinToString(", ")}"
+                    stop.naps.isNotEmpty() -> "also slept ${stop.naps.joinToString(", ")}"
                     else -> null
                 }
                 note?.let { Text(it, style = MaterialTheme.typography.labelMedium, color = cs.onSurfaceVariant) }

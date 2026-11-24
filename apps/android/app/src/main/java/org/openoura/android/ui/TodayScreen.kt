@@ -60,6 +60,8 @@ fun TodayScreen(
     onRetrySummary: () -> Unit,
     onImportDatabase: () -> Unit,
     onOpenDay: (String, Boolean) -> Unit,
+    /** Open a nap of the given day, by its night id. */
+    onOpenNap: (String, String) -> Unit,
     onOpenReadiness: (String) -> Unit,
     onOpenRing: () -> Unit,
     cardioExpanded: Boolean,
@@ -130,7 +132,7 @@ fun TodayScreen(
                         }
                     }
 
-                    is SummaryState.Ready -> readyItems(state, onOpenDay, onOpenReadiness, cardioExpanded, onToggleCardio, onOpenHeartRate)
+                    is SummaryState.Ready -> readyItems(state, onOpenDay, onOpenNap, onOpenReadiness, cardioExpanded, onToggleCardio, onOpenHeartRate)
                 }
             }
         }
@@ -140,6 +142,7 @@ fun TodayScreen(
 private fun androidx.compose.foundation.lazy.LazyListScope.readyItems(
     state: SummaryState.Ready,
     onOpenDay: (String, Boolean) -> Unit,
+    onOpenNap: (String, String) -> Unit,
     onOpenReadiness: (String) -> Unit,
     cardioExpanded: Boolean,
     onToggleCardio: () -> Unit,
@@ -163,6 +166,10 @@ private fun androidx.compose.foundation.lazy.LazyListScope.readyItems(
         }
         s.nightForDay(day)?.let { n ->
             item(key = "night") { LastNightTile(n, onClick = { onOpenDay(day, true) }) }
+        }
+        // Only on a day with one: the summary keeps naps of 90 minutes or more.
+        s.napsForDay(day).forEach { nap ->
+            item(key = "nap-${nap.id}") { NapTile(nap, onClick = { onOpenNap(day, nap.id) }) }
         }
         item(key = "activity") { ActivityTile(s, day, onClick = { onOpenDay(day, false) }) }
     }

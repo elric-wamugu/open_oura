@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -22,11 +23,14 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
+import org.openoura.android.R
 import org.openoura.android.data.NightRow
 import org.openoura.android.data.Summary
+import org.openoura.android.ui.components.ShapedIcon
 import org.openoura.android.ui.theme.dataColors
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
@@ -212,6 +216,40 @@ fun LastNightTile(n: NightRow, onClick: () -> Unit) {
                 )
             }
             StageSplit(n)
+        }
+    }
+}
+
+/**
+ * A nap on the day Today is about: a slim tile in the Sleep colour under "Last night",
+ * opening the nap's own page. It carries times and minutes only — nothing that could pass
+ * for a score beside the Sleep tile.
+ */
+@Composable
+fun NapTile(n: NightRow, onClick: () -> Unit) {
+    val topic = Topics.sleep
+    Surface(
+        onClick = onClick,
+        shape = RoundedCornerShape(24.dp),
+        color = topic.container,
+        contentColor = topic.onContainer,
+        modifier = Modifier.fillMaxWidth().semantics(mergeDescendants = true) {},
+    ) {
+        Row(
+            Modifier.padding(start = 10.dp, end = 14.dp, top = 10.dp, bottom = 10.dp),
+            verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            ShapedIcon(
+                R.drawable.ic_sym_bedtime,
+                container = MaterialTheme.colorScheme.surface,
+                content = topic.onContainer,
+            )
+            Column(Modifier.weight(1f)) {
+                Text(NapText.title(n), style = MaterialTheme.typography.titleSmallEmphasized)
+                Text(NapText.tileLine(n), style = MaterialTheme.typography.bodySmall)
+            }
+            Icon(painterResource(R.drawable.ic_sym_chevron_right), contentDescription = null)
         }
     }
 }

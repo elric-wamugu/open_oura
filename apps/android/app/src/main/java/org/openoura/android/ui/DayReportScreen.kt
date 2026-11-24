@@ -80,6 +80,7 @@ fun DayReportScreen(
     sleepTab: Boolean,
     onSelectTab: (Boolean) -> Unit,
     onLabelEffort: (EffortSession, kind: String?, note: String?) -> Unit,
+    onOpenNap: (NightRow) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val motion = MaterialTheme.motionScheme
@@ -109,7 +110,7 @@ fun DayReportScreen(
             label = "report-half",
         ) { sleep ->
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                if (sleep) SleepReport(summary, ymd) else ActivityReport(summary, ymd, onLabelEffort)
+                if (sleep) SleepReport(summary, ymd, onOpenNap) else ActivityReport(summary, ymd, onLabelEffort)
             }
         }
     }
@@ -118,12 +119,117 @@ fun DayReportScreen(
 // ── sleep ────────────────────────────────────────────────────────────────────────────
 
 @Composable
-private fun ColumnScope.SleepReport(s: Summary, ymd: String) {
+private fun ColumnScope.SleepReport(s: Summary, ymd: String, onOpenNap: (NightRow) -> Unit) {
     val n = s.nightForDay(ymd)
     if (n == null) {
         Notice("No scored night for this day.")
         return
     }
+    SleepBody(s, n, nap = false) {
+        val naps = s.napsForDay(ymd)
+        if (naps.isNotEmpty()) {
+            NapList(naps, onOpenNap)
+            Footnote(
+                "Only the day's main sleep counts toward the Sleep score, readiness and sleep " +
+                    "debt. Rests under 90 minutes aren't listed: they can't be staged, and the " +
+                    "ring logs sitting still the same way.",
+            )
+        }
+    }
+}
+
+/**
+ * A nap or other second sleep period of a day, on its own page: the night's layout without
+ * the Sleep score, the night-time reading and sleep debt, none of which describe a nap.
+ */
+@Composable
+fun NapReportScreen(summary: Summary, id: String, modifier: Modifier = Modifier) {
+    Column(
+        modifier = modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 24.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        val n = summary.nightById(id)
+        if (n == null) {
+            // A recompute can replace the period (the ring declaring a detected one, say).
+            Notice("This sleep is no longer in the summary.")
+            return@Column
+        }
+        SleepBody(summary, n, nap = true)
+    }
+}
+
+/** A day's naps as one segmented group, each opening its own page. */
+@Composable
+private fun NapList(naps: List<NightRow>, onOpenNap: (NightRow) -> Unit) {
+    Column(verticalArrangement = Arrangement.spacedBy(ListItemDefaults.SegmentedGap)) {
+        naps.forEachIndexed { i, n ->
+            SegmentedListItem(
+                onClick = { onOpenNap(n) },
+                shapes = ListItemDefaults.segmentedShapes(i, naps.size),
+                colors = groupColors(),
+                leadingContent = {
+                    ShapedIcon(R.drawable.ic_sym_bedtime, container = Topics.sleep.container, content = Topics.sleep.onContainer)
+                },
+                supportingContent = {
+                    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                        Text(NapText.line(n))
+                        StageBar(n, height = 8.dp)
+                    }
+                },
+                trailingContent = { Icon(painterResource(R.drawable.ic_sym_chevron_right), contentDescription = null) },
+                content = { Text(NapText.times(n)) },
+            )
+        }
+    }
+}
+
+/** A nap's words, shared by the day report's list and Today's tile. Pure, so tested. */
+object NapText {
+    // No "Nap": the summary only knows this is not the day's longest sleep. A real one on
+    // the phone ran 19:54–23:23, which reads as the first half of a split night as easily.
+
+    /** "14:05–15:50", for the day report's row under the night's headline figures. */
+    fun times(n: NightRow): String = "${n.start ?: "—"}–${n.end ?: "—"}"
+
+    /** "Also slept · 14:05–15:50", for Today's tile, which has no heading to lean on. */
+    fun title(n: NightRow): String = "Also slept · ${times(n)}"
+
+    /** "1h 09m asleep of 1h 45m in bed", or the time in bed alone without stages. */
+    fun line(n: NightRow): String {
+        // From the exact instants where there are some: `inBedH` is rounded to a tenth of
+        // an hour, which would turn 1h 45m into "1h 48m" beside its own 14:05–15:50.
+        val inBedMin = n.startUnix?.let { s -> n.endUnix?.let { e -> (e - s) / 60.0 } } ?: n.inBedH?.let { it * 60 }
+        val inBed = inBedMin?.let { BentoText.hoursMinutes(it) }
+        val asleep = n.metrics?.asleepMin?.let { BentoText.hoursMinutes(it) }
+        return when {
+            asleep != null && inBed != null -> "$asleep asleep of $inBed in bed"
+            inBed != null -> "$inBed in bed · not staged"
+            else -> "Not staged"
+        }
+    }
+
+    /** Today's shorter line: "1h 09m asleep", or the time in bed without stages. */
+    fun tileLine(n: NightRow): String =
+        n.metrics?.asleepMin?.let { "${BentoText.hoursMinutes(it)} asleep" }
+            ?: n.inBedH?.let { "%.1f h in bed".format(it) }
+            ?: "Not staged"
+}
+
+/**
+ * One sleep period's report. For the night, [afterHeadline] slots the day's naps under
+ * its headline figures; a nap gets a note in place of the Sleep score, and no night-time
+ * reading or sleep debt.
+ */
+@Composable
+private fun ColumnScope.SleepBody(
+    s: Summary,
+    n: NightRow,
+    nap: Boolean,
+    afterHeadline: @Composable ColumnScope.() -> Unit = {},
+) {
     // The web's four, in the web's order. HRV and resting HR used to sit here; they are
     // already the first two vitals tiles on Today, while asleep-vs-in-bed is the
     // comparison this page is about.
@@ -132,21 +238,32 @@ private fun ColumnScope.SleepReport(s: Summary, ymd: String) {
             "%.1f h".format(n.inBedH ?: 0.0) to "Time in bed",
             (n.metrics?.asleepMin?.let { "%.1f h".format(it / 60.0) } ?: "—") to "Asleep",
             (n.efficiency?.let { "${it.roundToInt()}%" } ?: "—") to "Efficiency",
-            "${n.start ?: "—"}–${n.end ?: "—"}" to "Bedtime",
+            "${n.start ?: "—"}–${n.end ?: "—"}" to if (nap) "Times" else "Bedtime",
         ),
     )
     SleepInterpretation.detectedNote(n.detected)?.let { Footnote(it) }
+    afterHeadline()
 
-    n.sleepScore?.takeIf { it.score != null }?.let { score ->
-        SectionHeader("Sleep score", Modifier.padding(top = 4.dp))
-        SleepScoreCard(score)
-        Footnote(
-            "Worked out on this phone from the stages below, the way the Oura app scores a night. " +
-                Chronotypes.timingNote(s.chronotype),
+    if (nap) {
+        // The summary scores every period, but the score's timing part judges a period's
+        // midpoint against a night-time ideal, so an afternoon nap would always lose on it.
+        Notice(
+            "No Sleep score here. The score describes a day's main sleep, and its timing " +
+                "part judges it against your usual night. This sleep doesn't count toward " +
+                "readiness or sleep debt either.",
         )
+    } else {
+        n.sleepScore?.takeIf { it.score != null }?.let { score ->
+            SectionHeader("Sleep score", Modifier.padding(top = 4.dp))
+            SleepScoreCard(score)
+            Footnote(
+                "Worked out on this phone from the stages below, the way the Oura app scores a night. " +
+                    Chronotypes.timingNote(s.chronotype),
+            )
+        }
     }
 
-    SectionHeader("Overnight polysomnograph", Modifier.padding(top = 4.dp))
+    SectionHeader(if (nap) "Polysomnograph" else "Overnight polysomnograph", Modifier.padding(top = 4.dp))
     StageLegend(Modifier.padding(start = 4.dp))
     Polysomnograph(n)
 
@@ -206,6 +323,9 @@ private fun ColumnScope.SleepReport(s: Summary, ymd: String) {
         }
     }
 
+    // The reading is written for a night ("four to six cycles is typical"), and sleep debt
+    // is built from nights only, so neither is said under a nap.
+    if (nap) return
     val interpretation = SleepInterpretation.lines(n)
     val debt = SleepInterpretation.debtNote(s.sleepDebt)
     if (interpretation.isNotEmpty() || debt != null) {

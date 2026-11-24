@@ -78,6 +78,7 @@ private fun TodayScreenPreview() = OpenOuraTheme {
         onRetrySummary = {},
         onImportDatabase = {},
         onOpenDay = { _, _ -> },
+        onOpenNap = { _, _ -> },
         onOpenReadiness = {},
         onOpenRing = {},
         cardioExpanded = false,
