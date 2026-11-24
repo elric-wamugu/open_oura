@@ -228,8 +228,11 @@ ends a session, under 5 minutes is discarded) and attaches mean/peak HR and the
 
 Two things to keep honest when rendering these:
 
-- **They carry no label and must not be shown as if they did.** AAD says "running"; this
-  says "the ring was recording effort".
+- **They are named only from measured gait.** Since 2026-11-24 each session carries
+  `gait[]` (walking/jogging segments read from the ring's `real_steps` records, see
+  `oura-summary`'s `gait.rs`) and a `label` when one gait covers at least a third of it.
+  Without that, a session stays unlabelled and must not be named from HR, MET or
+  intensity — that would be a guess shown as a fact. There is no "running" yet.
 - **`hr_peak` is suppressed when it does not exceed `hr_mean`.** The mean uses every gated
   beat in the window; the peak only considers 30-second windows holding ten or more. During
   movement the fastest stretches are where beats are sparsest, so the peak can genuinely
@@ -465,6 +468,9 @@ nightly need" but "a 7.5 h need". `app.js` hardcodes "an".
   only — the Cardiovascular panel (with a chart of recent recorded nights) and a Trends
   chart. The web and iOS receive it and show
   neither.
+- **Walking and jogging** (`effort[].label` and `effort[].gait`, from `oura-summary`'s
+  `gait.rs`): Android only — Activity → Sessions names a session "Walking" or "Jogging" with
+  its breakdown. The web still renders every effort row unlabelled; it receives the fields.
 - **Today and History layouts** (2026-11-20): Android's Today is a bento of the three
   scores, History a Day/Week/Month timeline, and Ring and You bentos too; the web and iOS keep
   their own layouts.

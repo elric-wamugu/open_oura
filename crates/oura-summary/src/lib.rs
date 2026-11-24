@@ -14,6 +14,7 @@
 
 mod bedtime;
 mod daily_scores;
+pub mod gait;
 pub mod ppg_shape;
 mod staging;
 
@@ -1225,9 +1226,10 @@ fn battery_points(mut points: Vec<(f64, i64, i64)>) -> Vec<(f64, i64, i64)> {
 /// against p50 77 / p90 102 across all HR samples — it tracks effort.
 ///
 /// This is deliberately NOT Oura's `automatic_activity_detection`. That model labels a
-/// session ("running", "walking"); this only knows the ring was recording effort, so the
-/// output carries no label and must not be presented as one. It exists because AAD needs the
-/// torch models, which aren't bundled — leaving the sessions list permanently empty.
+/// session ("running", "walking"); this only knows the ring was recording effort. It exists
+/// because AAD needs the torch models, which aren't bundled — leaving the sessions list
+/// permanently empty. A session is named afterwards only from measured gait (`gait.rs`),
+/// never from the HR and intensity figures here.
 ///
 /// `traces` and `intensity` are `(unix, value)`; `hr` is the quality-gated beat series.
 fn effort_sessions(traces: &mut [f64], hr: &[(f64, f64)], intensity: &[(f64, f64)]) -> Vec<Value> {
@@ -2268,11 +2270,17 @@ pub fn build_summary_with(
     // peak_hr are reused, flattened onto one timeline.
     let effort = {
         let mut traces: Vec<f64> = Vec::new();
+        // The same traces with their boot and ring time, to find each session's gait
+        // records afterwards.
+        let mut trace_ds: Vec<(f64, usize, i64)> = Vec::new();
         let mut intensity: Vec<(f64, f64)> = Vec::new();
         for (event_idx, (ds, tag, jstr, _)) in events.iter().enumerate() {
             let t = || unix_in_epoch(*ds, event_epochs[event_idx]);
             match name_of(*tag) {
-                "ehr_trace_event" => traces.push(t()),
+                "ehr_trace_event" => {
+                    traces.push(t());
+                    trace_ds.push((t(), event_epochs[event_idx], *ds));
+                }
                 "ehr_acm_intensity_event" => {
                     if let Ok(v) = serde_json::from_str::<Value>(jstr) {
                         if let Some(a) = v["intensity"].as_array() {
@@ -2292,7 +2300,56 @@ pub fn build_summary_with(
             hr_by_day.values().flatten().map(|&(t, v)| (t, v)).collect();
         hr_flat.sort_by(|a, b| a.0.total_cmp(&b.0));
         intensity.sort_by(|a, b| a.0.total_cmp(&b.0));
-        effort_sessions(&mut traces, &hr_flat, &intensity)
+        let mut sessions = effort_sessions(&mut traces, &hr_flat, &intensity);
+        // Walking and jogging inside each session, from the ring's gait records (`gait.rs`).
+        // Read per session, padded so a walk that starts before the ring's effort trace
+        // does is still caught: a handful of rows each, never the whole history.
+        if let Some((serial, ..)) = dev.as_ref() {
+            const PAD_S: f64 = 300.0;
+            for sess in sessions.iter_mut() {
+                let (Some(a), Some(b)) = (sess["start"].as_f64(), sess["end"].as_f64()) else {
+                    continue;
+                };
+                let inside: Vec<&(f64, usize, i64)> = trace_ds
+                    .iter()
+                    .filter(|(t, ..)| *t >= a - 1.0 && *t <= b + 1.0)
+                    .collect();
+                let Some(&&(_, ep, _)) = inside.first() else {
+                    continue;
+                };
+                let ds_of = inside
+                    .iter()
+                    .filter(|(_, e, _)| *e == ep)
+                    .map(|(_, _, ds)| *ds);
+                let (lo, hi) = (ds_of.clone().min().unwrap_or(0), ds_of.max().unwrap_or(0));
+                let window = (lo - (PAD_S * 10.0) as i64, hi + (PAD_S * 10.0) as i64);
+                let capture = epochs[ep].capture;
+                let read = |tag: u8| {
+                    store
+                        .raw_events_in_window(serial, tag, window, capture)
+                        .ok()
+                };
+                let (Some(f1), Some(f2)) = (read(0x7e), read(0x7f)) else {
+                    continue;
+                };
+                // Keep to the session's own wall-clock span as well: the clock can step at a
+                // sync boundary, so ring time a few minutes away may be hours away.
+                let mut wins = gait::windows(&f1, &f2, &|ds| unix_in_epoch(ds, ep));
+                wins.retain(|w| w.end >= a - PAD_S && w.end <= b + PAD_S);
+                // Then clip to the session: the padding finds a walk's true start, but the
+                // parts must never add up to more than the session they break down.
+                let segs: Vec<gait::Segment> = gait::segments(&wins)
+                    .into_iter()
+                    .filter_map(|g| {
+                        let (start, end) = (g.start.max(a), g.end.min(b));
+                        (end - start >= 60.0).then_some(gait::Segment { start, end, ..g })
+                    })
+                    .collect();
+                sess["gait"] = gait::to_json(&segs);
+                sess["label"] = json!(gait::dominant(&segs, b - a).map(|g| g.name()));
+            }
+        }
+        sessions
     };
 
     let peak_hr: std::collections::BTreeMap<String, f64> = hr_by_day

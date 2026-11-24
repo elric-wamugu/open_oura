@@ -29,7 +29,9 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.unit.dp
+import androidx.annotation.DrawableRes
 import org.openoura.android.R
+import org.openoura.android.data.EffortSession
 import org.openoura.android.data.NightRow
 import org.openoura.android.data.Summary
 import org.openoura.android.ui.components.ChoiceOption
@@ -284,10 +286,38 @@ private fun ColumnScope.ActivityReport(s: Summary, ymd: String) {
 }
 
 /**
- * Sessions the ring recorded an exercise-HR trace for.
- *
- * Shown as "effort", never as a named workout: labelling is what Oura's AAD model does and
- * it isn't bundled, so `activity[]` stays empty. Mirrors the web's effort rows.
+ * How an effort session is named and broken down. A session is named only from the gait
+ * the ring measured (see [EffortSession]); without one it stays "Effort".
+ */
+object GaitText {
+    fun name(label: String?): String? = when (label) {
+        "walking" -> "Walking"
+        "jogging" -> "Jogging"
+        else -> null
+    }
+
+    fun title(e: EffortSession, clock: String): String = "${name(e.label) ?: "Effort"} at $clock"
+
+    /** Minutes of each gait in the session, the larger first: "Jogging 10 min · Walking 9 min". */
+    fun breakdown(e: EffortSession): String? {
+        val totals = e.gait.groupBy { it.label }
+            .mapNotNull { (l, segs) -> name(l)?.let { it to segs.sumOf { s -> s.durationMin } } }
+            .sortedByDescending { it.second }
+        if (totals.isEmpty()) return null
+        return totals.joinToString(" · ") { (n, m) -> "$n ${m.roundToInt()} min" }
+    }
+
+    @DrawableRes
+    fun icon(label: String?): Int = when (label) {
+        "walking" -> R.drawable.ic_cap_walking
+        "jogging" -> R.drawable.ic_cap_run
+        else -> R.drawable.ic_sym_monitor_heart
+    }
+}
+
+/**
+ * Sessions the ring recorded an exercise-HR trace for, named walking or jogging where the
+ * ring's gait records say so, and "Effort" where they don't.
  */
 @Composable
 private fun ColumnScope.EffortSessions(s: Summary, ymd: String) {
@@ -302,6 +332,7 @@ private fun ColumnScope.EffortSessions(s: Summary, ymd: String) {
         sessions.forEachIndexed { i, e ->
             val bits = buildList {
                 add("${e.durationMin.roundToInt()} min")
+                GaitText.breakdown(e)?.let { add(it) }
                 e.hrMean?.let { add("${it.roundToInt()} bpm avg") }
                 e.hrPeak?.let { add("${it.roundToInt()} peak") }
                 e.intensityPeak?.let { add("intensity ${it.roundToInt()}") }
@@ -309,17 +340,18 @@ private fun ColumnScope.EffortSessions(s: Summary, ymd: String) {
             SegmentedListItem(
                 shapes = ListItemDefaults.segmentedShapes(i, sessions.size),
                 colors = groupColors(),
-                leadingContent = { ShapedIcon(R.drawable.ic_sym_monitor_heart) },
+                leadingContent = { ShapedIcon(GaitText.icon(e.label)) },
                 supportingContent = { Text(bits.joinToString(" · ")) },
             ) {
-                Text("Effort at ${clock.format(Instant.ofEpochSecond(e.start.toLong()).atZone(ZoneId.systemDefault()))}")
+                Text(GaitText.title(e, clock.format(Instant.ofEpochSecond(e.start.toLong()).atZone(ZoneId.systemDefault()))))
             }
         }
     }
     Footnote(
         "Detected from the ring's own exercise-HR trace — it records while the ring thinks " +
-            "you're working, so these are start/stop and effort, not labelled workouts. " +
-            "Naming them needs Oura's activity model, which isn't bundled. Heart rate is " +
+            "you're working. Walking and jogging come from the ring's step rhythm; a session " +
+            "without a steady one, like a ride, stays \"Effort\" rather than getting a guessed " +
+            "name. Running isn't told apart from jogging yet. Heart rate is " +
             "missing from some because motion corrupts the optical signal, which is exactly " +
             "when the ring is least able to read a clean beat.",
     )

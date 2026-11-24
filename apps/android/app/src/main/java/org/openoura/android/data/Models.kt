@@ -227,9 +227,10 @@ data class Battery(
 /**
  * A stretch the ring recorded an exercise-HR trace for.
  *
- * Deliberately unlabelled: naming a session ("running") is what Oura's AAD model does, and
- * that model isn't bundled. This only knows the ring was recording effort, so it must never
- * be rendered as a named workout.
+ * Named only from the ring's measured gait (`gait.rs` in oura-summary): `label` is
+ * "walking" or "jogging" when a steady stepping rhythm covers at least a third of the
+ * session, and null otherwise — a session with no gait (a ride, a gym set, or a day before
+ * Real steps was on) stays unlabelled and must not be given a name from heart rate or MET.
  *
  * `hrPeak` is absent whenever it wouldn't exceed `hrMean` — see effort_sessions() in
  * oura-summary for why that can legitimately happen during movement.
@@ -244,6 +245,22 @@ data class EffortSession(
     @SerialName("intensity_mean") val intensityMean: Double? = null,
     @SerialName("intensity_peak") val intensityPeak: Double? = null,
     val traces: Int = 0,
+    val label: String? = null,
+    val gait: List<GaitSegment> = emptyList(),
+)
+
+/**
+ * A stretch of one gait inside an effort session. `rateRaw` is the ring's own rate field,
+ * likely cadence but in an unknown unit, so it is never shown as steps per minute.
+ */
+@Serializable
+data class GaitSegment(
+    val label: String,
+    val start: Double,
+    val end: Double,
+    @SerialName("duration_min") val durationMin: Double = 0.0,
+    val coverage: Double = 0.0,
+    @SerialName("rate_raw") val rateRaw: Int = 0,
 )
 
 /** Accumulated sleep debt against a nightly need, computed in Rust. */
