@@ -922,8 +922,16 @@ const SYNC_GAP_S: i64 = 120;
 /// `T` — which bounds the offset from above at `T − D/10`, inflated by however far behind
 /// that drain finished. The true offset only grows (the counter loses time, never gains
 /// it), so the tightest consistent fit is the running minimum taken from the newest ds
-/// backwards. See the call site for why the old single-anchor model was wrong.
+/// backwards.
+///
+/// Where two consecutive observations disagree, the counter lost that time somewhere
+/// between them, and the bounds alone cannot say where. The step is placed at the longest
+/// silence in ring time inside that interval, because a counter loses time while the ring
+/// is in a low-power state that also stops it logging. See the call site for both.
 fn fit_ds_offsets(rows: &mut [(i64, i64)]) -> Vec<(i64, f64)> {
+    let mut logged: Vec<i64> = rows.iter().map(|&(_, ds)| ds).collect();
+    logged.sort_unstable();
+    logged.dedup();
     rows.sort_unstable();
     let mut obs: Vec<(i64, f64)> = Vec::new();
     let mut last_cu = i64::MIN;
@@ -952,11 +960,29 @@ fn fit_ds_offsets(rows: &mut [(i64, i64)]) -> Vec<(i64, f64)> {
         run = run.min(o.1);
         o.1 = run;
     }
+    // Move each rise in offset from just after the earlier sync's newest event to the
+    // longest gap between logged events before the later one. Ties go to the earliest
+    // gap. Extending the earlier step's ds is enough: no event lies inside a gap.
+    for k in 1..obs.len() {
+        if obs[k].1 <= obs[k - 1].1 {
+            continue;
+        }
+        let (lo, hi) = (obs[k - 1].0, obs[k].0);
+        let between =
+            &logged[logged.partition_point(|&d| d < lo)..logged.partition_point(|&d| d <= hi)];
+        let mut best = (0i64, lo);
+        for w in between.windows(2) {
+            if w[1] - w[0] > best.0 {
+                best = (w[1] - w[0], w[0]);
+            }
+        }
+        obs[k - 1].0 = best.1;
+    }
     obs
 }
 
-/// Map a ring counter to wall-clock through fitted offset steps: use the tightest bound
-/// from the earliest sync that had already observed this ds.
+/// Map a ring counter to wall-clock through fitted offset steps: use the first step at
+/// or above this ds.
 fn unix_from_offsets(offsets: &[(i64, f64)], ds: i64) -> Option<f64> {
     if offsets.is_empty() {
         return None;
@@ -1229,29 +1255,49 @@ fn battery_points(mut points: Vec<(f64, i64, i64)>) -> Vec<(f64, i64, i64)> {
 /// session ("running", "walking"); this only knows the ring was recording effort. It exists
 /// because AAD needs the torch models, which aren't bundled — leaving the sessions list
 /// permanently empty. A session is named afterwards only from measured gait (`gait.rs`),
-/// never from the HR and intensity figures here.
+/// never from the HR and intensity figures here — or by the person, as `user_label`,
+/// attached by [`attach_user_labels`].
 ///
-/// `traces` and `intensity` are `(unix, value)`; `hr` is the quality-gated beat series.
-fn effort_sessions(traces: &mut [f64], hr: &[(f64, f64)], intensity: &[(f64, f64)]) -> Vec<Value> {
+/// `traces` are `(unix, boot index, ds)`; `intensity` is `(unix, value)`; `hr` is the
+/// quality-gated beat series. `boots` is each boot's capture-time range, by index, and with
+/// `serial` names the session in ring time (`ring`), which is what a label is keyed by.
+fn effort_sessions(
+    traces: &mut [(f64, usize, i64)],
+    hr: &[(f64, f64)],
+    intensity: &[(f64, f64)],
+    serial: &str,
+    boots: &[(i64, i64)],
+) -> Vec<Value> {
     // A gap longer than this ends a session. Ten minutes keeps a walk with a pause at the
     // lights in one piece without welding the morning and the evening together.
     const SESSION_GAP_S: f64 = 600.0;
     // Shorter than this is a stray trace, not something worth calling a session.
     const MIN_SESSION_S: f64 = 300.0;
 
-    traces.sort_by(f64::total_cmp);
+    traces.sort_by(|x, y| x.0.total_cmp(&y.0));
     let mut out = Vec::new();
     let mut i = 0usize;
     while i < traces.len() {
         let mut j = i;
-        while j + 1 < traces.len() && traces[j + 1] - traces[j] <= SESSION_GAP_S {
+        while j + 1 < traces.len() && traces[j + 1].0 - traces[j].0 <= SESSION_GAP_S {
             j += 1;
         }
-        let (a, b, n) = (traces[i], traces[j], j - i + 1);
+        let (a, b, n) = (traces[i].0, traces[j].0, j - i + 1);
+        let run = &traces[i..=j];
         i = j + 1;
         if b - a < MIN_SESSION_S {
             continue;
         }
+        // The session in ring time: its boot, and the ds span of its traces in that boot. A
+        // reboot mid-session is rare enough that the first boot speaks for it.
+        let boot = run[0].1;
+        let (lo_ds, hi_ds) = run
+            .iter()
+            .filter(|t| t.1 == boot)
+            .fold((i64::MAX, i64::MIN), |(lo, hi), t| {
+                (lo.min(t.2), hi.max(t.2))
+            });
+        let capture = boots.get(boot).copied().unwrap_or((0, 0));
         // Both series arrive sorted by time, so a session's samples are one contiguous
         // run found by bisection. Filtering every beat on record for each session made
         // this cost sessions × beats.
@@ -1278,9 +1324,70 @@ fn effort_sessions(traces: &mut [f64], hr: &[(f64, f64)], intensity: &[(f64, f64
             "intensity_mean": mean(&ints).map(|v| v.round()),
             "intensity_peak": int_peak.is_finite().then(|| int_peak.round()),
             "traces": n,
+            "ring": {
+                "serial": serial,
+                "capture": [capture.0, capture.1],
+                "start_ds": lo_ds,
+                "end_ds": hi_ds,
+            },
+            "user_label": Value::Null,
         }));
     }
     out
+}
+
+/// Attach the person's own labels to effort sessions, as `user_label`.
+///
+/// A label is keyed by ring time (see `oura_store::EffortLabel`) and belongs to a session
+/// when it is the same ring, it was made in the same boot — its `capture_lo` falls inside
+/// the boot's capture range, which boots never share — and its ds span overlaps the
+/// session's. Ring time, not wall clock: correcting the ds → unix fit moves a session's
+/// start, and must not drop or move its label. Overlap, not equality: a later sync can
+/// lengthen a session, or split one, and the label should follow what it was put on.
+///
+/// Where several labels overlap one session (two sessions that later merged), the one
+/// sharing most of it wins, then the newest. Works on the summary's JSON so that a client
+/// can re-apply labels to a summary it already has without a full recompute.
+pub fn attach_user_labels(effort: &mut [Value], labels: &[oura_store::EffortLabel]) {
+    for e in effort {
+        let r = &e["ring"];
+        let (Some(serial), Some(lo), Some(hi), Some(start), Some(end)) = (
+            r["serial"].as_str(),
+            r["capture"][0].as_i64(),
+            r["capture"][1].as_i64(),
+            r["start_ds"].as_i64(),
+            r["end_ds"].as_i64(),
+        ) else {
+            continue;
+        };
+        let best = labels
+            .iter()
+            .filter(|l| l.serial == serial && (lo..=hi).contains(&l.capture_lo))
+            .map(|l| (l.end_ds.min(end) - l.start_ds.max(start), l))
+            .filter(|(overlap, _)| *overlap > 0)
+            .max_by_key(|(overlap, l)| (*overlap, l.updated_unix));
+        e["user_label"] = match best {
+            Some((_, l)) => {
+                json!({ "kind": l.kind, "note": l.note, "updated_unix": l.updated_unix })
+            }
+            None => Value::Null,
+        };
+    }
+}
+
+/// Re-apply the labels in the database at `db` to an already-built summary, in place.
+///
+/// What a client calls right after labelling a session: the result is what a full
+/// [`build_summary`] would give for `effort[]`, at the cost of one small query.
+pub fn relabel_summary(db: &Path, summary: &mut Value) -> Result<()> {
+    let labels = Store::open(db)
+        .context("opening DB")?
+        .effort_labels()
+        .context("reading effort labels")?;
+    if let Some(effort) = summary["effort"].as_array_mut() {
+        attach_user_labels(effort, &labels);
+    }
+    Ok(())
 }
 
 /// Assemble the full dashboard summary as a JSON value. The torch models are
@@ -1431,6 +1538,20 @@ pub fn build_summary_with(
     // supplies a tighter bound and the inflated one is discarded. And an event's time
     // depends only on syncs that had already observed its ds, so adding today's sync
     // cannot move last week's night.
+    //
+    // Bounds say *how much* time the counter lost between two syncs, not *where*. The
+    // first version stepped straight after the earlier sync's newest event, which assumed
+    // the loss happened the moment the phone disconnected. On 2026-11-19 that tore a walk
+    // in two. The 15:59 sync was tight: the ring's own log of the phone's 17:29
+    // reconnect lands within a second of it under that offset. The ring then hit low
+    // battery and hibernated, and its counter ran at under a third of real speed until it
+    // went on the charger. By the 23:08 sync it had lost 3 h 19 min. Stepping at 15:59
+    // moved everything logged after it, including the rest of that walk, the reconnect and
+    // the hibernation, 3 h 19 min late. Hibernation is when the counter loses time, and it
+    // is also when the ring barely logs (one event per ten minutes of ring time, against
+    // seconds while worn), so the step goes in the longest gap between logged events
+    // between the two syncs. A small drift has no single place to go, but it is small
+    // either way.
     struct Epoch {
         min_ds: i64,
         max_ds: i64,
@@ -2269,18 +2390,12 @@ pub fn build_summary_with(
     // Effort sessions from the exercise-HR trace. The same quality-gated beats that feed
     // peak_hr are reused, flattened onto one timeline.
     let effort = {
-        let mut traces: Vec<f64> = Vec::new();
-        // The same traces with their boot and ring time, to find each session's gait
-        // records afterwards.
-        let mut trace_ds: Vec<(f64, usize, i64)> = Vec::new();
+        let mut traces: Vec<(f64, usize, i64)> = Vec::new();
         let mut intensity: Vec<(f64, f64)> = Vec::new();
         for (event_idx, (ds, tag, jstr, _)) in events.iter().enumerate() {
             let t = || unix_in_epoch(*ds, event_epochs[event_idx]);
             match name_of(*tag) {
-                "ehr_trace_event" => {
-                    traces.push(t());
-                    trace_ds.push((t(), event_epochs[event_idx], *ds));
-                }
+                "ehr_trace_event" => traces.push((t(), event_epochs[event_idx], *ds)),
                 "ehr_acm_intensity_event" => {
                     if let Ok(v) = serde_json::from_str::<Value>(jstr) {
                         if let Some(a) = v["intensity"].as_array() {
@@ -2300,7 +2415,11 @@ pub fn build_summary_with(
             hr_by_day.values().flatten().map(|&(t, v)| (t, v)).collect();
         hr_flat.sort_by(|a, b| a.0.total_cmp(&b.0));
         intensity.sort_by(|a, b| a.0.total_cmp(&b.0));
-        let mut sessions = effort_sessions(&mut traces, &hr_flat, &intensity);
+        let serial = dev.as_ref().map(|d| d.0.as_str()).unwrap_or("");
+        let boots: Vec<(i64, i64)> = epochs.iter().map(|e| e.capture).collect();
+        // The traces with their boot and ring time, to find each session's gait records.
+        let trace_ds = traces.clone();
+        let mut sessions = effort_sessions(&mut traces, &hr_flat, &intensity, serial, &boots);
         // Walking and jogging inside each session, from the ring's gait records (`gait.rs`).
         // Read per session, padded so a walk that starts before the ring's effort trace
         // does is still caught: a handful of rows each, never the whole history.
@@ -2349,6 +2468,9 @@ pub fn build_summary_with(
                 sess["label"] = json!(gait::dominant(&segs, b - a).map(|g| g.name()));
             }
         }
+        // A missing or unreadable table leaves the sessions unlabelled, never the summary
+        // unbuilt: the labels are an overlay on it.
+        attach_user_labels(&mut sessions, &store.effort_labels().unwrap_or_default());
         sessions
     };
 
@@ -2691,7 +2813,8 @@ pub fn build_summary_with(
         "activity_profile": activity_profile,
         "activity_steps": activity_steps,
         "battery": { "series": battery_series, "cycles": battery_cycles },
-        // Ring-detected effort. Unlabelled by design — see effort_sessions().
+        // Ring-detected effort. Never labelled by guesswork — see effort_sessions(); the
+        // only label is the person's own `user_label`.
         "effort": effort,
         "activity_daily": activity_daily,
         "vitals": { "hrv": trend(&hrv_stat), "rhr": trend(&rhr_stat) },
@@ -2701,11 +2824,136 @@ pub fn build_summary_with(
 #[cfg(test)]
 mod tests {
     use super::{
-        battery_band, battery_charge_state, battery_history, battery_points, battery_rested_pct,
-        fit_ds_offsets, unix_from_offsets, ChargeState, Stages, BATTERY_CRITICAL_PCT,
-        BATTERY_LOW_PCT, BATTERY_VERY_LOW_PCT,
+        attach_user_labels, battery_band, battery_charge_state, battery_history, battery_points,
+        battery_rested_pct, effort_sessions, fit_ds_offsets, unix_from_offsets, ChargeState,
+        Stages, BATTERY_CRITICAL_PCT, BATTERY_LOW_PCT, BATTERY_VERY_LOW_PCT,
     };
+    use oura_store::EffortLabel;
     use serde_json::json;
+
+    fn label(capture_lo: i64, start_ds: i64, end_ds: i64, kind: &str, at: i64) -> EffortLabel {
+        EffortLabel {
+            serial: "RING".into(),
+            capture_lo,
+            start_ds,
+            end_ds,
+            kind: kind.into(),
+            note: None,
+            updated_unix: at,
+        }
+    }
+
+    /// One trace a minute for `mins` minutes from `unix`, at ds counting from `ds`.
+    fn traces(unix: f64, boot: usize, ds: i64, mins: i64) -> Vec<(f64, usize, i64)> {
+        (0..mins)
+            .map(|m| (unix + 60.0 * m as f64, boot, ds + 600 * m))
+            .collect()
+    }
+
+    #[test]
+    fn effort_sessions_name_themselves_in_ring_time() {
+        // Two boots; a session in each, the second boot's ds starting near zero again.
+        let mut t = traces(1_000_000.0, 0, 50_000, 20);
+        t.extend(traces(1_100_000.0, 1, 3_000, 10));
+        let boots = [(900_000, 1_050_000), (1_060_000, 1_200_000)];
+        let out = effort_sessions(&mut t, &[], &[], "RING", &boots);
+        assert_eq!(out.len(), 2);
+        assert_eq!(
+            out[0]["ring"],
+            json!({ "serial": "RING", "capture": [900_000, 1_050_000],
+                    "start_ds": 50_000, "end_ds": 50_000 + 600 * 19 })
+        );
+        assert_eq!(out[1]["ring"]["capture"], json!([1_060_000, 1_200_000]));
+        assert_eq!(out[1]["ring"]["start_ds"], 3_000);
+        assert!(out[0]["user_label"].is_null());
+    }
+
+    #[test]
+    fn user_labels_follow_ring_time_not_wall_clock() {
+        let boots = [(900_000, 1_050_000), (1_060_000, 1_200_000)];
+        let mut t = traces(1_000_000.0, 0, 50_000, 20);
+        t.extend(traces(1_100_000.0, 1, 50_000, 20)); // same ds span, the other boot
+        let labels = [label(900_000, 51_000, 55_000, "dance", 1)];
+        let mut out = effort_sessions(&mut t.clone(), &[], &[], "RING", &boots);
+        attach_user_labels(&mut out, &labels);
+        assert_eq!(out[0]["user_label"]["kind"], "dance");
+        assert!(
+            out[1]["user_label"].is_null(),
+            "another boot's ds must not match"
+        );
+
+        // The offset fit is corrected and every wall-clock time moves by three hours. The
+        // session's ring time does not, so neither does its label.
+        let shifted: Vec<_> = t
+            .iter()
+            .map(|&(u, b, d)| (u + 3.0 * 3600.0, b, d))
+            .collect();
+        let mut again = effort_sessions(&mut shifted.clone(), &[], &[], "RING", &boots);
+        attach_user_labels(&mut again, &labels);
+        assert_ne!(again[0]["start"], out[0]["start"]);
+        assert_eq!(again[0]["user_label"]["kind"], "dance");
+    }
+
+    #[test]
+    fn user_label_matching_needs_overlap_and_prefers_the_closest_fit() {
+        let boots = [(900_000, 1_050_000)];
+        let session = || {
+            effort_sessions(
+                &mut traces(1_000_000.0, 0, 10_000, 20),
+                &[],
+                &[],
+                "RING",
+                &boots,
+            )
+        };
+        let kind = |labels: &[EffortLabel]| {
+            let mut out = session();
+            attach_user_labels(&mut out, labels);
+            out[0]["user_label"]["kind"].as_str().map(str::to_string)
+        };
+        // Session spans ds 10_000..=21_400.
+        assert_eq!(
+            kind(&[label(900_000, 21_400, 30_000, "walk", 1)]),
+            None,
+            "touching is not overlapping"
+        );
+        assert_eq!(kind(&[label(900_000, 0, 9_999, "walk", 1)]), None);
+        // The boot's earliest capture moved after labelling (more of it synced): still the boot.
+        assert_eq!(
+            kind(&[label(950_000, 12_000, 13_000, "walk", 1)]).as_deref(),
+            Some("walk")
+        );
+        assert_eq!(kind(&[label(899_999, 12_000, 13_000, "walk", 1)]), None);
+        let mut other_ring = label(900_000, 12_000, 13_000, "walk", 1);
+        other_ring.serial = "OTHER".into();
+        assert_eq!(kind(&[other_ring]), None);
+        // Two sessions that later merged: the label covering more of it wins, then the newer.
+        assert_eq!(
+            kind(&[
+                label(900_000, 10_000, 12_000, "run", 9),
+                label(900_000, 12_000, 21_000, "dance", 1)
+            ])
+            .as_deref(),
+            Some("dance")
+        );
+        assert_eq!(
+            kind(&[
+                label(900_000, 10_000, 15_000, "run", 1),
+                label(900_000, 10_000, 15_000, "dance", 2)
+            ])
+            .as_deref(),
+            Some("dance")
+        );
+        // A note travels with the kind.
+        let mut noted = label(900_000, 12_000, 13_000, "other", 1);
+        noted.note = Some("bouldering".into());
+        let mut out = session();
+        attach_user_labels(&mut out, &[noted]);
+        assert_eq!(
+            out[0]["user_label"],
+            json!({ "kind": "other", "note": "bouldering", "updated_unix": 1 })
+        );
+    }
 
     #[test]
     fn stage_timings_cover_the_whole_run() {
@@ -3047,6 +3295,38 @@ mod tests {
             prev = u;
         }
     }
+
+    #[test]
+    fn time_lost_between_syncs_goes_into_the_rings_quiet_stretch() {
+        // The 2026-11-19 shape. A tight sync at t=1000 drains up to ds 10_000. The ring keeps
+        // logging every 10 ds (one a second) until ds 20_000, then hibernates: it logs
+        // once per 6000 ds and its counter falls behind. It wakes at ds 40_000, logs
+        // densely again, and the next tight sync at t=5000 drains up to ds 41_000, so 900 s
+        // were lost. Each sync's drain is one capture second per event, like the real one.
+        let mut rows = session(1000 - 39, 10_000, 40);
+        let after: Vec<i64> = (10_010..=20_000)
+            .step_by(10)
+            .chain((26_000..40_000).step_by(6000))
+            .chain((40_000..=41_000).step_by(10))
+            .collect();
+        let t0 = 5000 - after.len() as i64 + 1;
+        rows.extend(after.iter().enumerate().map(|(i, &ds)| (t0 + i as i64, ds)));
+        let offs = fit_ds_offsets(&mut rows);
+        let at = |ds| unix_from_offsets(&offs, ds).unwrap();
+
+        // Both syncs stay exact.
+        assert!((at(10_000) - 1000.0).abs() < 1e-6);
+        assert!((at(41_000) - 5000.0).abs() < 1e-6);
+        // Ring-contiguous events either side of the first sync stay contiguous: the walk
+        // that was going on when the phone disconnected does not jump 15 minutes.
+        assert!((at(10_010) - at(10_000) - 1.0).abs() < 1e-6, "{offs:?}");
+        assert!((at(20_000) - at(10_000) - 1000.0).abs() < 1e-6, "{offs:?}");
+        // The whole 900 s goes into the first hibernation gap, and everything after it,
+        // including the dense wake-up stretch, keeps the later sync's offset.
+        assert!((at(26_000) - at(20_000) - 1500.0).abs() < 1e-6, "{offs:?}");
+        assert!((at(40_010) - at(40_000) - 1.0).abs() < 1e-6, "{offs:?}");
+    }
+
     #[test]
     fn a_days_main_sleep_is_the_longest_woken_from_that_day() {
         // (wake day, hours in bed), oldest first: a night, then a nap the same day, then

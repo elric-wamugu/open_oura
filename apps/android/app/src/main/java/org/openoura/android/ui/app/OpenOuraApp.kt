@@ -645,6 +645,13 @@ fun OpenOuraApp(
                         ymd = key.ymd,
                         sleepTab = sleepTab,
                         onSelectTab = { sleepTab = it },
+                        onLabelEffort = { e, kind, note ->
+                            val ring = e.ring ?: return@DayReportScreen
+                            scope.launch {
+                                repo.labelEffort(ring, kind, note)?.let { messages.show("Couldn't save the label: $it", long = true) }
+                                    ?: messages.show(if (kind == null) "Label removed" else "Label saved")
+                            }
+                        },
                         modifier = Modifier.padding(padding),
                     )
                 }

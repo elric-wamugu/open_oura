@@ -231,6 +231,7 @@ data class Battery(
  * "walking" or "jogging" when a steady stepping rhythm covers at least a third of the
  * session, and null otherwise — a session with no gait (a ride, a gym set, or a day before
  * Real steps was on) stays unlabelled and must not be given a name from heart rate or MET.
+ * The person can name a session themselves: that is [userLabel], shown as theirs.
  *
  * `hrPeak` is absent whenever it wouldn't exceed `hrMean` — see effort_sessions() in
  * oura-summary for why that can legitimately happen during movement.
@@ -247,6 +248,32 @@ data class EffortSession(
     val traces: Int = 0,
     val label: String? = null,
     val gait: List<GaitSegment> = emptyList(),
+    /** The session in ring time — what a label is keyed by. Absent from older summaries. */
+    val ring: EffortRing? = null,
+    /** What the person said this was, or null if they haven't said. */
+    @SerialName("user_label") val userLabel: UserLabel? = null,
+)
+
+/**
+ * An effort session named by ring time rather than wall clock: the ring, its boot (by
+ * capture-time range) and the ds span. Wall-clock times move when the ds → unix fit is
+ * corrected; these do not, so a label set against them stays on its session.
+ */
+@Serializable
+data class EffortRing(
+    val serial: String,
+    /** The boot's earliest and latest capture time, unix seconds. */
+    val capture: List<Long>,
+    @SerialName("start_ds") val startDs: Long,
+    @SerialName("end_ds") val endDs: Long,
+)
+
+/** A label the person put on an effort session: an activity kind and an optional note. */
+@Serializable
+data class UserLabel(
+    val kind: String,
+    val note: String? = null,
+    @SerialName("updated_unix") val updatedUnix: Long = 0,
 )
 
 /**

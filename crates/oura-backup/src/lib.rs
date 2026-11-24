@@ -6,7 +6,8 @@
 //!
 //! **What is in one.** Not the SQLite file: a *logical* copy. Every event exactly as the
 //! ring delivered it (serial, tag, ring timestamp, body, capture time), the device rows, the
-//! sync cursors, the scalar readings, and the two small files that live beside the database
+//! sync cursors, the scalar readings, the person's own effort-session labels, and the two
+//! small files that live beside the database
 //! (`profile.json`, `feature_modes.json`). Decoded JSON and indexes are left out because
 //! they are derived — restoring re-decodes with whatever decoders the restoring build has.
 //! That makes a backup far smaller than the database, and independent of its schema.
@@ -44,7 +45,7 @@ use chacha20poly1305::XChaCha20Poly1305;
 use flate2::read::DeflateDecoder;
 use flate2::write::DeflateEncoder;
 use flate2::Compression;
-use oura_store::{RawEvent, Store};
+use oura_store::{EffortLabel, RawEvent, Store};
 use serde_json::{json, Value};
 
 const MAGIC: &[u8; 8] = b"OURABAK\x01";
@@ -63,6 +64,8 @@ const R_SYNC: u8 = 3;
 const R_READING: u8 = 4;
 const R_EVENT: u8 = 5;
 const R_FILE: u8 = 6;
+/// Added within format 1: a reader that predates it skips the record (see restore).
+const R_LABEL: u8 = 7;
 const R_END: u8 = 9;
 
 #[derive(thiserror::Error, Debug)]
@@ -129,6 +132,7 @@ pub struct BackupStats {
     pub events: u64,
     pub readings: u64,
     pub devices: u64,
+    pub labels: u64,
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -137,6 +141,8 @@ pub struct RestoreStats {
     pub events: u64,
     pub events_added: u64,
     pub readings_added: u64,
+    /// Effort-session labels written: new ones, or newer edits of ones already held.
+    pub labels_added: u64,
     /// Side files written because the destination had none.
     pub files_written: u64,
     /// When the backup was made (unix seconds).
@@ -429,6 +435,23 @@ pub fn write_backup_with(
             .map_err(store_io)?;
             stats.readings += 1;
         }
+        for l in s.effort_labels()? {
+            put_json(
+                &mut z,
+                R_LABEL,
+                &json!([
+                    l.serial,
+                    l.capture_lo,
+                    l.start_ds,
+                    l.end_ds,
+                    l.kind,
+                    l.note,
+                    l.updated_unix
+                ]),
+            )
+            .map_err(store_io)?;
+            stats.labels += 1;
+        }
         // Cursors last: a cursor is only true alongside the events before it.
         for (serial, cursor, last_sync) in s.sync_rows()? {
             put_json(&mut z, R_SYNC, &json!([serial, cursor, last_sync])).map_err(store_io)?;
@@ -469,6 +492,19 @@ fn next_record(z: &mut impl Read, payload: &mut Vec<u8>) -> Result<Option<u8>> {
     payload.resize(len, 0);
     z.read_exact(payload).map_err(read_error)?;
     Ok(Some(head[0]))
+}
+
+/// A label record: `[serial, capture_lo, start_ds, end_ds, kind, note, updated_unix]`.
+fn label_from(v: &Value) -> Option<EffortLabel> {
+    Some(EffortLabel {
+        serial: v[0].as_str()?.to_string(),
+        capture_lo: v[1].as_i64()?,
+        start_ds: v[2].as_i64()?,
+        end_ds: v[3].as_i64()?,
+        kind: v[4].as_str()?.to_string(),
+        note: v[5].as_str().map(str::to_string),
+        updated_unix: v[6].as_i64().unwrap_or(0),
+    })
 }
 
 fn json_of(payload: &[u8]) -> Result<Value> {
@@ -608,6 +644,15 @@ pub fn restore_backup(
                         v[2].as_i64().unwrap_or(0),
                     )?;
                 }
+                R_LABEL => {
+                    let l = json_of(&payload)
+                        .ok()
+                        .and_then(|v| label_from(&v))
+                        .ok_or_else(|| bad("a label record is malformed"))?;
+                    if s.merge_effort_label(&l)? {
+                        stats.labels_added += 1;
+                    }
+                }
                 R_FILE => {
                     let v = json_of(&payload).map_err(|_| bad("a file record is malformed"))?;
                     if let (Some(name), Some(text)) = (v["name"].as_str(), v["text"].as_str()) {
@@ -722,6 +767,47 @@ mod tests {
             })
             .unwrap();
         v
+    }
+
+    #[test]
+    fn effort_labels_travel_with_a_backup_and_the_newer_edit_wins() {
+        let src = dir("lbl-src");
+        let dst = dir("lbl-dst");
+        seed(&src.join("oura.db"), 0..10, 500);
+        let lbl = |kind: &str, note: Option<&str>, at: i64| EffortLabel {
+            serial: "RING1".into(),
+            capture_lo: 1_790_000_000,
+            start_ds: 1_000,
+            end_ds: 1_009,
+            kind: kind.into(),
+            note: note.map(str::to_string),
+            updated_unix: at,
+        };
+        let boot = (1_790_000_000, 1_790_000_009);
+        Store::open(src.join("oura.db"))
+            .unwrap()
+            .set_effort_label(&lbl("dance", Some("salsa class"), 600), boot)
+            .unwrap();
+        // The destination labelled the same session earlier, differently.
+        seed(&dst.join("oura.db"), 0..10, 400);
+        Store::open(dst.join("oura.db"))
+            .unwrap()
+            .set_effort_label(&lbl("walk", None, 450), boot)
+            .unwrap();
+
+        let file = backup(&src.join("oura.db"), "pw");
+        let stats = restore_backup(&file[..], "pw", &dst.join("oura.db"), &mut |_, _| {}).unwrap();
+        assert_eq!(stats.labels_added, 1);
+        assert_eq!(
+            Store::open(dst.join("oura.db"))
+                .unwrap()
+                .effort_labels()
+                .unwrap(),
+            vec![lbl("dance", Some("salsa class"), 600)]
+        );
+        // Restoring again changes nothing.
+        let again = restore_backup(&file[..], "pw", &dst.join("oura.db"), &mut |_, _| {}).unwrap();
+        assert_eq!(again.labels_added, 0);
     }
 
     #[test]

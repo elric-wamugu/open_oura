@@ -57,7 +57,7 @@ logs it and `profile_summary` prints it — see "Release build and profiling" in
 | **Peak sustained HR** (daily) | `activityReport` metric + note | `ActivityReport` readout + note | `activity_daily[].peak_hr`, `fitness.hr_max_predicted` | — |
 | Movement ridge | `ridgeSvg` | `MovementRidge` | `activity_profile` | — (MET, model-free) |
 | **Activity sessions / workouts** | `openActDetail` (session) | workouts section | `activity` | AAD (web: Python · iOS: `ActivityModel`) |
-| **Ring-detected effort** (fallback when AAD is absent) | `effortForDay` + effort rows | `EffortSessions` (DayReportScreen.kt) | `effort` | — (exercise-HR trace timing) |
+| **Ring-detected effort** (fallback when AAD is absent) | `effortForDay` + effort rows | `EffortSessions` (DayReportScreen.kt), taggable with your own label (Android only) | `effort`, `effort[].user_label` | — (exercise-HR trace timing) |
 | Steps / active calories / **distance** | activity report stats | activity day stats | `activity_daily` (incl. `distance_m`) | — |
 | Previous days browser (date · sleep h · eff % · steps) | `openDaysBrowser` → `openDayPage` | `DaysBrowser`, the History tab (Android) / `AllDaysView` (iOS) | day keys | — |
 | Device & data health | `renderDevice` | `DeviceHealthPanel` on the Ring tab, with capability toggles (Android) / device section (iOS) | `device.{streams,insights,measuring,…}` | — |
@@ -228,15 +228,34 @@ ends a session, under 5 minutes is discarded) and attaches mean/peak HR and the
 
 Two things to keep honest when rendering these:
 
-- **They are named only from measured gait.** Since 2026-11-24 each session carries
-  `gait[]` (walking/jogging segments read from the ring's `real_steps` records, see
-  `oura-summary`'s `gait.rs`) and a `label` when one gait covers at least a third of it.
-  Without that, a session stays unlabelled and must not be named from HR, MET or
-  intensity — that would be a guess shown as a fact. There is no "running" yet.
+- **They are named only from measured gait, or by the person.** Since 2026-11-24 each
+  session carries `gait[]` (walking/jogging segments read from the ring's `real_steps`
+  records, see `oura-summary`'s `gait.rs`) and a `label` when one gait covers at least a
+  third of it. Without that, a session stays unlabelled and must not be named from HR, MET or
+  intensity — that would be a guess shown as a fact. There is no "running" yet. The other
+  name a session can carry is `user_label` (below): what the person called it, shown as
+  theirs and ahead of the gait name.
 - **`hr_peak` is suppressed when it does not exceed `hr_mean`.** The mean uses every gated
   beat in the window; the peak only considers 30-second windows holding ten or more. During
   movement the fastest stretches are where beats are sparsest, so the peak can genuinely
   land below the mean — true, but it reads as a bug, so it is omitted instead.
+
+### The person's own labels (`user_label`)
+
+A person can say what a session was — dance, walk, run, cycling, strength, other, plus a
+note. That is not a guess, so it fits the rule above, as long as it is shown as theirs.
+
+- **Stored in `oura.db`**, table `effort_labels` (`oura-store`), and carried in `.ourabak`
+  backups as record kind 7, so a phone backup restores the labels on the desktop too. Older
+  readers skip the record. A restore keeps whichever edit of a label is newer.
+- **Keyed by ring time, not wall clock.** Every `effort[]` entry has a `ring` object: `serial`,
+  the boot's `capture` range, and `start_ds`/`end_ds`. A label matches a session when the
+  serial is the same, its `capture_lo` falls inside that boot's capture range, and the ds
+  spans overlap. If more than one label overlaps, the larger overlap wins, then the newer edit.
+  Correcting the ds → unix fit moves `start`; it does not move a label
+  (`attach_user_labels`, tested in `oura-summary`).
+- `relabel_summary` / `oura-core`'s `relabel_summary_json` re-applies labels to a summary
+  already built, which is how Android shows a new label without a full recompute.
 
 ## Sleep metrics: two code paths, one algorithm — keep them in sync
 
@@ -338,6 +357,11 @@ which is why Oura's own app has no per-night HRV trend either.
   notification after each sync. iOS declares `bluetooth-central`, which keeps a running sync
   alive in the background, but nothing starts one unattended, so alerts would come only when
   the app is opened.
+
+- **Effort-session labels** (Android only): Android's day report lets you tag a session
+  (`EffortSessions` / `LabelSheet` in DayReportScreen.kt) and shows `user_label` as your own
+  label. The web and iOS apps read the same `effort[].user_label` but neither shows it nor
+  lets you set one yet.
 
 When you close one of these gaps, update this section.
 

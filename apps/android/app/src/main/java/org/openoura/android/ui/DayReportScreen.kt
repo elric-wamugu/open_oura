@@ -9,6 +9,25 @@ import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Icon
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.ToggleButton
+import androidx.compose.material3.ToggleButtonDefaults
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
@@ -60,6 +79,7 @@ fun DayReportScreen(
     ymd: String,
     sleepTab: Boolean,
     onSelectTab: (Boolean) -> Unit,
+    onLabelEffort: (EffortSession, kind: String?, note: String?) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val motion = MaterialTheme.motionScheme
@@ -89,7 +109,7 @@ fun DayReportScreen(
             label = "report-half",
         ) { sleep ->
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                if (sleep) SleepReport(summary, ymd) else ActivityReport(summary, ymd)
+                if (sleep) SleepReport(summary, ymd) else ActivityReport(summary, ymd, onLabelEffort)
             }
         }
     }
@@ -221,7 +241,11 @@ private fun StageBar(n: NightRow) {
 // ── activity ─────────────────────────────────────────────────────────────────────────
 
 @Composable
-private fun ColumnScope.ActivityReport(s: Summary, ymd: String) {
+private fun ColumnScope.ActivityReport(
+    s: Summary,
+    ymd: String,
+    onLabelEffort: (EffortSession, String?, String?) -> Unit,
+) {
     val ds = s.activityDaily[ymd]
     val prof = s.activityProfile[ymd] ?: emptyList()
     val steps = s.activitySteps[ymd] ?: emptyList()
@@ -282,7 +306,7 @@ private fun ColumnScope.ActivityReport(s: Summary, ymd: String) {
             },
         )
     }
-    EffortSessions(s, ymd)
+    EffortSessions(s, ymd, onLabelEffort)
 }
 
 /**
@@ -318,9 +342,17 @@ object GaitText {
 /**
  * Sessions the ring recorded an exercise-HR trace for, named walking or jogging where the
  * ring's gait records say so, and "Effort" where they don't.
+ *
+ * The person can name a session too: tapping one asks "What was this?", and the answer is
+ * shown as theirs, with its own mark, ahead of the gait name and never dressed up as
+ * something the ring detected.
  */
 @Composable
-private fun ColumnScope.EffortSessions(s: Summary, ymd: String) {
+private fun ColumnScope.EffortSessions(
+    s: Summary,
+    ymd: String,
+    onLabel: (EffortSession, String?, String?) -> Unit,
+) {
     val sessions = s.effortForDay(ymd)
     SectionHeader("Sessions", Modifier.padding(top = 4.dp))
     if (sessions.isEmpty()) {
@@ -328,6 +360,9 @@ private fun ColumnScope.EffortSessions(s: Summary, ymd: String) {
         return
     }
     val clock = remember { DateTimeFormatter.ofPattern("HH:mm") }
+    val at = { e: EffortSession -> clock.format(Instant.ofEpochSecond(e.start.toLong()).atZone(ZoneId.systemDefault())) }
+    // By start time rather than the object: a recompute behind the open sheet replaces it.
+    var editingStart by rememberSaveable { mutableStateOf<Double?>(null) }
     Column(verticalArrangement = Arrangement.spacedBy(ListItemDefaults.SegmentedGap)) {
         sessions.forEachIndexed { i, e ->
             val bits = buildList {
@@ -337,13 +372,53 @@ private fun ColumnScope.EffortSessions(s: Summary, ymd: String) {
                 e.hrPeak?.let { add("${it.roundToInt()} peak") }
                 e.intensityPeak?.let { add("intensity ${it.roundToInt()}") }
             }
-            SegmentedListItem(
-                shapes = ListItemDefaults.segmentedShapes(i, sessions.size),
-                colors = groupColors(),
-                leadingContent = { ShapedIcon(GaitText.icon(e.label)) },
-                supportingContent = { Text(bits.joinToString(" · ")) },
-            ) {
-                Text(GaitText.title(e, clock.format(Instant.ofEpochSecond(e.start.toLong()).atZone(ZoneId.systemDefault()))))
+            val label = e.userLabel
+            val shapes = ListItemDefaults.segmentedShapes(i, sessions.size)
+            val leading: @Composable () -> Unit = {
+                if (label != null) {
+                    ShapedIcon(
+                        ActivityLabels.icon(label),
+                        container = MaterialTheme.colorScheme.primaryContainer,
+                        content = MaterialTheme.colorScheme.onPrimaryContainer,
+                    )
+                } else {
+                    ShapedIcon(GaitText.icon(e.label))
+                }
+            }
+            val supporting: @Composable () -> Unit = {
+                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    if (label != null) YourLabelLine(ActivityLabels.note(label))
+                    Text(bits.joinToString(" · "))
+                }
+            }
+            val headline: @Composable () -> Unit = {
+                Text(if (label != null) "${ActivityLabels.title(label)} at ${at(e)}" else GaitText.title(e, at(e)))
+            }
+            if (e.ring != null) {
+                SegmentedListItem(
+                    onClick = { editingStart = e.start },
+                    shapes = shapes,
+                    colors = groupColors(),
+                    leadingContent = leading,
+                    supportingContent = supporting,
+                    trailingContent = {
+                        Icon(
+                            painterResource(if (label != null) R.drawable.ic_sym_edit else R.drawable.ic_sym_sell),
+                            contentDescription = if (label != null) "Change your label" else "Label this session",
+                        )
+                    },
+                    content = headline,
+                )
+            } else {
+                // A summary from before sessions carried their ring time: nothing to key a
+                // label by until the next recompute.
+                SegmentedListItem(
+                    shapes = shapes,
+                    colors = groupColors(),
+                    leadingContent = leading,
+                    supportingContent = supporting,
+                    content = headline,
+                )
             }
         }
     }
@@ -351,10 +426,113 @@ private fun ColumnScope.EffortSessions(s: Summary, ymd: String) {
         "Detected from the ring's own exercise-HR trace — it records while the ring thinks " +
             "you're working. Walking and jogging come from the ring's step rhythm; a session " +
             "without a steady one, like a ride, stays \"Effort\" rather than getting a guessed " +
-            "name. Running isn't told apart from jogging yet. Heart rate is " +
-            "missing from some because motion corrupts the optical signal, which is exactly " +
-            "when the ring is least able to read a clean beat.",
+            "name. Running isn't told apart from jogging yet. Tap a session to say what it was " +
+            "yourself; your label is kept with the ring's history on this phone and in its " +
+            "backups. Heart rate is missing from some because motion corrupts the optical " +
+            "signal, which is exactly when the ring is least able to read a clean beat.",
     )
+
+    val editing = editingStart?.let { start -> sessions.firstOrNull { it.start == start } }
+    if (editing != null) {
+        LabelSheet(
+            session = editing,
+            title = "Effort at ${at(editing)} · ${editing.durationMin.roundToInt()} min",
+            onDismiss = { editingStart = null },
+            onSave = { kind, note ->
+                onLabel(editing, kind, note)
+                editingStart = null
+            },
+        )
+    }
+}
+
+/** The mark that says a session's name came from the person, not the ring. */
+@Composable
+private fun YourLabelLine(note: String?) {
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+        Icon(
+            painterResource(R.drawable.ic_sym_sell),
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.size(14.dp),
+        )
+        Text(
+            if (note != null) "Your label · $note" else "Your label",
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.primary,
+            maxLines = 1,
+        )
+    }
+}
+
+/**
+ * "What was this?" — pick an activity, optionally say more. Saving with nothing picked is
+ * not offered; taking a label off is its own button, so it is never done by accident.
+ */
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+@Composable
+private fun LabelSheet(
+    session: EffortSession,
+    title: String,
+    onDismiss: () -> Unit,
+    onSave: (kind: String?, note: String?) -> Unit,
+) {
+    val current = session.userLabel
+    var kind by rememberSaveable { mutableStateOf(current?.kind) }
+    var note by rememberSaveable { mutableStateOf(current?.note.orEmpty()) }
+    val save = { kind?.let { onSave(it, note.trim().ifEmpty { null }) } }
+    ModalBottomSheet(onDismissRequest = onDismiss) {
+        Column(
+            Modifier
+                .imePadding()
+                .padding(start = 24.dp, end = 24.dp, bottom = 24.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text("What was this?", style = MaterialTheme.typography.headlineSmallEmphasized)
+                Text(
+                    "$title. The ring only knows you were working hard; what you call it is " +
+                        "yours, and is shown as your label.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                // A kind saved by a later build than this one still shows, so it can be kept.
+                val unknown = current?.kind?.takeIf { ActivityLabels.kind(it) == null }
+                val options = ActivityLabels.kinds.map { Triple(it.key, it.name, it.icon) } +
+                    listOfNotNull(unknown?.let { Triple(it, it.replaceFirstChar { c -> c.uppercase() }, R.drawable.ic_sym_sell) })
+                options.forEach { (key, name, icon) ->
+                    ToggleButton(
+                        checked = kind == key,
+                        onCheckedChange = { kind = if (it) key else null },
+                        icon = { Icon(painterResource(icon), contentDescription = null, Modifier.size(ToggleButtonDefaults.IconSize)) },
+                    ) { Text(name) }
+                }
+            }
+            OutlinedTextField(
+                value = note,
+                onValueChange = { note = it.take(200) },
+                label = { Text(if (kind == ActivityLabels.OTHER) "What was it?" else "Note (optional)") },
+                placeholder = { Text(if (kind == ActivityLabels.OTHER) "Bouldering" else "Salsa class") },
+                singleLine = true,
+                shape = MaterialTheme.shapes.large,
+                keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences, imeAction = ImeAction.Done),
+                keyboardActions = KeyboardActions(onDone = { save() }),
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                if (current != null) {
+                    TextButton(onClick = { onSave(null, null) }, shapes = ButtonDefaults.shapes()) { Text("Remove label") }
+                }
+                Spacer(Modifier.weight(1f))
+                Button(onClick = { save() }, enabled = kind != null, shapes = ButtonDefaults.shapes()) { Text("Save") }
+            }
+        }
+    }
 }
 
 /** Shared with the web `peakHrVerdict` in app.js — keep the 95/85 thresholds in step. */
