@@ -1,0 +1,412 @@
+/*
+# open_oura — Today (mockup)
+
+The Android app's Today page, written in Declare as a phone mockup. The values are a sample
+day rather than live data. They sit in one `Dataset`, `day`, and every tile, bar and chart
+reads from it.
+
+- The page is one column that scrolls with the App. The bottom navigation and the Sync button
+  stay put with `ignoreScroll`.
+- The scores are a bento: Readiness as the tall tile, Sleep and Activity stacked beside it.
+- Last night's stages, the activity curve and both trend charts are views with a `draw()`
+  method. Each one redraws only when the data it reads changes.
+- The Cardiovascular panel opens and closes. One flag, `cardioOpen`, drives both its body and
+  the chevron.
+*/
+
+theme Today [
+    bg = #111614, card = #1B2220, cardHigh = #252E2B, ink = #E6ECEA, muted = #A7B3AF,
+    readiness = #2BA597, onReadiness = #062B27,
+    sleepTile = #3A3E6A, onSleepTile = #E3E5FF,
+    activityTile = #57492D, onActivityTile = #F2D59C,
+    deep = #5D6989, light = #8C97B3, rem = #6FA1A8, awake = #C1B08F,
+    steps = #F2D59C, hr = #E0A44E, pulse = #2DD4BF,
+    good = #6BD8CB, goodPill = #1E4A39, onGoodPill = #9BE6BE,
+    gridLine = #3A4441, navActive = #1F5C55,
+    accent = #2BA597, accentHovered = #33B5A6, accentPressed = #238C80, accentTextColor = #062B27
+    ]
+
+
+// ── small pieces ───────────────────────────────────────────────────────────
+
+// A rounded panel on the page, padded, its children stacked.
+
+class Panel [ width = 100%, cornerRadius = 24, padding = 18,
+    fill = { provided("theme").card },
+    layout: SimpleLayout [ axis = y, spacing = 12 ]
+    ]
+
+
+// A score tile in the bento: label, number, and the word for it.
+
+class ScoreTile [ cornerRadius = 26, padding = [16, 18, 16, 18],
+    label: string = "",
+    score: number = 0,
+    word: string = "",
+    big: boolean = false,
+    ink: Color = white,
+    accessibilityRole = image,
+    accessibilityLabel = { `${label} ${score}, ${word}` },
+    l: Text [ fontSize = 15, fontWeight = semibold, textColor = { classroot.ink }, text = { classroot.label } ],
+    n: Text [ y = { classroot.big ? 46 : 30 }, fontSize = { classroot.big ? 64 : 34 }, fontWeight = bold,
+        textColor = { classroot.ink }, text = { "" + classroot.score } ],
+    w: Text [ x = { classroot.big ? 0 : classroot.n.width + 8 }, y = { classroot.big ? parent.contentBox("height") - 20 : 44 },
+        fontSize = 14, fontWeight = semibold, textColor = { classroot.ink }, text = { classroot.word } ]
+    ]
+
+
+// One stage under the stage bar: a dot, its name, and its share of the night.
+
+class StageKey [ flexes = true,
+    name: string = "",
+    pct: number = 0,
+    dot: Color = white,
+    layout: SimpleLayout [ axis = y, spacing = 2 ],
+    row: View [
+        layout: SimpleLayout [ axis = x, spacing = 6, align = center ],
+        View [ width = 10, height = 10, cornerRadius = 5, fill = { classroot.dot } ],
+        Text [ fontSize = 13, textColor = { provided("theme").muted }, text = { classroot.name } ]
+        ],
+    Text [ fontSize = 26, fontWeight = semibold, text = { classroot.pct + "%" } ]
+    ]
+
+
+// A vital: icon badge, status pill, name, reading, and where it sits on its bar.
+
+class VitalTile [ flexes = true, cornerRadius = 22, padding = 16,
+    fill = { provided("theme").card },
+    name: string = "",
+    value: string = "",
+    unit: string = "",
+    status: string = "Normal",
+    frac: number = 0.5,
+    note: string = "",
+    layout: SimpleLayout [ axis = y, spacing = 10 ],
+    top: View [ width = 100%, height = 32,
+        badge: View [ width = 32, height = 32, cornerRadius = 16, fill = { provided("theme").goodPill } ],
+        pill: View [ x = end, y = center, cornerRadius = 12, padding = [4, 10, 4, 10],
+            fill = { provided("theme").goodPill },
+            Text [ fontSize = 13, fontWeight = semibold, textColor = { provided("theme").onGoodPill },
+                text = { classroot.status } ]
+            ]
+        ],
+    Text [ fontSize = 15, textColor = { provided("theme").muted }, text = { classroot.name } ],
+    reading: View [
+        layout: SimpleLayout [ axis = x, spacing = 4, align = baseline ],
+        Text [ fontSize = 34, fontWeight = semibold, text = { classroot.value } ],
+        Text [ fontSize = 14, textColor = { provided("theme").muted }, text = { classroot.unit } ]
+        ],
+    bar: View [ width = 100%, height = 8,
+        draw(d: DrawContext) {
+            const t = provided("theme")
+            d.fillStyle = t.cardHigh
+            d.beginPath()
+            d.roundRect(0, 0, d.w, d.h, 4)
+            d.fill()
+            d.fillStyle = t.good
+            d.beginPath()
+            d.roundRect(0, 0, d.w * classroot.frac, d.h, 4)
+            d.fill()
+            }
+        ],
+    Text [ fontSize = 12, textColor = { provided("theme").muted }, text = { classroot.note } ]
+    ]
+
+
+// A line over the nights, one slot per night, with a dashed line at the usual value.
+// The colour and the usual value are given; the values come from the day's data.
+
+class TrendLine [ width = 100%, height = 72, accessibilityRole = image,
+    values: number[] = [],
+    usual: number = 0,
+    line: Color = white,
+    pad: number = 0.5,
+    draw(d: DrawContext) {
+        const v = values
+        if (v.length < 2) return
+        const lo = Math.min(...v, usual), hi = Math.max(...v, usual)
+        const p = Math.max((hi - lo) * 0.15, pad)
+        const y = (n: number) => d.h - ((n - (lo - p)) / ((hi + p) - (lo - p))) * d.h
+        const x = (i: number) => (i + 0.5) * d.w / v.length
+        d.strokeStyle = provided("theme").gridLine
+        d.lineWidth = 1
+        d.setLineDash([4, 4])
+        d.beginPath()
+        d.moveTo(0, y(usual))
+        d.lineTo(d.w, y(usual))
+        d.stroke()
+        d.setLineDash([])
+        d.strokeStyle = line
+        d.lineWidth = 2.5
+        d.lineJoin = "round"
+        d.beginPath()
+        v.forEach((n, i) => { if (i == 0) d.moveTo(x(i), y(n)); else d.lineTo(x(i), y(n)) })
+        d.stroke()
+        d.fillStyle = line
+        v.forEach((n, i) => { d.beginPath(); d.arc(x(i), y(n), 3, 0, Math.PI * 2, false); d.fill() })
+        }
+    ]
+
+
+// A label and a value on one row, in a darker band. The label takes what the value leaves,
+// and wraps if it must.
+
+class Fact [ width = 100%, cornerRadius = 14, padding = [12, 14, 12, 14],
+    fill = { provided("theme").cardHigh },
+    label: string = "",
+    value: string = "",
+    layout: SimpleLayout [ axis = x, spacing = 12, align = center ],
+    Text [ flexes = true, fontSize = 15, textColor = { provided("theme").muted }, text = { classroot.label } ],
+    Text [ fontSize = 15, fontWeight = semibold, text = { classroot.value } ]
+    ]
+
+
+// A small explanatory paragraph.
+
+class Note extends Text [ width = 100%, fontSize = 13, textColor = { provided("theme").muted } ]
+
+// The panel's header: pressing it opens or closes the panel.
+
+class PanelHeader extends Control [ width = 100%, height = 56, cursor = "pointer",
+    title: string = "",
+    sub: string = "",
+    open: boolean = false,
+    accessibilityLabel = { `${title}, ${open ? "collapse" : "expand"}` },
+    badge: View [ y = center, width = 48, height = 48, cornerRadius = 24, fill = { provided("theme").goodPill } ],
+    words: View [ x = 64, y = center,
+        layout: SimpleLayout [ axis = y, spacing = 2 ],
+        Text [ fontSize = 18, fontWeight = semibold, text = { classroot.title } ],
+        Text [ fontSize = 15, textColor = { provided("theme").muted }, text = { classroot.sub } ]
+        ],
+    chevron: ChevronIcon [ x = end, y = center, iconSize = 18, ink = { provided("theme").ink },
+        dir = { classroot.open ? "up" : "down" } ]
+    ]
+
+
+// A tab in the bottom navigation.
+
+class NavTab extends Control [ flexes = true, height = 64, cursor = "pointer",
+    label: string = "",
+    tab: string = "",
+    on: boolean = { app.tab == tab },
+    accessibilityLabel = { label },
+    accessibilityPressed = { on },
+    press() { app.tab = tab },
+    pill: View [ x = center, y = 4, width = 64, height = 32, cornerRadius = 16,
+        fill = { classroot.on ? provided("theme").navActive : null } ],
+    dot: View [ x = center, y = 14, width = 12, height = 12, cornerRadius = 3,
+        stroke = { Stroke(2, classroot.on ? provided("theme").good : provided("theme").muted) } ],
+    Text [ x = center, y = 42, fontSize = 13, fontWeight = semibold,
+        textColor = { classroot.on ? provided("theme").good : provided("theme").ink }, text = { classroot.label } ]
+    ]
+
+
+// ── the page ───────────────────────────────────────────────────────────────
+
+App [ theme = { { ...SanFranciscoDark, ...Today } },
+    fill = { provided("theme").bg }, textColor = { provided("theme").ink },
+
+    // A sample day, as the summary would give it.
+
+    day: Dataset { {
+        "weekday": "Saturday", "date": "Nov 21", "battery": 62,
+        "readiness": 90, "sleepScore": 95, "activityScore": 50,
+        "bed": "00:52–10:25", "asleep": "8h 29m",
+        "stages": { "deep": 17, "light": 50, "rem": 22, "awake": 11 },
+        "steps": 900, "km": 0.7,
+        "activity": [3, 9, 2, 7, 1, 1, 1, 0, 1, 0, 0, 1, 0, 1, 0, 0, 2, 1, 1, 0, 1, 1, 2, 22, 8, 6, 9, 4, 5, 6, 4, 5, 6, 9, 4, 16, 6, 3, 4, 4, 3, 0, 0, 0, 0, 0, 0, 0],
+        "rhr": 59, "rhrBaseline": 62.4,
+        "rhrNights": [61, 61, 60, 60, 60, 60, 67, 63, 60, 60, 62, 62, 66, 66, 62, 63, 64, 67, 62, 61, 62, 66, 61, 61, 61, 61, 61, 61, 62, 61],
+        "spo2": 97,
+        "vo2max": 47.4,
+        "pulse": -0.68, "pulseUsual": -0.70,
+        "pulseNights": [-0.66, -0.76, -0.63, -0.64, -0.68, -0.65, -0.66, -0.67, -0.69, -0.66, -0.67, -0.67, -0.75, -0.68, -0.62, -0.66, -0.66, -0.67, -0.65, -0.68]
+        } },
+
+    tab: string = "today",
+    cardioOpen: boolean = true,
+
+    page: View [ width = 100%, padding = [20, 16, 160, 16],
+        layout: SimpleLayout [ axis = y, spacing = 14 ],
+
+        // The date, and the ring's battery.
+
+        header: View [ width = 100%, height = 64,
+            Text [ fontSize = 30, fontWeight = bold, text = { app.day.value.weekday } ],
+            Text [ y = 38, fontSize = 17, fontWeight = semibold, textColor = { provided("theme").muted },
+                text = { app.day.value.date } ],
+            battery: View [ x = end, y = 4, height = 36, cornerRadius = 18, padding = [0, 14, 0, 14],
+                stroke = { Stroke(1.5, provided("theme").gridLine) },
+                accessibilityRole = image, accessibilityLabel = { `Ring battery ${app.day.value.battery}%` },
+                layout: SimpleLayout [ axis = x, spacing = 8, align = center ],
+                View [ width = 9, height = 16, cornerRadius = 2, fill = { provided("theme").good } ],
+                Text [ fontSize = 16, fontWeight = semibold, text = { app.day.value.battery + "%" } ]
+                ]
+            ],
+
+        // The three scores as a bento.
+
+        bento: View [ width = 100%, height = 236,
+            layout: SimpleLayout [ axis = x, spacing = 12, align = stretch ],
+            ScoreTile [ flexes = true, big = true, label = "Readiness",
+                score = { app.day.value.readiness }, word = "Optimal",
+                fill = { provided("theme").readiness }, ink = { provided("theme").onReadiness } ],
+            side: View [ flexes = true,
+                layout: SimpleLayout [ axis = y, spacing = 12, align = stretch ],
+                ScoreTile [ flexes = true, label = "Sleep", score = { app.day.value.sleepScore }, word = "Optimal",
+                    fill = { provided("theme").sleepTile }, ink = { provided("theme").onSleepTile } ],
+                ScoreTile [ flexes = true, label = "Activity", score = { app.day.value.activityScore },
+                    word = "Pay attention",
+                    fill = { provided("theme").activityTile }, ink = { provided("theme").onActivityTile } ]
+                ]
+            ],
+
+        // Last night: when, how long, and the stages.
+
+        lastNight: Panel [
+            head: View [ width = 100%,
+                Text [ fontSize = 20, fontWeight = semibold, text = "Last night" ],
+                Text [ x = end, y = 3, fontSize = 15, textColor = { provided("theme").muted },
+                    text = { `${app.day.value.bed} · ${app.day.value.asleep} asleep` } ]
+                ],
+            stageBar: View [ width = 100%, height = 18,
+                accessibilityRole = image, accessibilityLabel = "Sleep stages, in the order of the legend below",
+                draw(d: DrawContext) {
+                    const s = app.day.value.stages
+                    const t = provided("theme")
+                    const parts = [[s.deep, t.deep], [s.light, t.light], [s.rem, t.rem], [s.awake, t.awake]]
+                    const gap = 4
+                    const room = d.w - gap * (parts.length - 1)
+                    let x = 0
+                    parts.forEach(([p, c], i) => {
+                        const w = room * p / 100
+                        const r = [i == 0 ? 9 : 2, i == parts.length - 1 ? 9 : 2, i == parts.length - 1 ? 9 : 2, i == 0 ? 9 : 2]
+                        d.fillStyle = c
+                        d.beginPath()
+                        d.roundRect(x, 0, w, d.h, r)
+                        d.fill()
+                        x += w + gap
+                        })
+                    }
+                ],
+            keys: View [ width = 100%,
+                layout: SimpleLayout [ axis = x ],
+                StageKey [ name = "Deep", pct = { app.day.value.stages.deep }, dot = { provided("theme").deep } ],
+                StageKey [ name = "Light", pct = { app.day.value.stages.light }, dot = { provided("theme").light } ],
+                StageKey [ name = "REM", pct = { app.day.value.stages.rem }, dot = { provided("theme").rem } ],
+                StageKey [ name = "Awake", pct = { app.day.value.stages.awake }, dot = { provided("theme").awake } ]
+                ]
+            ],
+
+        // Today's movement, through the day.
+
+        activity: Panel [
+            head: View [ width = 100%,
+                Text [ fontSize = 20, fontWeight = semibold, text = "Activity" ],
+                Text [ x = end, y = 3, fontSize = 15, textColor = { provided("theme").muted },
+                    text = { `${app.day.value.steps.toLocaleString()} steps · ${app.day.value.km} km` } ]
+                ],
+            curve: View [ width = 100%, height = 80,
+                accessibilityRole = image, accessibilityLabel = "Movement through the day, midnight to midnight",
+                draw(d: DrawContext) {
+                    const v = app.day.value.activity
+                    const t = provided("theme")
+                    const hi = Math.max(...v, 1)
+                    const x = (i: number) => i * d.w / (v.length - 1)
+                    const y = (n: number) => d.h - 4 - (n / hi) * (d.h - 8)
+                    d.strokeStyle = t.gridLine
+                    d.lineWidth = 1
+                    for (let q = 1; q < 4; q++) { d.beginPath(); d.moveTo(q * d.w / 4, 0); d.lineTo(q * d.w / 4, d.h); d.stroke() }
+                    d.beginPath()
+                    d.moveTo(0, d.h)
+                    v.forEach((n, i) => d.lineTo(x(i), y(n)))
+                    d.lineTo(d.w, d.h)
+                    d.closePath()
+                    d.fillStyle = "#F2D59C33"
+                    d.fill()
+                    d.beginPath()
+                    v.forEach((n, i) => { if (i == 0) d.moveTo(x(i), y(n)); else d.lineTo(x(i), y(n)) })
+                    d.strokeStyle = t.steps
+                    d.lineWidth = 2
+                    d.lineJoin = "round"
+                    d.stroke()
+                    }
+                ],
+            hours: View [ width = 100%,
+                layout: SimpleLayout [ axis = x ],
+                Text [ fontSize = 13, textColor = { provided("theme").muted }, text = "12am" ],
+                Spacer [ ],
+                Text [ fontSize = 13, textColor = { provided("theme").muted }, text = "6am" ],
+                Spacer [ ],
+                Text [ fontSize = 13, textColor = { provided("theme").muted }, text = "12pm" ],
+                Spacer [ ],
+                Text [ fontSize = 13, textColor = { provided("theme").muted }, text = "6pm" ],
+                Spacer [ ],
+                Text [ fontSize = 13, textColor = { provided("theme").muted }, text = "12am" ]
+                ]
+            ],
+
+        Text [ fontSize = 18, fontWeight = semibold, textColor = { provided("theme").good }, text = "Vitals" ],
+
+        vitals: View [ width = 100%,
+            layout: SimpleLayout [ axis = x, spacing = 12, align = stretch ],
+            VitalTile [ name = "Resting HR", value = { "" + app.day.value.rhr }, unit = "bpm",
+                frac = 0.72, note = { `baseline ${app.day.value.rhrBaseline} bpm · ${(app.day.value.rhr - app.day.value.rhrBaseline).toFixed(1)}` } ],
+            VitalTile [ name = "Blood oxygen", value = { "" + app.day.value.spo2 }, unit = "%",
+                frac = 0.76, note = { `healthy 95% · +${app.day.value.spo2 - 95}%` } ]
+            ],
+
+        // Cardiovascular: resting HR leads, then VO₂max, pulse shape, vascular age.
+
+        cardio: Panel [
+            header: PanelHeader [ title = "Cardiovascular", sub = { app.day.value.rhr + " bpm resting" },
+                open = { app.cardioOpen },
+                press() { app.cardioOpen = !app.cardioOpen }
+                ],
+            body: View [ width = 100%, visible = { app.cardioOpen },
+                layout: SimpleLayout [ axis = y, spacing = 12 ],
+                reading: View [
+                    layout: SimpleLayout [ axis = x, spacing = 6, align = baseline ],
+                    Text [ fontSize = 44, fontWeight = semibold, text = { "" + app.day.value.rhr } ],
+                    Text [ fontSize = 16, textColor = { provided("theme").muted }, text = "bpm resting" ]
+                    ],
+                Note [ fontSize = 15,
+                    text = { `${(app.day.value.rhrBaseline - app.day.value.rhr).toFixed(1)} bpm below your ${app.day.value.rhrBaseline} bpm baseline. Measured overnight, and it falls as conditioning improves.` } ],
+                rhrChart: View [ width = 100%, cornerRadius = 18, padding = 12, fill = { provided("theme").cardHigh },
+                    TrendLine [ values = { app.day.value.rhrNights }, usual = { app.day.value.rhrBaseline },
+                        line = { provided("theme").hr }, accessibilityLabel = "Resting heart rate over the last 30 nights" ]
+                    ],
+                Note [ fontSize = 12, text = { `Last 30 nights · dashed line: your ${app.day.value.rhrBaseline} bpm baseline` } ],
+                Fact [ label = "VO₂max · demographic baseline", value = { app.day.value.vo2max + " ml/kg/min" } ],
+                Note [ text = "A non-exercise estimate from age, sex and weight. It moves only when those do." ],
+                Fact [ label = "Pulse shape (b/a)", value = { app.day.value.pulse.toFixed(2).replace("-", "−") } ],
+                Note [ text = { `In line with your usual ${app.day.value.pulseUsual.toFixed(2).replace("-", "−")}. It grows less negative as arteries stiffen, so watch it over months.` } ],
+                pulseChart: View [ width = 100%, cornerRadius = 18, padding = 12, fill = { provided("theme").cardHigh },
+                    TrendLine [ values = { app.day.value.pulseNights }, usual = { app.day.value.pulseUsual },
+                        line = { provided("theme").pulse }, pad = 0.02,
+                        accessibilityLabel = "Pulse shape over the last 20 recorded nights" ]
+                    ],
+                Note [ fontSize = 12, text = { `Last ${app.day.value.pulseNights.length} recorded nights · dashed line: your usual` } ],
+                Fact [ label = "Vascular age", value = "needs Oura's CVA model" ]
+                ]
+            ],
+
+        Note [ text = "Everything here is computed on this device. Nothing left it." ]
+        ],
+
+    // Sync, above the navigation, still while the page scrolls.
+
+    sync: Button [ x = { parent.width - width - 16 }, y = { parent.height - 64 - 76 }, ignoreScroll = true,
+        label = "Sync", primary = true ],
+
+    // The bottom navigation, pinned to the foot.
+
+    nav: View [ y = end, width = 100%, height = 76, ignoreScroll = true, padding = [6, 8, 6, 8],
+        fill = { provided("theme").card },
+        layout: SimpleLayout [ axis = x ],
+        NavTab [ label = "Today", tab = "today" ],
+        NavTab [ label = "History", tab = "history" ],
+        NavTab [ label = "Ring", tab = "ring" ],
+        NavTab [ label = "You", tab = "you" ]
+        ]
+    ]

@@ -48,6 +48,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.unit.dp
+import androidx.annotation.DrawableRes
 import org.openoura.android.R
 import org.openoura.android.data.EffortSession
 import org.openoura.android.data.NightRow
@@ -309,12 +310,42 @@ private fun ColumnScope.ActivityReport(
 }
 
 /**
- * Sessions the ring recorded an exercise-HR trace for.
+ * How an effort session is named and broken down. A session is named only from the gait
+ * the ring measured (see [EffortSession]); without one it stays "Effort".
+ */
+object GaitText {
+    fun name(label: String?): String? = when (label) {
+        "walking" -> "Walking"
+        "jogging" -> "Jogging"
+        else -> null
+    }
+
+    fun title(e: EffortSession, clock: String): String = "${name(e.label) ?: "Effort"} at $clock"
+
+    /** Minutes of each gait in the session, the larger first: "Jogging 10 min · Walking 9 min". */
+    fun breakdown(e: EffortSession): String? {
+        val totals = e.gait.groupBy { it.label }
+            .mapNotNull { (l, segs) -> name(l)?.let { it to segs.sumOf { s -> s.durationMin } } }
+            .sortedByDescending { it.second }
+        if (totals.isEmpty()) return null
+        return totals.joinToString(" · ") { (n, m) -> "$n ${m.roundToInt()} min" }
+    }
+
+    @DrawableRes
+    fun icon(label: String?): Int = when (label) {
+        "walking" -> R.drawable.ic_cap_walking
+        "jogging" -> R.drawable.ic_cap_run
+        else -> R.drawable.ic_sym_monitor_heart
+    }
+}
+
+/**
+ * Sessions the ring recorded an exercise-HR trace for, named walking or jogging where the
+ * ring's gait records say so, and "Effort" where they don't.
  *
- * Shown as "effort", never as a named workout the app guessed: labelling is what Oura's AAD
- * model does and it isn't bundled, so `activity[]` stays empty. What the person names a
- * session themselves is another thing — tapping one asks "What was this?", and the answer
- * is shown as theirs, with its own mark, never dressed up as something the ring detected.
+ * The person can name a session too: tapping one asks "What was this?", and the answer is
+ * shown as theirs, with its own mark, ahead of the gait name and never dressed up as
+ * something the ring detected.
  */
 @Composable
 private fun ColumnScope.EffortSessions(
@@ -336,6 +367,7 @@ private fun ColumnScope.EffortSessions(
         sessions.forEachIndexed { i, e ->
             val bits = buildList {
                 add("${e.durationMin.roundToInt()} min")
+                GaitText.breakdown(e)?.let { add(it) }
                 e.hrMean?.let { add("${it.roundToInt()} bpm avg") }
                 e.hrPeak?.let { add("${it.roundToInt()} peak") }
                 e.intensityPeak?.let { add("intensity ${it.roundToInt()}") }
@@ -350,7 +382,7 @@ private fun ColumnScope.EffortSessions(
                         content = MaterialTheme.colorScheme.onPrimaryContainer,
                     )
                 } else {
-                    ShapedIcon(R.drawable.ic_sym_monitor_heart)
+                    ShapedIcon(GaitText.icon(e.label))
                 }
             }
             val supporting: @Composable () -> Unit = {
@@ -360,7 +392,7 @@ private fun ColumnScope.EffortSessions(
                 }
             }
             val headline: @Composable () -> Unit = {
-                Text(if (label != null) "${ActivityLabels.title(label)} at ${at(e)}" else "Effort at ${at(e)}")
+                Text(if (label != null) "${ActivityLabels.title(label)} at ${at(e)}" else GaitText.title(e, at(e)))
             }
             if (e.ring != null) {
                 SegmentedListItem(
@@ -392,11 +424,12 @@ private fun ColumnScope.EffortSessions(
     }
     Footnote(
         "Detected from the ring's own exercise-HR trace — it records while the ring thinks " +
-            "you're working, so these are start/stop and effort, not workouts it has named. " +
-            "Naming them needs Oura's activity model, which isn't bundled, so tap one to say " +
-            "what it was yourself. Your label is kept with the ring's history on this phone " +
-            "and in its backups. Heart rate is missing from some because motion corrupts the " +
-            "optical signal, which is exactly when the ring is least able to read a clean beat.",
+            "you're working. Walking and jogging come from the ring's step rhythm; a session " +
+            "without a steady one, like a ride, stays \"Effort\" rather than getting a guessed " +
+            "name. Running isn't told apart from jogging yet. Tap a session to say what it was " +
+            "yourself; your label is kept with the ring's history on this phone and in its " +
+            "backups. Heart rate is missing from some because motion corrupts the optical " +
+            "signal, which is exactly when the ring is least able to read a clean beat.",
     )
 
     val editing = editingStart?.let { start -> sessions.firstOrNull { it.start == start } }

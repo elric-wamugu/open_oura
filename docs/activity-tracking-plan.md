@@ -18,18 +18,21 @@ the protocol carries a coordinate, and `grep -riE '\bgps\b|latitude|FusedLocatio
 whole repo returns nothing but HTTP routing and prose. Any route comes from the phone or it
 does not exist.
 
-**No cadence, which is the discriminator you would reach for first.** Walking runs around
-110 steps/min and running around 170, so cadence separates them cleanly — and we do not have
-it. `activity_steps` is *estimated from MET bands*, which is why the numbers land on
-multiples of 105 and 150; see "Per-bucket steps are estimated, not counted" in
-`clients-web-and-ios.md`. The ring does emit `real_step_event_feature_1`/`_2`, but those are
-undecoded raw feature vectors (`_status: part1_raw`), model inputs rather than counts.
+**A step rhythm, though not yet in steps per minute.** *Corrected 2026-11-24: this section
+first said the ring gives no cadence.* `activity_steps` is still *estimated from MET bands*
+(see "Per-bucket steps are estimated, not counted" in `clients-web-and-ios.md`), but the
+ring's `real_step_event_feature_1`/`_2` records unpack into per-10-second gait columns, and
+on a hand-labelled walk and jog three of them separate the two cleanly: an irregularity
+column near zero whenever there is a steady stride, and two rate-like columns that step up
+from walking to jogging. `oura-summary`'s `gait.rs` labels effort sessions from them. The
+rate's unit is not known yet, so it is not cadence in steps per minute until a timed step
+count calibrates it.
 
-**No labels, deliberately.** `activity[]` comes from Oura's `automatic_activity_detection`
-model and is permanently empty without the torch models. `effort[]` fills the gap from
-`ehr_trace_event` timing, and `clients-web-and-ios.md` is explicit that those sessions
-**"carry no label and must not be shown as if they did"**. Printing "Running" off a
-heuristic over MET and HR is precisely what that line exists to prevent.
+**Labels only from measured gait.** `activity[]` comes from Oura's
+`automatic_activity_detection` model and is permanently empty without the torch models.
+`effort[]` fills the gap from `ehr_trace_event` timing, and is named walking or jogging only
+where the gait records say so. Printing "Running" off a heuristic over MET and HR is still
+what `clients-web-and-ios.md` rules out.
 
 What the ring *does* have, and what stays valuable: continuous HR at quality-gated beat
 level, MET intensity per minute, `ehr_acm_intensity_event`, and the fact that it is on your
@@ -177,9 +180,9 @@ below a floor. This is where naive implementations produce a 6 km walk that was 
 
 ## What this deliberately does not do
 
-- **Classify the ring's own `effort_sessions`.** They stay unlabelled. A heuristic over MET
-  and HR would be a guess presented as a fact, which is the one thing the sleep and effort
-  work has been careful to avoid.
+- **Classify the ring's own `effort_sessions` from MET and HR.** A heuristic over those
+  would be a guess presented as a fact. (Naming them from measured gait is different, and
+  is done since 2026-11-24 — see `gait.rs`.)
 - **Track in the background.** No silent following. The user starts a session.
 - **Replace the ring's activity data.** Daily steps, MET profile and effort sessions carry
   on as they are. A tracked activity is an addition, not a correction.

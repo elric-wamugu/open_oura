@@ -14,6 +14,7 @@
 
 mod bedtime;
 mod daily_scores;
+pub mod gait;
 pub mod ppg_shape;
 mod staging;
 
@@ -1251,11 +1252,11 @@ fn battery_points(mut points: Vec<(f64, i64, i64)>) -> Vec<(f64, i64, i64)> {
 /// against p50 77 / p90 102 across all HR samples — it tracks effort.
 ///
 /// This is deliberately NOT Oura's `automatic_activity_detection`. That model labels a
-/// session ("running", "walking"); this only knows the ring was recording effort, so the
-/// output carries no label of its own and must not be presented as one. It exists because AAD
-/// needs the torch models, which aren't bundled — leaving the sessions list permanently empty.
-/// The one label a session can carry is `user_label`, the person's own, attached afterwards
-/// by [`attach_user_labels`].
+/// session ("running", "walking"); this only knows the ring was recording effort. It exists
+/// because AAD needs the torch models, which aren't bundled — leaving the sessions list
+/// permanently empty. A session is named afterwards only from measured gait (`gait.rs`),
+/// never from the HR and intensity figures here — or by the person, as `user_label`,
+/// attached by [`attach_user_labels`].
 ///
 /// `traces` are `(unix, boot index, ds)`; `intensity` is `(unix, value)`; `hr` is the
 /// quality-gated beat series. `boots` is each boot's capture-time range, by index, and with
@@ -2416,7 +2417,57 @@ pub fn build_summary_with(
         intensity.sort_by(|a, b| a.0.total_cmp(&b.0));
         let serial = dev.as_ref().map(|d| d.0.as_str()).unwrap_or("");
         let boots: Vec<(i64, i64)> = epochs.iter().map(|e| e.capture).collect();
+        // The traces with their boot and ring time, to find each session's gait records.
+        let trace_ds = traces.clone();
         let mut sessions = effort_sessions(&mut traces, &hr_flat, &intensity, serial, &boots);
+        // Walking and jogging inside each session, from the ring's gait records (`gait.rs`).
+        // Read per session, padded so a walk that starts before the ring's effort trace
+        // does is still caught: a handful of rows each, never the whole history.
+        if let Some((serial, ..)) = dev.as_ref() {
+            const PAD_S: f64 = 300.0;
+            for sess in sessions.iter_mut() {
+                let (Some(a), Some(b)) = (sess["start"].as_f64(), sess["end"].as_f64()) else {
+                    continue;
+                };
+                let inside: Vec<&(f64, usize, i64)> = trace_ds
+                    .iter()
+                    .filter(|(t, ..)| *t >= a - 1.0 && *t <= b + 1.0)
+                    .collect();
+                let Some(&&(_, ep, _)) = inside.first() else {
+                    continue;
+                };
+                let ds_of = inside
+                    .iter()
+                    .filter(|(_, e, _)| *e == ep)
+                    .map(|(_, _, ds)| *ds);
+                let (lo, hi) = (ds_of.clone().min().unwrap_or(0), ds_of.max().unwrap_or(0));
+                let window = (lo - (PAD_S * 10.0) as i64, hi + (PAD_S * 10.0) as i64);
+                let capture = epochs[ep].capture;
+                let read = |tag: u8| {
+                    store
+                        .raw_events_in_window(serial, tag, window, capture)
+                        .ok()
+                };
+                let (Some(f1), Some(f2)) = (read(0x7e), read(0x7f)) else {
+                    continue;
+                };
+                // Keep to the session's own wall-clock span as well: the clock can step at a
+                // sync boundary, so ring time a few minutes away may be hours away.
+                let mut wins = gait::windows(&f1, &f2, &|ds| unix_in_epoch(ds, ep));
+                wins.retain(|w| w.end >= a - PAD_S && w.end <= b + PAD_S);
+                // Then clip to the session: the padding finds a walk's true start, but the
+                // parts must never add up to more than the session they break down.
+                let segs: Vec<gait::Segment> = gait::segments(&wins)
+                    .into_iter()
+                    .filter_map(|g| {
+                        let (start, end) = (g.start.max(a), g.end.min(b));
+                        (end - start >= 60.0).then_some(gait::Segment { start, end, ..g })
+                    })
+                    .collect();
+                sess["gait"] = gait::to_json(&segs);
+                sess["label"] = json!(gait::dominant(&segs, b - a).map(|g| g.name()));
+            }
+        }
         // A missing or unreadable table leaves the sessions unlabelled, never the summary
         // unbuilt: the labels are an overlay on it.
         attach_user_labels(&mut sessions, &store.effort_labels().unwrap_or_default());

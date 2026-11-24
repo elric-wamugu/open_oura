@@ -1,0 +1,559 @@
+/*
+# open_oura — web dashboard (mockup)
+
+The local web dashboard (`oura dashboard`), written in Declare as a desktop mockup. The values
+are a sample day rather than live data. They sit in one `Dataset`, `day`, and every tile, bar
+and chart reads from it.
+
+- One centred column, at most 1000 wide, that scrolls with the App.
+- The header carries the ring's battery and the actions: Sync, DNA, Blood, the light/dark
+  switch and your details. The page follows the system's appearance until the switch is
+  pressed.
+- "Your day" pairs last night's hypnogram with the day's movement ridge and its sessions.
+- Four vital tiles, each with its status and a bar against its baseline or target.
+- Cardiovascular leads with resting heart rate. Vascular age folds inside it; Battery and
+  Device & data health are folds of their own, closed until opened.
+*/
+
+theme DashLight [
+    bg = #F3F4F6, card = #FFFFFF, card2 = #FBFBFC, ink = #1B1D21, muted = #6A7078, faint = #969CA6,
+    rule = #E3E4E7, teal = #0D9488, tealSoft = #DDF0EE, warn = #C9842B,
+    deep = #454FB0, light = #8693D6, rem = #4FA6B0, wake = #D2B06E,
+    accent = #0D9488, accentHovered = #0B8378, accentPressed = #097368, accentTextColor = #FFFFFF,
+    control = #FFFFFF, controlHovered = #F1F5F4, controlPressed = #E6EEEC, controlCornerRadius = 12
+    ]
+
+
+theme DashDark [
+    bg = #0B0C0F, card = #16181D, card2 = #1B1E24, ink = #E8E9EC, muted = #9AA0AA, faint = #6B7280,
+    rule = #2A2D33, teal = #2DD4BF, tealSoft = #173A37, warn = #E0A44E,
+    deep = #5D6989, light = #8C97B3, rem = #6FA1A8, wake = #C1B08F,
+    accent = #2DD4BF, accentHovered = #3FDCC8, accentPressed = #25B8A5, accentTextColor = #04211D,
+    control = #16181D, controlHovered = #1E2A2C, controlPressed = #243335, controlCornerRadius = 12
+    ]
+
+
+// ── small pieces ───────────────────────────────────────────────────────────
+
+// A panel on the page: a white card with a hairline, its children stacked.
+
+class Panel [ width = 100%, cornerRadius = 16, padding = [18, 20, 18, 20],
+    fill = { provided("theme").card }, stroke = { Stroke(1, provided("theme").rule) },
+    layout: SimpleLayout [ axis = y, spacing = 12 ]
+    ]
+
+
+// A small uppercase label, the way the dashboard names its parts.
+
+class Tag extends Text [ fontSize = 11, fontWeight = semibold, letterSpacing = 1.1, textTransform = uppercase,
+    textColor = { provided("theme").muted }
+    ]
+
+
+// Numbers set in the monospace face.
+
+class Mono extends Text [ fontFamily = "ui-monospace, Menlo, monospace", numeralWidth = tabular ]
+
+// A small explanatory paragraph.
+
+class Note extends Text [ width = 100%, fontSize = 13, textColor = { provided("theme").muted } ]
+
+// A status pill: a dot and a word, outlined in its colour.
+
+class Pill [ cornerRadius = 999, padding = [3, 9, 3, 8],
+    word: string = "Normal",
+    ink: Color = black,
+    stroke = { Stroke(1, provided("theme").rule) },
+    layout: SimpleLayout [ axis = x, spacing = 5, align = center ],
+    View [ width = 6, height = 6, cornerRadius = 3, fill = { classroot.ink } ],
+    Text [ fontSize = 11.5, fontWeight = semibold, textColor = { classroot.ink }, text = { classroot.word } ]
+    ]
+
+
+// A vital tile: label and status, the reading, and a bar against its reference.
+
+class VitalTile [ flexes = true, cornerRadius = 16, padding = [16, 16, 12, 16],
+    fill = { provided("theme").card }, stroke = { Stroke(1, provided("theme").rule) },
+    label: string = "",
+    value: number = 0,
+    unit: string = "",
+    ref: number = 0,
+    refLabel: string = "baseline",
+    status: string = "Normal",
+    layout: SimpleLayout [ axis = y, spacing = 12 ],
+    head: View [ width = 100%, height = 22,
+        Text [ y = center, fontSize = 10, fontWeight = semibold, letterSpacing = 0.9, textTransform = uppercase,
+            textColor = { provided("theme").faint }, text = { classroot.label } ],
+        Pill [ x = end, y = center, word = { classroot.status }, ink = { provided("theme").teal } ]
+        ],
+    reading: View [
+        layout: SimpleLayout [ axis = x, spacing = 3, align = baseline ],
+        Mono [ fontSize = 27, fontWeight = medium, text = { "" + classroot.value } ],
+        Text [ fontSize = 14, textColor = { provided("theme").faint }, text = { classroot.unit } ]
+        ],
+    bar: View [ width = 100%, height = 10, accessibilityRole = image,
+        accessibilityLabel = { `${classroot.value}${classroot.unit} against ${classroot.refLabel} ${classroot.ref}` },
+        draw(d: DrawContext) {
+            const t = provided("theme")
+            const hi = Math.max(classroot.value, classroot.ref) * 1.3 || 1
+            const top = 2, h = 6
+            d.fillStyle = t.card2
+            d.beginPath()
+            d.roundRect(0, top, d.w, h, 3)
+            d.fill()
+            d.fillStyle = t.teal
+            d.beginPath()
+            d.roundRect(0, top, Math.max(0.03, Math.min(1, classroot.value / hi)) * d.w, h, 3)
+            d.fill()
+            d.fillStyle = t.muted
+            d.fillRect(Math.min(1, classroot.ref / hi) * d.w - 1, 0, 2, d.h)
+            }
+        ],
+    Mono [ fontSize = 11, textColor = { provided("theme").faint },
+        text = { `${classroot.refLabel} ${classroot.ref}${classroot.unit} · ${classroot.value >= classroot.ref ? "+" : ""}${Math.round((classroot.value - classroot.ref) * 10) / 10}${classroot.unit}` } ]
+    ]
+
+
+// One half of the day card: a line naming it, then what it holds. Pressing it would open
+// that half's full report.
+
+class DayPart extends Control [ width = 100%, padding = [14, 12, 16, 12], cornerRadius = 10, cursor = "pointer",
+    tag: string = "",
+    meta: string = "",
+    fill = { hovered ? provided("theme").tealSoft : null },
+    accessibilityLabel = { `${tag}, ${meta}, open the report` },
+    layout: SimpleLayout [ axis = y, spacing = 10 ],
+    head: View [ width = 100%,
+        layout: SimpleLayout [ axis = x, spacing = 10, align = center ],
+        Tag [ text = { classroot.tag } ],
+        Mono [ flexes = true, fontSize = 12, textColor = { provided("theme").faint }, text = { classroot.meta } ],
+        ChevronIcon [ iconSize = 12, dir = "right", ink = { classroot.hovered ? provided("theme").teal : provided("theme").faint } ]
+        ]
+    ]
+
+
+// A stage in the breakdown: its name and its share of the night.
+
+class StageShare [
+    name: string = "",
+    pct: number = 0,
+    layout: SimpleLayout [ axis = x, spacing = 4, align = baseline ],
+    Text [ fontSize = 12.5, textColor = { provided("theme").muted }, text = { classroot.name } ],
+    Mono [ fontSize = 12.5, fontWeight = semibold, text = { classroot.pct + "%" } ]
+    ]
+
+
+// A swatch and a name, for the stage legend.
+
+class Swatch [
+    name: string = "",
+    dot: Color = black,
+    layout: SimpleLayout [ axis = x, spacing = 6, align = center ],
+    View [ width = 10, height = 10, cornerRadius = 3, fill = { classroot.dot } ],
+    Text [ fontSize = 12, textColor = { provided("theme").muted }, text = { classroot.name } ]
+    ]
+
+
+// A session the ring detected: a chip. A workout is tinted.
+
+class Chip [ cornerRadius = 12, padding = [4, 10, 4, 10],
+    name: string = "",
+    workout: boolean = false,
+    fill = { classroot.workout ? provided("theme").tealSoft : provided("theme").card2 },
+    stroke = { Stroke(1, provided("theme").rule) },
+    Text [ fontSize = 11.5, textTransform = capitalize,
+        textColor = { classroot.workout ? provided("theme").teal : provided("theme").muted }, text = { classroot.name } ]
+    ]
+
+
+// A full-width outlined button under the day card.
+
+class MoreButton extends Control [ width = 100%, height = 34, cornerRadius = 12, cursor = "pointer",
+    label: string = "",
+    accessibilityLabel = { label },
+    fill = { hovered ? provided("theme").tealSoft : null },
+    stroke = { Stroke(1, provided("theme").rule) },
+    Mono [ x = center, y = center, fontSize = 12, textColor = { provided("theme").teal }, text = { classroot.label } ]
+    ]
+
+
+// A label over a value, the way the panels list their facts.
+
+class Stat [ flexes = true, cornerRadius = 12, padding = [12, 14, 12, 14],
+    fill = { provided("theme").card2 }, stroke = { Stroke(1, provided("theme").rule) },
+    label: string = "",
+    value: string = "",
+    unit: string = "",
+    layout: SimpleLayout [ axis = y, spacing = 6 ],
+    Text [ fontSize = 12, textColor = { provided("theme").muted }, text = { classroot.label } ],
+    reading: View [
+        layout: SimpleLayout [ axis = x, spacing = 2, align = baseline ],
+        Mono [ fontSize = 20, fontWeight = medium, text = { classroot.value } ],
+        Text [ fontSize = 12, textColor = { provided("theme").faint }, text = { classroot.unit } ]
+        ]
+    ]
+
+
+// One stream of captured data: its name, a bar for its share, and its count.
+
+class StreamRow [ width = 100%, height = 22,
+    name: string = "",
+    count: number = 0,
+    of: number = 1,
+    layout: SimpleLayout [ axis = x, spacing = 10, align = center ],
+    Mono [ width = 160, fontSize = 12, textColor = { provided("theme").muted }, text = { classroot.name } ],
+    bar: View [ flexes = true, height = 6,
+        draw(d: DrawContext) {
+            const t = provided("theme")
+            d.fillStyle = t.card2
+            d.beginPath()
+            d.roundRect(0, 0, d.w, d.h, 3)
+            d.fill()
+            d.fillStyle = t.teal
+            d.beginPath()
+            d.roundRect(0, 0, Math.max(0.03, classroot.count / classroot.of) * d.w, d.h, 3)
+            d.fill()
+            }
+        ],
+    Mono [ width = 64, fontSize = 12, text = { classroot.count.toLocaleString() } ]
+    ]
+
+
+// One insight and whether it is available.
+
+class Insight [ width = 100%, height = 26,
+    name: string = "",
+    status: string = "ready",
+    why: string = "",
+    Text [ y = center, fontSize = 13, text = { classroot.name + (classroot.why ? " · " + classroot.why : "") },
+        textColor = { classroot.why ? provided("theme").muted : provided("theme").ink } ],
+    Pill [ x = end, y = center, word = { classroot.status },
+        ink = { classroot.status == "ready" ? provided("theme").teal : provided("theme").faint } ]
+    ]
+
+
+// The profile action: a head and shoulders, drawn.
+
+class ProfileButton extends Control [ width = 32, height = 32, cornerRadius = 12, cursor = "pointer",
+    accessibilityLabel = "Edit your details",
+    fill = { hovered ? provided("theme").controlHovered : provided("theme").control },
+    stroke = { Stroke(1, provided("theme").rule) },
+    draw(d: DrawContext) {
+        d.strokeStyle = provided("theme").muted
+        d.lineWidth = 1.5
+        d.beginPath()
+        d.arc(d.w / 2, d.h / 2 - 3, 3.5, 0, Math.PI * 2, false)
+        d.stroke()
+        d.beginPath()
+        d.arc(d.w / 2, d.h / 2 + 9, 7, Math.PI * 1.15, Math.PI * 1.85, false)
+        d.stroke()
+        }
+    ]
+
+
+// ── the page ───────────────────────────────────────────────────────────────
+
+App [ themeMode: string = "auto",
+    isDark: boolean = { app.themeMode == "auto" ? app.systemDark : app.themeMode == "dark" },
+    theme = { app.isDark ? { ...SanFranciscoDark, ...DashDark } : { ...SanFrancisco, ...DashLight } },
+    fill = { provided("theme").bg }, textColor = { provided("theme").ink },
+
+    // A sample day, as the summary would give it.
+
+    day: Dataset { {
+        "digest": "HRV +7%, resting HR −3 bpm. Recovering well.",
+        "battery": 62, "date": "Sat · Nov 21", "days": 136,
+        "bed": "00:52–10:45", "inBed": 9.9,
+        "hypnogram": "44222222111111112223332222222111111222333344222222211112223333332222222112223333334422222221222333333322222222333344444",
+        "stages": { "deep": 18, "light": 48, "rem": 25, "awake": 9 },
+        "steps": 900, "kcal": 96,
+        "ridge": [3, 9, 2, 7, 1, 1, 1, 0, 1, 0, 0, 1, 0, 1, 0, 0, 2, 1, 1, 0, 1, 1, 2, 22, 8, 6, 9, 4, 5, 6, 4, 5, 6, 9, 4, 16, 6, 3, 4, 4, 3, 0, 0, 0, 0, 0, 0, 0],
+        "sessions": [{ "name": "walking", "workout": false }, { "name": "household", "workout": false }, { "name": "cycling", "workout": true }],
+        "hrv": 48, "hrvBaseline": 45,
+        "rhr": 59, "rhrBaseline": 62.4,
+        "efficiency": 86,
+        "spo2": 97,
+        "rhrNights": [61, 61, 60, 60, 60, 60, 67, 63, 60, 60, 62, 62, 66, 66, 62, 63, 64, 67, 62, 61, 62, 66, 61, 61, 61, 61, 61, 61, 62, 61],
+        "vo2max": 47.4,
+        "charge": [100, 96, 91, 87, 82, 76, 71, 66, 100, 97, 93, 88, 84, 79, 74, 69, 65, 62],
+        "lastSync": "<1", "events": 482316,
+        "streams": [
+            { "name": "ibi_and_amplitude", "count": 211904 }, { "name": "motion_event", "count": 96012 },
+            { "name": "temp_event", "count": 41230 }, { "name": "spo2_event", "count": 30544 },
+            { "name": "sleep_period_info", "count": 12480 }, { "name": "cva_raw_ppg_data", "count": 2664 }
+            ],
+        "insights": [
+            { "name": "Sleep staging", "status": "ready", "why": "" },
+            { "name": "Resting heart rate & HRV", "status": "ready", "why": "" },
+            { "name": "Blood oxygen", "status": "ready", "why": "" },
+            { "name": "Activity sessions", "status": "ready", "why": "" },
+            { "name": "Vascular age", "status": "gated", "why": "needs Oura's CVA model" }
+            ]
+        } },
+
+    page: View [ width = 100%, padding = [0, 24, 48, 24],
+        wrap: View [ x = center, width = { Math.min(parent.width - 48, 1000) },
+            layout: SimpleLayout [ axis = y, spacing = 0 ],
+
+            // The brand, the battery, and the actions.
+
+            top: View [ width = 100%, height = 64,
+                brand: View [ y = center,
+                    layout: SimpleLayout [ axis = x, spacing = 11, align = center ],
+                    View [ width = 18, height = 18, cornerRadius = 9, fill = { provided("theme").teal },
+                        View [ x = 5, y = 5, width = 8, height = 8, cornerRadius = 4,
+                            stroke = { Stroke(2.5, provided("theme").bg) } ]
+                        ],
+                    Text [ fontSize = 16, fontWeight = semibold, text = "open_oura" ]
+                    ],
+                actions: View [ x = end, y = center,
+                    layout: SimpleLayout [ axis = x, spacing = 8, align = center ],
+                    battery: View [ height = 32, cornerRadius = 12, padding = [0, 11, 0, 11],
+                        fill = { provided("theme").card }, stroke = { Stroke(1, provided("theme").rule) },
+                        accessibilityRole = image, accessibilityLabel = { `Ring battery ${app.day.value.battery}%` },
+                        layout: SimpleLayout [ axis = x, spacing = 6, align = center ],
+                        View [ width = 16, height = 9, cornerRadius = 2, stroke = { Stroke(1.2, provided("theme").muted) },
+                            View [ x = 1.5, y = 1.5, width = 8, height = 6, cornerRadius = 1, fill = { provided("theme").muted } ]
+                            ],
+                        Mono [ fontSize = 13, textColor = { provided("theme").muted }, text = { app.day.value.battery + "%" } ]
+                        ],
+                    Button [ label = "Sync" ],
+                    Button [ label = "DNA" ],
+                    Button [ label = "Blood" ],
+                    AppearanceSwitch [ dark = { app.isDark },
+                        commit(v: boolean) { app.themeMode = v ? "dark" : "light" }
+                        ],
+                    ProfileButton [ ]
+                    ]
+                ],
+            View [ width = 100%, height = 1, fill = { provided("theme").rule } ],
+            View [ width = 100%, height = 24 ],
+
+            // The digest: one line on how recovery is going.
+
+            Text [ width = { Math.min(parent.width, 640) }, fontSize = 15, textColor = { provided("theme").muted },
+                text = { app.day.value.digest } ],
+            View [ width = 100%, height = 24 ],
+
+            // Your day: last night, then the day's movement.
+
+            dayPanel: Panel [
+                head: View [ width = 100%, height = 24,
+                    Text [ y = center, fontSize = 15, fontWeight = semibold, text = "Your day" ],
+                    legend: View [ x = end, y = center,
+                        layout: SimpleLayout [ axis = x, spacing = 14, align = center ],
+                        Swatch [ name = "Deep", dot = { provided("theme").deep } ],
+                        Swatch [ name = "Light", dot = { provided("theme").light } ],
+                        Swatch [ name = "REM", dot = { provided("theme").rem } ],
+                        Swatch [ name = "Awake", dot = { provided("theme").wake } ]
+                        ]
+                    ],
+                View [ width = 100%, height = 1, fill = { provided("theme").rule } ],
+                Mono [ fontSize = 12, textColor = { provided("theme").faint }, text = { app.day.value.date } ],
+                sleep: DayPart [ tag = "Sleep", meta = { `${app.day.value.bed} · ${app.day.value.inBed}h` },
+                    hypnogram: View [ width = 100%, height = 34, cornerRadius = 4, clip = true,
+                        accessibilityRole = image, accessibilityLabel = "Last night's sleep stages, from going to bed to waking",
+                        draw(d: DrawContext) {
+                            const s = app.day.value.hypnogram
+                            const t = provided("theme")
+                            const c = { "1": t.deep, "2": t.light, "3": t.rem, "4": t.wake }
+                            const w = d.w / s.length
+                            d.fillStyle = t.card2
+                            d.fillRect(0, 0, d.w, d.h)
+                            for (let i = 0; i < s.length; i++) {
+                                d.fillStyle = c[s[i]]
+                                d.fillRect(i * w, 0, w + 0.5, d.h)
+                                }
+                            }
+                        ],
+                    breakdown: View [
+                        layout: SimpleLayout [ axis = x, spacing = 16 ],
+                        StageShare [ name = "Deep", pct = { app.day.value.stages.deep } ],
+                        StageShare [ name = "Light", pct = { app.day.value.stages.light } ],
+                        StageShare [ name = "REM", pct = { app.day.value.stages.rem } ],
+                        StageShare [ name = "Awake", pct = { app.day.value.stages.awake } ]
+                        ]
+                    ],
+                View [ width = 100%, height = 1, fill = { provided("theme").rule } ],
+                activity: DayPart [ tag = "Activity",
+                    meta = { `${app.day.value.steps.toLocaleString()} steps · ${app.day.value.kcal} kcal` },
+                    ridge: View [ width = 100%, height = 40,
+                        accessibilityRole = image, accessibilityLabel = "Movement through the day, midnight to midnight",
+                        draw(d: DrawContext) {
+                            const v = app.day.value.ridge
+                            const t = provided("theme")
+                            const hi = Math.max(...v, 0.5)
+                            const x = (i: number) => i * d.w / (v.length - 1)
+                            const y = (n: number) => d.h - Math.min(1, n / hi) * d.h
+                            d.strokeStyle = t.rule
+                            d.lineWidth = 1
+                            for (let q = 1; q < 4; q++) { d.beginPath(); d.moveTo(q * d.w / 4, 0); d.lineTo(q * d.w / 4, d.h); d.stroke() }
+                            d.beginPath()
+                            d.moveTo(0, d.h)
+                            v.forEach((n, i) => d.lineTo(x(i), y(n)))
+                            d.lineTo(d.w, d.h)
+                            d.closePath()
+                            d.fillStyle = t.tealSoft
+                            d.fill()
+                            d.beginPath()
+                            v.forEach((n, i) => { if (i == 0) d.moveTo(x(i), y(n)); else d.lineTo(x(i), y(n)) })
+                            d.strokeStyle = t.teal
+                            d.lineWidth = 1
+                            d.stroke()
+                            }
+                        ],
+                    hours: View [ width = 100%,
+                        layout: SimpleLayout [ axis = x ],
+                        Mono [ fontSize = 11, textColor = { provided("theme").faint }, text = "12AM" ],
+                        Spacer [ ],
+                        Mono [ fontSize = 11, textColor = { provided("theme").faint }, text = "6AM" ],
+                        Spacer [ ],
+                        Mono [ fontSize = 11, textColor = { provided("theme").faint }, text = "12PM" ],
+                        Spacer [ ],
+                        Mono [ fontSize = 11, textColor = { provided("theme").faint }, text = "6PM" ],
+                        Spacer [ ],
+                        Mono [ fontSize = 11, textColor = { provided("theme").faint }, text = "12AM" ]
+                        ],
+                    sessions: View [
+                        layout: SimpleLayout [ axis = x, spacing = 7 ],
+                        Chip [ name = { app.day.value.sessions[0].name }, workout = { app.day.value.sessions[0].workout } ],
+                        Chip [ name = { app.day.value.sessions[1].name }, workout = { app.day.value.sessions[1].workout } ],
+                        Chip [ name = { app.day.value.sessions[2].name }, workout = { app.day.value.sessions[2].workout } ]
+                        ]
+                    ],
+                MoreButton [ label = { `Show all ${app.day.value.days} days` } ],
+                MoreButton [ label = "Trends" ]
+                ],
+            View [ width = 100%, height = 24 ],
+
+            // The four vitals.
+
+            tiles: View [ width = 100%,
+                layout: SimpleLayout [ axis = x, spacing = 12, align = stretch ],
+                VitalTile [ label = "HRV (RMSSD)", value = { app.day.value.hrv }, unit = " ms",
+                    ref = { app.day.value.hrvBaseline }, status = "High" ],
+                VitalTile [ label = "Resting HR", value = { app.day.value.rhr }, unit = " bpm",
+                    ref = { app.day.value.rhrBaseline }, status = "Low" ],
+                VitalTile [ label = "Sleep efficiency", value = { app.day.value.efficiency }, unit = "%",
+                    ref = 85, refLabel = "target", status = "Normal" ],
+                VitalTile [ label = "Blood oxygen", value = { app.day.value.spo2 }, unit = "%",
+                    ref = 95, refLabel = "healthy", status = "Normal" ]
+                ],
+            View [ width = 100%, height = 24 ],
+
+            // Cardiovascular: resting heart rate, VO₂max, and vascular age folded inside.
+
+            cardio: Panel [
+                Text [ fontSize = 15, fontWeight = semibold, text = "Cardiovascular" ],
+                reading: View [
+                    layout: SimpleLayout [ axis = x, spacing = 8, align = baseline ],
+                    Text [ fontSize = 44, fontWeight = medium, letterSpacing = -1.3, text = { "" + app.day.value.rhr } ],
+                    Text [ fontSize = 13, textColor = { provided("theme").faint }, text = "bpm resting" ]
+                    ],
+                Note [ width = { Math.min(parent.width, 680) },
+                    text = { `${(app.day.value.rhrBaseline - app.day.value.rhr).toFixed(1)} bpm below your ${app.day.value.rhrBaseline} bpm baseline. Measured overnight, and it falls as conditioning improves — the fitness signal on this page that responds to training.` } ],
+                spark: View [ width = 100%, height = 56,
+                    accessibilityRole = image, accessibilityLabel = "Resting heart rate over the last 30 nights",
+                    draw(d: DrawContext) {
+                        const v = app.day.value.rhrNights
+                        const t = provided("theme")
+                        const lo = Math.min(...v) - 1, hi = Math.max(...v) + 1
+                        const x = (i: number) => i * d.w / (v.length - 1)
+                        const y = (n: number) => d.h - (n - lo) / (hi - lo) * d.h
+                        d.beginPath()
+                        d.moveTo(0, d.h)
+                        v.forEach((n, i) => d.lineTo(x(i), y(n)))
+                        d.lineTo(d.w, d.h)
+                        d.closePath()
+                        d.fillStyle = t.card2
+                        d.fill()
+                        d.beginPath()
+                        v.forEach((n, i) => { if (i == 0) d.moveTo(x(i), y(n)); else d.lineTo(x(i), y(n)) })
+                        d.strokeStyle = t.muted
+                        d.lineWidth = 1.5
+                        d.lineJoin = "round"
+                        d.stroke()
+                        }
+                    ],
+                facts: View [ width = 100%,
+                    layout: SimpleLayout [ axis = x, spacing = 12 ],
+                    Stat [ label = "VO₂max · demographic baseline", value = { "" + app.day.value.vo2max }, unit = " ml/kg/min" ]
+                    ],
+                Note [ width = { Math.min(parent.width, 680) },
+                    text = "The VO₂max figure is a Jackson non-exercise estimate computed from age, sex and weight alone — no ring data reaches it, so it shifts only when you age or change weight, never with training." ],
+                Disclosure [ width = 100%, label = "Vascular age", detail = "needs Oura's CVA model",
+                    Note [ text = "Cardiovascular age needs Oura's CVA model, which isn't bundled. The raw PPG is captured — scoring it requires that model." ]
+                    ]
+                ],
+            View [ width = 100%, height = 24 ],
+
+            // Battery: the charge over recent days. Closed until opened.
+
+            battery: Panel [
+                Disclosure [ width = 100%, label = "Battery", detail = { app.day.value.battery + "%" },
+                    chart: View [ width = 100%, height = 90,
+                        accessibilityRole = image, accessibilityLabel = "Ring charge over the recent discharge runs",
+                        draw(d: DrawContext) {
+                            const v = app.day.value.charge
+                            const t = provided("theme")
+                            const x = (i: number) => i * d.w / (v.length - 1)
+                            const y = (n: number) => d.h - 4 - n / 100 * (d.h - 8)
+                            d.strokeStyle = t.rule
+                            d.lineWidth = 1
+                            for (let q = 0; q <= 4; q++) { d.beginPath(); d.moveTo(0, y(q * 25)); d.lineTo(d.w, y(q * 25)); d.stroke() }
+                            d.beginPath()
+                            v.forEach((n, i) => { if (i == 0) d.moveTo(x(i), y(n)); else d.lineTo(x(i), y(n)) })
+                            d.strokeStyle = t.teal
+                            d.lineWidth = 2
+                            d.lineJoin = "round"
+                            d.stroke()
+                            }
+                        ],
+                    Note [ text = "Percent comes from voltage, so the last quarter falls away quickly and a reading taken mid-sync can dip well below the resting level." ]
+                    ]
+                ],
+            View [ width = 100%, height = 24 ],
+
+            // Device & data health: what the ring is recording, and what it makes possible.
+
+            device: Panel [
+                Disclosure [ width = 100%, label = "Device & data health",
+                    stats: View [ width = 100%,
+                        layout: SimpleLayout [ axis = x, spacing = 12 ],
+                        Stat [ label = "Battery", value = { "" + app.day.value.battery }, unit = "%" ],
+                        Stat [ label = "Last sync", value = { app.day.value.lastSync }, unit = " h ago" ],
+                        Stat [ label = "History", value = { "" + app.day.value.days }, unit = " days" ],
+                        Stat [ label = "Events", value = { app.day.value.events.toLocaleString() } ]
+                        ],
+                    cols: View [ width = 100%,
+                        layout: SimpleLayout [ axis = x, spacing = 28, align = start ],
+                        left: View [ flexes = true,
+                            layout: SimpleLayout [ axis = y, spacing = 6 ],
+                            Tag [ text = "Data captured" ],
+                            StreamRow [ name = { app.day.value.streams[0].name }, count = { app.day.value.streams[0].count }, of = { app.day.value.streams[0].count } ],
+                            StreamRow [ name = { app.day.value.streams[1].name }, count = { app.day.value.streams[1].count }, of = { app.day.value.streams[0].count } ],
+                            StreamRow [ name = { app.day.value.streams[2].name }, count = { app.day.value.streams[2].count }, of = { app.day.value.streams[0].count } ],
+                            StreamRow [ name = { app.day.value.streams[3].name }, count = { app.day.value.streams[3].count }, of = { app.day.value.streams[0].count } ],
+                            StreamRow [ name = { app.day.value.streams[4].name }, count = { app.day.value.streams[4].count }, of = { app.day.value.streams[0].count } ],
+                            StreamRow [ name = { app.day.value.streams[5].name }, count = { app.day.value.streams[5].count }, of = { app.day.value.streams[0].count } ]
+                            ],
+                        right: View [ flexes = true,
+                            layout: SimpleLayout [ axis = y, spacing = 6 ],
+                            Tag [ text = "Insights available" ],
+                            Insight [ name = { app.day.value.insights[0].name }, status = { app.day.value.insights[0].status } ],
+                            Insight [ name = { app.day.value.insights[1].name }, status = { app.day.value.insights[1].status } ],
+                            Insight [ name = { app.day.value.insights[2].name }, status = { app.day.value.insights[2].status } ],
+                            Insight [ name = { app.day.value.insights[3].name }, status = { app.day.value.insights[3].status } ],
+                            Insight [ name = { app.day.value.insights[4].name }, status = { app.day.value.insights[4].status },
+                                why = { app.day.value.insights[4].why } ]
+                            ]
+                        ]
+                    ]
+                ],
+            View [ width = 100%, height = 28 ],
+
+            Note [ fontSize = 12, textColor = { provided("theme").faint },
+                text = "Everything here is computed on this machine. Nothing left the device." ]
+            ]
+        ]
+    ]
